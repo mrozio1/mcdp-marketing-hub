@@ -3,6 +3,7 @@
 # Usage:
 #   sh enable-ai.sh YOUR_PROVIDER_KEY                         # Gemini (Google AI Studio key)
 #   sh enable-ai.sh YOUR_KEY anthropic/claude-sonnet-4-5      # any LiteLLM provider/model
+#   sh enable-ai.sh                                           # re-run with the saved key
 #   sh enable-ai.sh off                                       # turn AI off again
 set -eu
 cd "$(dirname "$0")"
@@ -19,7 +20,17 @@ setvar() {
   fi
 }
 
-[ $# -ge 1 ] || { echo "Usage: sh enable-ai.sh PROVIDER_KEY [provider/model]  |  sh enable-ai.sh off" >&2; exit 1; }
+saved_key=$(grep -E '^AI_PROVIDER_KEY=' .env | cut -d= -f2- || true)
+# No key given (or a blank one): reuse the key already saved on this server.
+if [ -z "${1:-}" ]; then
+  if [ -z "$saved_key" ]; then
+    echo "Usage: sh enable-ai.sh PROVIDER_KEY [provider/model]  |  sh enable-ai.sh off" >&2
+    echo "No AI key is saved yet, so paste your key after the command." >&2
+    exit 1
+  fi
+  echo "Using the AI key already saved on this server."
+  set -- "$saved_key" "${2:-}" "${3:-}"
+fi
 
 if [ "$1" = off ]; then
   # Remove (not blank) these so Postiz falls back to its normal defaults.
