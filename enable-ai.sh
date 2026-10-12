@@ -20,7 +20,7 @@ setvar() {
   fi
 }
 
-saved_key=$(grep -E '^AI_PROVIDER_KEY=' .env | cut -d= -f2- || true)
+saved_key=$(grep -E '^AI_PROVIDER_KEY=' .env | tail -1 | cut -d= -f2- || true)
 # No key given (or a blank one): reuse the key already saved on this server.
 if [ -z "${1:-}" ]; then
   if [ -z "$saved_key" ]; then
@@ -49,7 +49,7 @@ setvar AI_PROVIDER_KEY "$1"
 if [ -n "${2:-}" ]; then setvar AI_TEXT_MODEL "$2"; fi
 if [ -n "${3:-}" ]; then setvar AI_IMAGE_MODEL "$3"; fi
 
-master=$(grep -E '^LITELLM_MASTER_KEY=' .env | cut -d= -f2- || true)
+master=$(grep -E '^LITELLM_MASTER_KEY=' .env | tail -1 | cut -d= -f2- || true)
 if [ -z "$master" ]; then
   master="sk-$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   setvar LITELLM_MASTER_KEY "$master"
@@ -85,7 +85,7 @@ except Exception as e:
 # For Gemini: ask Google which models this key can use; print the newest
 # general-purpose "flash" text model and image model as "text image".
 pick_gemini_models() {
-  $DOCKER exec -e GKEY="$(grep -E '^AI_PROVIDER_KEY=' .env | cut -d= -f2-)" postiz-ai python -c "
+  $DOCKER exec -e GKEY="$(grep -E '^AI_PROVIDER_KEY=' .env | tail -1 | cut -d= -f2-)" postiz-ai python -c "
 import json, os, re, urllib.request
 url = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=' + os.environ['GKEY']
 models = json.load(urllib.request.urlopen(url, timeout=30)).get('models', [])
@@ -128,7 +128,8 @@ case "$out" in
       if [ -n "$text_m" ]; then
         echo "Switching to gemini/$text_m"
         setvar AI_TEXT_MODEL "gemini/$text_m"
-        if [ -n "$img_m" ] && [ "$img_m" != "$picked" ]; then setvar AI_IMAGE_MODEL "gemini/$img_m"; fi
+        # Leave images alone if they run through Cloudflare (enable-cf-images.sh).
+        if [ -n "$img_m" ] && [ "$img_m" != "$picked" ] && ! grep -qE '^CF_API_TOKEN=.+' .env; then setvar AI_IMAGE_MODEL "gemini/$img_m"; fi
         start_ai
         wait_for_ai
       fi
@@ -139,5 +140,5 @@ esac
 case "$out" in
   TIMEOUT) echo "The AI translator didn't come up in 2 minutes. Check: $DOCKER logs postiz-ai --tail 50"; exit 1 ;;
   HTTPERR*) echo "The AI provider refused the request:"; echo "  $out"; echo "Check the key (and model name), then re-run this script."; exit 1 ;;
-  *) echo "AI is working using $(grep -E '^AI_TEXT_MODEL=' .env | cut -d= -f2-) (test reply: $out)."; echo "Refresh Postiz to use it."; exit 0 ;;
+  *) echo "AI is working using $(grep -E '^AI_TEXT_MODEL=' .env | tail -1 | cut -d= -f2-) (test reply: $out)."; echo "Refresh Postiz to use it."; exit 0 ;;
 esac

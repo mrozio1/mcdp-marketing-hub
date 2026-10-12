@@ -4,13 +4,21 @@
 set -eu
 cd "$(dirname "$0")"
 . ./profiles.sh
-master=$(grep -E '^LITELLM_MASTER_KEY=' .env | cut -d= -f2- || true)
+master=$(grep -E '^LITELLM_MASTER_KEY=' .env | tail -1 | cut -d= -f2- || true)
 [ -n "$master" ] || { echo "AI isn't enabled yet. Run: sh enable-ai.sh YOUR_KEY"; exit 1; }
-echo "Text model:  $(grep -E '^AI_TEXT_MODEL=' .env | cut -d= -f2-)"
-echo "Image model: $(grep -E '^AI_IMAGE_MODEL=' .env | cut -d= -f2-)"
+echo "Text model:  $(grep -E '^AI_TEXT_MODEL=' .env | tail -1 | cut -d= -f2-)"
+img=$(grep -E '^AI_IMAGE_MODEL=' .env | tail -1 | cut -d= -f2-)
+if grep -qE '^CF_API_TOKEN=.+' .env; then img="Cloudflare Workers AI (free daily allowance)"; fi
+echo "Image model: $img"
 $DOCKER exec postiz-ai python -c "
 import json, urllib.request
+import time
 H = {'Authorization': 'Bearer $master', 'Content-Type': 'application/json'}
+for _ in range(30):  # the translator may still be restarting
+    try:
+        urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5); break
+    except Exception:
+        time.sleep(3)
 def call(path, body):
     req = urllib.request.Request('http://localhost:4000/v1/' + path, data=json.dumps(body).encode(), headers=H)
     try:

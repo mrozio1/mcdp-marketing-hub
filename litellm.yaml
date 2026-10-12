@@ -18,11 +18,12 @@ model_list:
     litellm_params: *text
   - model_name: gpt-4o-2024-08-06
     litellm_params: *text
+  # Images can use a different provider than text (e.g. Cloudflare via cf-image).
   - model_name: chatgpt-image-latest
     litellm_params:
       model: os.environ/AI_IMAGE_MODEL
-      api_key: os.environ/AI_PROVIDER_KEY
-      api_base: os.environ/AI_API_BASE
+      api_key: os.environ/AI_IMAGE_KEY
+      api_base: os.environ/AI_IMAGE_API_BASE
 
 litellm_settings:
   drop_params: true        # silently drop OpenAI-only options other providers reject

@@ -31,7 +31,7 @@ rand() {
   openssl rand -hex "$1" 2>/dev/null || head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'
 }
 
-getvar() { grep -E "^$1=" .env | head -1 | cut -d= -f2- || true; }
+getvar() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true; }
 
 # setvar KEY VALUE [force] — only fills blank values unless "force" is given.
 setvar() {

@@ -145,10 +145,28 @@ services:
       AI_PROVIDER_KEY: ${AI_PROVIDER_KEY:-}
       AI_TEXT_MODEL: ${AI_TEXT_MODEL:-gemini/gemini-2.5-flash}
       AI_IMAGE_MODEL: ${AI_IMAGE_MODEL:-gemini/gemini-2.5-flash-image}
+      AI_IMAGE_KEY: ${AI_IMAGE_KEY:-${AI_PROVIDER_KEY:-}}
+      AI_IMAGE_API_BASE: ${AI_IMAGE_API_BASE:-}
     volumes:
       - ./litellm.yaml:/app/config.yaml:ro
     networks: [postiz-network]
     profiles: [ai]
+
+  # ---- Free AI images via Cloudflare Workers AI (enable-cf-images.sh) ----
+  cf-image:
+    image: python:3.12-alpine
+    container_name: postiz-cf-image
+    restart: unless-stopped
+    command: ["python", "/app/cf-image.py"]
+    environment:
+      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+      CF_IMAGE_MODEL: ${CF_IMAGE_MODEL:-@cf/black-forest-labs/flux-1-schnell}
+      CF_IMAGE_STEPS: ${CF_IMAGE_STEPS:-4}
+    volumes:
+      - ./cf-image.py:/app/cf-image.py:ro
+    networks: [postiz-network]
+    profiles: [cfimages]
 
   # ---- Cloudflare Tunnel: public HTTPS URL with no open ports on the server ----
   cloudflared:

@@ -57,8 +57,21 @@ sh enable-ai.sh YOUR_GROQ_KEY groq/llama-3.3-70b-versatile
 sh enable-ai.sh off
 ```
 
-The script tests the connection and reports a bad key or model name.
-Model mapping lives in `litellm.yaml`.
+The script tests the connection and reports a bad key or model name; if a
+Gemini model has been retired it picks the current one automatically.
+Model mapping lives in `litellm.yaml`. Check anytime with `sh test-ai.sh`.
+
+### Free AI images via Cloudflare Workers AI
+
+Gemini's free tier allows no image generation. `cf-image.py` is a tiny adapter
+that serves Postiz's image requests (including the Polotno design editor's AI
+image tab) from Cloudflare Workers AI's free daily allowance (Flux schnell,
+roughly 150+ images/day), while text stays on Gemini.
+
+```sh
+sh enable-cf-images.sh CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN   # token: "Workers AI" template
+sh enable-cf-images.sh off
+```
 
 ## Maintenance
 
