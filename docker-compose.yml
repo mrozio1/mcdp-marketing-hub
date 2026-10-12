@@ -69,6 +69,23 @@ services:
       timeout: 3s
       retries: 5
 
+  # ---- Daily backups of the database + media into ./backups (keeps 14) ----
+  backup:
+    image: postgres:17-alpine
+    container_name: postiz-backup
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/backup-loop.sh"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      KEEP: "14"
+    volumes:
+      - ./backup-loop.sh:/backup-loop.sh:ro
+      - ./backups:/backups
+      - postiz-uploads:/uploads:ro
+    networks: [postiz-network]
+    depends_on:
+      postiz-postgres: { condition: service_healthy }
+
   # ---- Temporal (Postiz's job scheduler) ----
   temporal-elasticsearch:
     image: elasticsearch:7.17.27

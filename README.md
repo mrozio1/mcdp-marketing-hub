@@ -45,6 +45,9 @@ Fast approvals: Bluesky (no app needed), Mastodon, LinkedIn, Facebook/Instagram
 
 ## Maintenance
 
-- Backups: `./backup.sh` (add to cron for nightly; keeps 14).
+- Backups: automatic once a day (database + media) via the `postiz-backup`
+  container into `./backups`, newest 14 kept. No cron needed (NAS crontabs often
+  aren't available to non-root users). Run one now with `sh backup.sh`;
+  check with `docker logs postiz-backup`.
 - Update: `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`.
 - Logs: `docker compose logs postiz --tail 100`.
