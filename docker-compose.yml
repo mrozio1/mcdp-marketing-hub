@@ -30,8 +30,9 @@ services:
       - postiz-config:/config/
       - postiz-uploads:/uploads/
     ports:
-      # Local access only. The public reaches Postiz through cloudflared.
-      - "127.0.0.1:${LOCAL_PORT:-4007}:5000"
+      # Server-only by default; install.sh opens it to the home network
+      # (LOCAL_BIND=0.0.0.0) until the Cloudflare tunnel is in place.
+      - "${LOCAL_BIND:-127.0.0.1}:${LOCAL_PORT:-4007}:5000"
     networks: [postiz-network, temporal-network]
     depends_on:
       postiz-postgres: { condition: service_healthy }

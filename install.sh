@@ -42,11 +42,21 @@ set_var TEMPORAL_DB_PASSWORD "$(rand 16)"
 [ -n "${PUBLIC_URL:-}" ] && FORCE=1 set_var PUBLIC_URL "${PUBLIC_URL%/}"
 [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ] && FORCE=1 set_var CLOUDFLARE_TUNNEL_TOKEN "$CLOUDFLARE_TUNNEL_TOKEN"
 
+# No public domain yet: serve on the home network at http://<this-server-ip>:<port>
+# so it can be tested from any computer on the LAN before the tunnel exists.
+if grep -qE '^PUBLIC_URL=(https://social\.example\.com)?$' .env; then
+  lan_ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}' | head -1 || true)
+  [ -z "$lan_ip" ] && lan_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+  [ -z "$lan_ip" ] && die "Could not detect this server's IP. Re-run with PUBLIC_URL=http://<server-ip>:4007 ./install.sh"
+  port=$(grep -E '^LOCAL_PORT=' .env | cut -d= -f2); port=${port:-4007}
+  FORCE=1 set_var PUBLIC_URL "http://${lan_ip}:${port}"
+  FORCE=1 set_var LOCAL_BIND "0.0.0.0"
+  echo "No public domain given: using the home-network address http://${lan_ip}:${port}"
+fi
+
 profiles=()
 if grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+' .env; then
   profiles=(--profile tunnel)
-else
-  echo "No CLOUDFLARE_TUNNEL_TOKEN set: Postiz will only be reachable at http://localhost:$(grep -E '^LOCAL_PORT=' .env | cut -d= -f2)"
 fi
 
 say "Pulling images (first run takes a few minutes)"
