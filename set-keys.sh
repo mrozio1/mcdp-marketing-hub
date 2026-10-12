@@ -22,8 +22,7 @@ for pair in "$@"; do
   echo "Saved ${name}"
 done
 
-DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo docker"
-PROFILE=""; grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+' .env && PROFILE="--profile tunnel"
+. ./profiles.sh
 # shellcheck disable=SC2086
 $DOCKER compose $PROFILE up -d postiz
 echo "Postiz restarted with the new keys (give it about a minute)."

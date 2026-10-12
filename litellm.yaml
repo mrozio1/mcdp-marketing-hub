@@ -1,0 +1,32 @@
+# LiteLLM: lets Postiz's built-in AI (which only speaks "OpenAI") use any provider.
+# Postiz asks for fixed OpenAI model names; each one is mapped here to the model
+# chosen in .env (AI_TEXT_MODEL / AI_IMAGE_MODEL), using AI_PROVIDER_KEY.
+# Model strings use LiteLLM's provider/model format, e.g.
+#   gemini/gemini-2.5-flash        (Google AI Studio key — free tier available)
+#   anthropic/claude-sonnet-4-5    (Anthropic API key)
+#   groq/llama-3.3-70b-versatile   (Groq key)
+#   openai/gpt-4.1                 (OpenAI key)
+#   ollama/llama3.1 + AI_API_BASE  (a local model server)
+
+model_list:
+  - model_name: gpt-4.1
+    litellm_params: &text
+      model: os.environ/AI_TEXT_MODEL
+      api_key: os.environ/AI_PROVIDER_KEY
+      api_base: os.environ/AI_API_BASE
+  - model_name: gpt-5.2
+    litellm_params: *text
+  - model_name: gpt-4o-2024-08-06
+    litellm_params: *text
+  - model_name: chatgpt-image-latest
+    litellm_params:
+      model: os.environ/AI_IMAGE_MODEL
+      api_key: os.environ/AI_PROVIDER_KEY
+      api_base: os.environ/AI_API_BASE
+
+litellm_settings:
+  drop_params: true        # silently drop OpenAI-only options other providers reject
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

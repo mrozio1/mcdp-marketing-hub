@@ -134,6 +134,22 @@ services:
       - ./dynamicconfig:/etc/temporal/config/dynamicconfig
     networks: [temporal-network]
 
+  # ---- AI translator: Postiz's "OpenAI" calls -> any provider (enable-ai.sh) ----
+  litellm:
+    image: ghcr.io/berriai/litellm:${LITELLM_VERSION:-main-stable}
+    container_name: postiz-ai
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      AI_PROVIDER_KEY: ${AI_PROVIDER_KEY:-}
+      AI_TEXT_MODEL: ${AI_TEXT_MODEL:-gemini/gemini-2.5-flash}
+      AI_IMAGE_MODEL: ${AI_IMAGE_MODEL:-gemini/gemini-2.5-flash-image}
+    volumes:
+      - ./litellm.yaml:/app/config.yaml:ro
+    networks: [postiz-network]
+    profiles: [ai]
+
   # ---- Cloudflare Tunnel: public HTTPS URL with no open ports on the server ----
   cloudflared:
     image: cloudflare/cloudflared:latest

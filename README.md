@@ -43,6 +43,23 @@ Each network needs its own developer app. The callback URL pattern is
 Fast approvals: Bluesky (no app needed), Mastodon, LinkedIn, Facebook/Instagram
 (development mode). Slow: Meta app review, YouTube, TikTok — start these early.
 
+## Built-in AI (any provider, not just OpenAI)
+
+Postiz's AI features (post-editor assistant, AI images, Agent) are hard-wired to
+OpenAI. A small LiteLLM container (`postiz-ai`) sits in between: Postiz talks
+"OpenAI" to it, and it forwards to whichever provider you choose. No Postiz code
+is modified.
+
+```sh
+sh enable-ai.sh YOUR_GOOGLE_AI_STUDIO_KEY                    # Gemini (free tier)
+sh enable-ai.sh YOUR_ANTHROPIC_KEY anthropic/claude-sonnet-4-5
+sh enable-ai.sh YOUR_GROQ_KEY groq/llama-3.3-70b-versatile
+sh enable-ai.sh off
+```
+
+The script tests the connection and reports a bad key or model name.
+Model mapping lives in `litellm.yaml`.
+
 ## Maintenance
 
 - Backups: automatic once a day (database + media) via the `postiz-backup`

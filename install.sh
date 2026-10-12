@@ -71,8 +71,7 @@ case "$(getvar PUBLIC_URL)" in
     ;;
 esac
 
-PROFILE=""
-[ -n "$(getvar CLOUDFLARE_TUNNEL_TOKEN)" ] && PROFILE="--profile tunnel"
+. ./profiles.sh
 
 say "Pulling images (first run takes a few minutes)"
 # shellcheck disable=SC2086
