@@ -11,7 +11,15 @@ REFRESH = "1//refresh-abc"
 ACCESS = "ya29.access-xyz"
 MCC = "1112223333"
 SA_EMAIL = "mcdp-ads-reader@mcdp-ads.iam.gserviceaccount.com"
+CLIENTS = {"4445556666": "Heights Orthodontics", "4445557777": "Havens Orthodontics"}
+ACCESSIBLE = {MCC}   # accounts the signed-in user/robot was added to; tests may change this
 LOG = []
+_DENIED = [{"error": {"code": 403, "message": "The caller does not have permission", "details": [{"errors": [{
+    "message": "User doesn't have permission to access customer. Note: If you're accessing a client customer, "
+               "the manager's customer id must be set in the 'login-customer-id' header."}]}]}}]
+_NOT_USER = [{"error": {"code": 401, "message": "Request is missing required authentication credential.", "details": [{
+    "errors": [{"message": "The Google account (@gmail.com user) that generated the OAuth access tokens is not "
+                           "associated with any Ads accounts."}]}]}}]
 
 
 def _days(since, until):
@@ -74,7 +82,11 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if u.path == "/v25/customers:listAccessibleCustomers":
-            return self._json(200, {"resourceNames": [f"customers/{MCC}"]})
+            dev = self.headers.get("developer-token")
+            if dev is not None and dev != GOOGLE_DEV:
+                return self._json(401, [{"error": {"code": 401, "message": "Unauthorized",
+                                                   "details": [{"errors": [{"message": "The developer token is not approved."}]}]}}])
+            return self._json(200, {"resourceNames": [f"customers/{c}" for c in sorted(ACCESSIBLE)]})
         self._json(404, {"error": {"message": "not found"}})
 
     # ---------------- POST ----------------
@@ -106,13 +118,23 @@ class H(BaseHTTPRequestHandler):
                                                    "details": [{"errors": [{"message": "The developer token is not approved."}]}]}}])
             if self.headers.get("Authorization") != f"Bearer {ACCESS}":
                 return self._json(401, [{"error": {"code": 401, "message": "Invalid credentials"}}])
+            if not ACCESSIBLE:
+                return self._json(401, _NOT_USER)
+            target = u.path.split("/customers/")[1].split("/")[0]
+            login = self.headers.get("login-customer-id") or target
+            # Google's rule: you must be a user on the login account, and the target must be it or under it.
+            if login not in ACCESSIBLE or not (target == login or (login == MCC and target in CLIENTS)):
+                return self._json(403, _DENIED)
             q = json.loads(body)["query"]
             if "FROM customer_client" in q:
-                assert self.headers.get("login-customer-id") == MCC
                 return self._json(200, [{"results": [
-                    {"customerClient": {"id": MCC, "descriptiveName": "MCDP Manager", "manager": True, "status": "ENABLED"}},
-                    {"customerClient": {"id": "4445556666", "descriptiveName": "Heights Orthodontics", "manager": False, "status": "ENABLED"}},
-                    {"customerClient": {"id": "4445557777", "descriptiveName": "Havens Orthodontics", "manager": False, "status": "ENABLED"}}]}])
+                    {"customerClient": {"id": MCC, "descriptiveName": "MCDP Manager", "manager": True, "status": "ENABLED"}}] + [
+                    {"customerClient": {"id": cid, "descriptiveName": n, "manager": False, "status": "ENABLED"}}
+                    for cid, n in CLIENTS.items()]}])
+            if q.rstrip().endswith("FROM customer"):
+                return self._json(200, [{"results": [{"customer": {
+                    "id": target, "descriptiveName": "MCDP Manager" if target == MCC else CLIENTS.get(target, target),
+                    "manager": target == MCC, "status": "ENABLED"}}]}])
             since, until = q.split("BETWEEN '")[1].split("'")[0], q.split("AND '")[1].split("'")[0]
             if "FROM campaign" in q:
                 res = []

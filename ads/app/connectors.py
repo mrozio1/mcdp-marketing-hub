@@ -256,6 +256,8 @@ class GoogleClient:
         else:
             raise ConnectorError("Google isn't set up yet. Upload a service account key on the Connections page.")
         self.login_cid = _clean_id(setting("GOOGLE_ADS_LOGIN_CUSTOMER_ID"))
+        self._route = {}  # practice account id -> account to log in through (itself or its manager)
+        self._discovered = False
 
     def _headers(self, login_cid=None):
         h = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
@@ -277,38 +279,74 @@ class GoogleClient:
         return out
 
     def accounts(self):
-        """Client accounts under the manager account (or directly accessible accounts)."""
+        """Every practice (non-manager) account the robot can read, found by asking Google which accounts
+        it was added to and expanding any manager accounts. The typed manager ID is only a hint, so a
+        wrong or missing one doesn't break anything. Also records which account to log in through."""
+        found, errors, roots = {}, [], []
         if self.login_cid:
-            res = self.query(self.login_cid, "SELECT customer_client.id, customer_client.descriptive_name, "
-                             "customer_client.manager, customer_client.status FROM customer_client "
-                             "WHERE customer_client.level <= 1")
-            accts = [{"id": str(r["customerClient"]["id"]),
-                      "name": r["customerClient"].get("descriptiveName") or str(r["customerClient"]["id"]),
-                      "active": r["customerClient"].get("status", "ENABLED") == "ENABLED"}
-                     for r in res if not r["customerClient"].get("manager")]
-        else:
+            roots.append(self.login_cid)
+        try:
             listed = _http(f"{GOOGLE_BASE}/{GOOGLE_VERSION}/customers:listAccessibleCustomers",
-                           headers=self._headers(), method="GET")
-            accts = []
-            for rn in listed.get("resourceNames", [])[:100]:
-                cid = rn.split("/")[-1]
-                try:
-                    res = self.query(cid, "SELECT customer.descriptive_name, customer.manager FROM customer",
-                                     login_cid=cid)
-                    c = res[0]["customer"] if res else {}
-                    if c.get("manager"):
-                        continue
-                    accts.append({"id": cid, "name": c.get("descriptiveName") or cid, "active": True})
-                except ConnectorError:
-                    continue
-        return sorted(accts, key=lambda a: a["name"].lower())
+                           headers={k: v for k, v in self._headers().items() if k != "login-customer-id"},
+                           method="GET")
+            roots += [rn.split("/")[-1] for rn in listed.get("resourceNames", [])]
+        except ConnectorError as e:
+            errors.append(str(e))
+        seen = set()
+        for cid in roots[:100]:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            try:
+                res = self.query(cid, "SELECT customer.id, customer.descriptive_name, customer.manager, "
+                                 "customer.status FROM customer", login_cid=cid)
+                c = res[0]["customer"] if res else {}
+                if c.get("manager"):
+                    for r in self.query(cid, "SELECT customer_client.id, customer_client.descriptive_name, "
+                                        "customer_client.manager, customer_client.status FROM customer_client",
+                                        login_cid=cid):
+                        cc = r["customerClient"]
+                        if cc.get("manager"):
+                            continue
+                        aid = str(cc["id"])
+                        found.setdefault(aid, {"id": aid, "name": cc.get("descriptiveName") or aid,
+                                               "active": cc.get("status", "ENABLED") == "ENABLED"})
+                        self._route.setdefault(aid, cid)
+                else:
+                    found[cid] = {"id": cid, "name": c.get("descriptiveName") or cid,
+                                  "active": c.get("status", "ENABLED") == "ENABLED"}
+                    self._route[cid] = cid
+            except ConnectorError as e:
+                errors.append(str(e))
+        self._discovered = True
+        if not found:
+            # A real problem (bad key, API not enabled) beats the generic "add the robot" advice.
+            real = [e for e in errors if "permission" not in e.lower() and "not associated" not in e.lower()
+                    and "hasn't been added" not in e]
+            if real:
+                raise ConnectorError(real[0])
+            raise ConnectorError(
+                "The robot account can't see any Google Ads accounts yet. In Google Ads (the manager "
+                "account, or each practice account): Admin → Access and security → Users → +, add the robot "
+                "account's email with Read only access. If it's listed there as pending, remove it and add it "
+                "again. Then click Refresh account lists.")
+        return sorted(found.values(), key=lambda a: a["name"].lower())
+
+    def _login_for(self, customer_id):
+        cid = _clean_id(customer_id)
+        if cid not in self._route and not self._discovered:
+            try:
+                self.accounts()
+            except ConnectorError:
+                pass
+        return self._route.get(cid) or self.login_cid or cid
 
     def campaign_rows(self, customer_id, since: date, until: date):
         res = self.query(customer_id, (
             "SELECT campaign.name, campaign.status, segments.date, metrics.cost_micros, metrics.impressions, "
             "metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign "
             f"WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}' "
-            "AND metrics.impressions > 0"))
+            "AND metrics.impressions > 0"), login_cid=self._login_for(customer_id))
         rows = []
         for r in res:
             m, c = r.get("metrics", {}), r.get("campaign", {})
@@ -328,7 +366,7 @@ class GoogleClient:
             "SELECT search_term_view.search_term, campaign.name, metrics.cost_micros, metrics.impressions, "
             "metrics.clicks, metrics.conversions FROM search_term_view "
             f"WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}' "
-            "AND metrics.impressions > 0"))
+            "AND metrics.impressions > 0"), login_cid=self._login_for(customer_id))
         rows = []
         for r in res:
             m = r.get("metrics", {})

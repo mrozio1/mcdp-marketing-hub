@@ -76,6 +76,35 @@ def test_google_errors_are_readable(env, monkeypatch):
         cx.GoogleClient(mp.REFRESH).accounts()
 
 
+def test_google_finds_accounts_whatever_manager_id_is_typed(env, monkeypatch):
+    cx, *_ = env
+    # Wrong "manager" ID (actually a practice account the robot wasn't added to directly)
+    monkeypatch.setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "444-555-6666")
+    g = cx.GoogleClient(mp.REFRESH)
+    assert [a["id"] for a in g.accounts()] == ["4445557777", "4445556666"]
+    assert len(g.campaign_rows("4445556666", date(2026, 10, 1), date(2026, 10, 2))) == 4   # routed via the manager
+    # No manager ID at all
+    monkeypatch.setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "")
+    g = cx.GoogleClient(mp.REFRESH)
+    assert len(g.search_term_rows("4445557777", date(2026, 10, 1), date(2026, 10, 2))) == 2
+
+
+def test_google_robot_added_to_practice_accounts_directly(env, monkeypatch):
+    cx, *_ = env
+    monkeypatch.setattr(mp, "ACCESSIBLE", {"4445556666"})
+    monkeypatch.setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "111-222-3333")   # typed, but robot isn't on it
+    g = cx.GoogleClient(mp.REFRESH)
+    assert g.accounts() == [{"id": "4445556666", "name": "Heights Orthodontics", "active": True}]
+    assert len(g.campaign_rows("4445556666", date(2026, 10, 1), date(2026, 10, 1))) == 2
+
+
+def test_google_robot_not_added_anywhere(env, monkeypatch):
+    cx, *_ = env
+    monkeypatch.setattr(mp, "ACCESSIBLE", set())
+    with pytest.raises(cx.ConnectorError, match="can't see any Google Ads accounts yet"):
+        cx.GoogleClient(mp.REFRESH).accounts()
+
+
 def test_sync_window():
     from app.sync import sync_window
     assert sync_window(date(2026, 10, 13)) == (date(2026, 10, 1), date(2026, 10, 13))
