@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Connections{% endblock %}
+{% block content %}
+<h1>Connections</h1>
+<p class="lede">Connected accounts are pulled automatically every night (around 5 a.m. Central). Nothing is ever changed in Meta or Google; the page only reads numbers.</p>
+
+<div class="conn-grid">
+  <section class="panel conn">
+    <h2>Meta Ads</h2>
+    {% if meta_on %}
+      {% set mc = checked.get('meta') %}
+      {% if mc and not mc.ok %}
+        <p class="state state-bad">Token problem</p><p class="small">{{ mc.error }}</p>
+      {% else %}
+        <p class="state state-good">Connected</p>
+        <p>{{ meta_accounts|length }} ad account{{ '' if meta_accounts|length == 1 else 's' }} visible.</p>
+      {% endif %}
+    {% else %}
+      <p class="state">Not set up</p>
+      <p class="small">Save a Meta system user token on the server: <code>sh connect-ads.sh meta TOKEN</code></p>
+    {% endif %}
+  </section>
+
+  <section class="panel conn">
+    <h2>Google Ads</h2>
+    {% if not google_keys %}
+      <p class="state">Not set up</p>
+      <p class="small">Save the Google Ads keys on the server: <code>sh connect-ads.sh google DEV_TOKEN CLIENT_ID CLIENT_SECRET MANAGER_ID</code></p>
+    {% elif not google_connected %}
+      <p class="state">Keys saved — sign-in needed</p>
+      <p><a class="btn" href="/google/connect">Connect Google</a></p>
+      <p class="small muted">Sign in with a Google account that can see the practices’ Google Ads accounts. Google’s sign-in page will send you back to <code>{{ redirect_uri }}</code>, so that address must be listed in the OAuth client.</p>
+    {% else %}
+      {% set gc = checked.get('google') %}
+      {% if gc and not gc.ok %}
+        <p class="state state-bad">Connection problem</p><p class="small">{{ gc.error }}</p>
+        <p><a class="btn btn-quiet" href="/google/connect">Connect Google again</a></p>
+      {% else %}
+        <p class="state state-good">Connected</p>
+        <p>{{ google_accounts|length }} Google Ads account{{ '' if google_accounts|length == 1 else 's' }} visible.</p>
+      {% endif %}
+      <form method="post" action="/google/disconnect" data-confirm="Disconnect Google? Already-synced numbers are kept."><button class="linklike danger" type="submit">Disconnect</button></form>
+    {% endif %}
+  </section>
+</div>
+
+{% if meta_on or google_connected %}
+<div class="conn-actions">
+  <form method="post" action="/connections/refresh" data-busy="Checking…"><button class="btn btn-quiet" type="submit">Refresh account lists</button></form>
+  <form method="post" action="/sync" data-busy="Syncing… this can take a minute"><input type="hidden" name="back" value="/connections"><button class="btn" type="submit">Sync now</button></form>
+  {% if checked.at %}<span class="muted small">Account lists checked {{ checked.at.replace('T', ' ')[:16] }}</span>{% endif %}
+</div>
+<p class="muted small">The next sync covers {{ window[0] }} to {{ window[1] }}. In the first three days of a month it pulls the whole previous month instead, so reports cover a complete month.</p>
+{% endif %}
+
+<h2 class="section-gap">Which practice uses which account</h2>
+{% if practices %}
+<div class="table-scroll"><table class="data links">
+  <thead><tr><th>Practice</th><th>Meta ad account</th><th>Google Ads account</th><th>Last sync</th></tr></thead>
+  <tbody>
+  {% for p in practices %}
+    {% set r = last_sync.get('results', {}).get(p.id|string) %}
+    <tr>
+      <td><a href="/p/{{ p.id }}">{{ p.name }}</a></td>
+      <td>{% if p.meta_account_id %}{{ (meta_accounts|selectattr('id', 'equalto', p.meta_account_id)|map(attribute='name')|first) or p.meta_account_id }}{% else %}<span class="muted">Not linked</span>{% endif %}</td>
+      <td>{% if p.google_customer_id %}{{ (google_accounts|selectattr('id', 'equalto', p.google_customer_id)|map(attribute='name')|first) or p.google_customer_id }}{% else %}<span class="muted">Not linked</span>{% endif %}</td>
+      <td class="small">
+        {% if r %}
+          {% for k, label in [('meta','Meta'), ('google','Google')] if k in r %}
+            {% if r[k].ok %}<span class="ok-note">{{ label }} ✓</span>{% else %}<span class="danger" title="{{ r[k].error }}">{{ label }}: {{ r[k].error[:80] }}</span>{% endif %}<br>
+          {% endfor %}
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p class="muted small">Link accounts on each practice’s page, under “Linked ad accounts”.</p>
+{% else %}
+<p class="muted">Add practices first on the <a href="/">Practices</a> page.</p>
+{% endif %}
+{% endblock %}

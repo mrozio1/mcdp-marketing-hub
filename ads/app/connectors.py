@@ -1,0 +1,272 @@
+"""
+Read-only connectors for Meta Ads (Marketing API insights) and Google Ads (API searchStream).
+Both return rows in the same shape as parse.parse_export(), so synced data flows
+through the exact same analysis as uploaded exports. Nothing is ever written to
+either platform.
+"""
+from __future__ import annotations
+
+import json
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date
+
+META_VERSION = os.environ.get("META_API_VERSION", "v25.0")
+META_BASE = os.environ.get("META_GRAPH_BASE", "https://graph.facebook.com").rstrip("/")
+GOOGLE_VERSION = os.environ.get("GOOGLE_ADS_API_VERSION", "v25")
+GOOGLE_BASE = os.environ.get("GOOGLE_ADS_BASE", "https://googleads.googleapis.com").rstrip("/")
+GOOGLE_TOKEN_URL = os.environ.get("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
+GOOGLE_AUTH_URL = os.environ.get("GOOGLE_OAUTH_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth")
+GOOGLE_SCOPE = "https://www.googleapis.com/auth/adwords"
+
+# Meta "results": lead-type actions counted as conversions. 'lead' already totals
+# instant-form + pixel leads, so the specific types are only used when it's absent.
+META_RESULT_ACTIONS = [a.strip() for a in os.environ.get(
+    "META_RESULT_ACTIONS", "lead,schedule_total,contact_total,submit_application_total").split(",") if a.strip()]
+META_LEAD_FALLBACK = ["onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]
+
+
+class ConnectorError(RuntimeError):
+    pass
+
+
+def _http(url, data=None, headers=None, method=None, timeout=60):
+    body = None
+    if data is not None:
+        body = data if isinstance(data, bytes) else json.dumps(data).encode()
+    req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode(errors="replace")
+        try:
+            j = json.loads(raw)
+        except ValueError:
+            j = None
+        raise ConnectorError(_explain(e.code, j, raw))
+    except urllib.error.URLError as e:
+        raise ConnectorError(f"Couldn't reach {urllib.parse.urlparse(url).netloc}: {e.reason}")
+
+
+def _explain(code, j, raw):
+    """Turn platform error payloads into one readable sentence."""
+    if isinstance(j, list) and j:
+        j = j[0]
+    if isinstance(j, dict):
+        err = j.get("error", j)
+        if isinstance(err, dict):
+            msg = err.get("error_user_msg") or err.get("message") or err.get("error_description") or ""
+            # Google Ads puts the useful part in details[].errors[].message
+            for d in err.get("details", []) or []:
+                for e in (d.get("errors") or []):
+                    if e.get("message"):
+                        msg = e["message"]
+                        break
+            if j.get("error_description"):
+                msg = j["error_description"]
+            if msg:
+                return f"{msg} (HTTP {code})"
+        elif isinstance(err, str):
+            return f"{j.get('error_description') or err} (HTTP {code})"
+    return f"HTTP {code}: {raw[:200]}"
+
+
+def _blank_row(platform, level):
+    return {"platform": platform, "level": level, "date": None, "date_start": None, "date_end": None,
+            "campaign": "", "name": "", "spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0,
+            "conv_value": 0.0, "status": "", "budget": 0.0, "match_type": ""}
+
+
+# ------------------------------------------------------------------ Meta
+def meta_configured():
+    return bool(os.environ.get("META_ACCESS_TOKEN"))
+
+
+def _meta_get(path, params):
+    token = os.environ.get("META_ACCESS_TOKEN", "")
+    if not token:
+        raise ConnectorError("No Meta token saved yet.")
+    q = urllib.parse.urlencode({**params, "access_token": token})
+    return _http(f"{META_BASE}/{META_VERSION}/{path}?{q}")
+
+
+def _meta_paged(path, params, limit_pages=50):
+    data = _meta_get(path, params)
+    out = list(data.get("data", []))
+    pages = 1
+    while data.get("paging", {}).get("next") and pages < limit_pages:
+        data = _http(data["paging"]["next"])
+        out.extend(data.get("data", []))
+        pages += 1
+    return out
+
+
+def meta_accounts():
+    """Ad accounts the token can read: [{'id': '1234', 'name': ..., 'currency': ...}]"""
+    rows = _meta_paged("me/adaccounts", {"fields": "name,account_id,currency,account_status", "limit": 200})
+    return sorted(({"id": r["account_id"], "name": r.get("name") or r["account_id"],
+                    "currency": r.get("currency", ""), "active": r.get("account_status") == 1} for r in rows),
+                  key=lambda a: a["name"].lower())
+
+
+def _meta_results(actions):
+    counts = {a.get("action_type"): float(a.get("value") or 0) for a in actions or []}
+    total = sum(counts.get(t, 0.0) for t in META_RESULT_ACTIONS)
+    if "lead" in META_RESULT_ACTIONS and "lead" not in counts:
+        total += sum(counts.get(t, 0.0) for t in META_LEAD_FALLBACK)
+    return total
+
+
+def meta_campaign_rows(account_id, since: date, until: date):
+    account_id = str(account_id).removeprefix("act_")
+    data = _meta_paged(f"act_{account_id}/insights", {
+        "level": "campaign",
+        "time_increment": 1,
+        "time_range": json.dumps({"since": since.isoformat(), "until": until.isoformat()}),
+        "fields": "campaign_name,spend,impressions,inline_link_clicks,actions,date_start,date_stop",
+        "limit": 500,
+    })
+    rows = []
+    for r in data:
+        d = date.fromisoformat(r["date_start"])
+        row = _blank_row("meta", "campaign")
+        row.update(date=d, date_start=d, date_end=date.fromisoformat(r.get("date_stop", r["date_start"])),
+                   campaign=r.get("campaign_name") or "(no name)",
+                   spend=round(float(r.get("spend") or 0), 2),
+                   impressions=int(float(r.get("impressions") or 0)),
+                   clicks=int(float(r.get("inline_link_clicks") or 0)),
+                   conversions=round(_meta_results(r.get("actions")), 2))
+        rows.append(row)
+    return rows
+
+
+# ------------------------------------------------------------------ Google
+def google_configured():
+    return all(os.environ.get(k) for k in
+               ("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"))
+
+
+def google_auth_url(redirect_uri, state):
+    return GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode({
+        "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"], "redirect_uri": redirect_uri,
+        "response_type": "code", "scope": GOOGLE_SCOPE, "access_type": "offline",
+        "prompt": "consent", "include_granted_scopes": "true", "state": state})
+
+
+def google_exchange_code(code, redirect_uri):
+    data = urllib.parse.urlencode({
+        "code": code, "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+        "client_secret": os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+        "redirect_uri": redirect_uri, "grant_type": "authorization_code"}).encode()
+    tok = _http(GOOGLE_TOKEN_URL, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    if not tok.get("refresh_token"):
+        raise ConnectorError("Google didn't return a long-term sign-in. Remove the app's access at "
+                             "myaccount.google.com/permissions and connect again.")
+    return tok["refresh_token"]
+
+
+def _google_access_token(refresh_token):
+    data = urllib.parse.urlencode({
+        "refresh_token": refresh_token, "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+        "client_secret": os.environ["GOOGLE_OAUTH_CLIENT_SECRET"], "grant_type": "refresh_token"}).encode()
+    return _http(GOOGLE_TOKEN_URL, data=data,
+                 headers={"Content-Type": "application/x-www-form-urlencoded"})["access_token"]
+
+
+def _clean_id(cid):
+    return "".join(ch for ch in str(cid) if ch.isdigit())
+
+
+class GoogleClient:
+    def __init__(self, refresh_token):
+        if not google_configured():
+            raise ConnectorError("Google Ads keys aren't saved yet.")
+        if not refresh_token:
+            raise ConnectorError("Google isn't connected yet. Use 'Connect Google' on the Connections page.")
+        self.token = _google_access_token(refresh_token)
+        self.login_cid = _clean_id(os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID", ""))
+
+    def _headers(self, login_cid=None):
+        h = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
+             "developer-token": os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"]}
+        lc = login_cid or self.login_cid
+        if lc:
+            h["login-customer-id"] = lc
+        return h
+
+    def query(self, customer_id, gaql, login_cid=None):
+        url = f"{GOOGLE_BASE}/{GOOGLE_VERSION}/customers/{_clean_id(customer_id)}/googleAds:searchStream"
+        batches = _http(url, data={"query": gaql}, headers=self._headers(login_cid), timeout=120)
+        out = []
+        for b in batches if isinstance(batches, list) else [batches]:
+            out.extend(b.get("results", []))
+        return out
+
+    def accounts(self):
+        """Client accounts under the manager account (or directly accessible accounts)."""
+        if self.login_cid:
+            res = self.query(self.login_cid, "SELECT customer_client.id, customer_client.descriptive_name, "
+                             "customer_client.manager, customer_client.status FROM customer_client "
+                             "WHERE customer_client.level <= 1")
+            accts = [{"id": str(r["customerClient"]["id"]),
+                      "name": r["customerClient"].get("descriptiveName") or str(r["customerClient"]["id"]),
+                      "active": r["customerClient"].get("status", "ENABLED") == "ENABLED"}
+                     for r in res if not r["customerClient"].get("manager")]
+        else:
+            listed = _http(f"{GOOGLE_BASE}/{GOOGLE_VERSION}/customers:listAccessibleCustomers",
+                           headers=self._headers(), method="GET")
+            accts = []
+            for rn in listed.get("resourceNames", [])[:100]:
+                cid = rn.split("/")[-1]
+                try:
+                    res = self.query(cid, "SELECT customer.descriptive_name, customer.manager FROM customer",
+                                     login_cid=cid)
+                    c = res[0]["customer"] if res else {}
+                    if c.get("manager"):
+                        continue
+                    accts.append({"id": cid, "name": c.get("descriptiveName") or cid, "active": True})
+                except ConnectorError:
+                    continue
+        return sorted(accts, key=lambda a: a["name"].lower())
+
+    def campaign_rows(self, customer_id, since: date, until: date):
+        res = self.query(customer_id, (
+            "SELECT campaign.name, campaign.status, segments.date, metrics.cost_micros, metrics.impressions, "
+            "metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign "
+            f"WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}' "
+            "AND metrics.impressions > 0"))
+        rows = []
+        for r in res:
+            m, c = r.get("metrics", {}), r.get("campaign", {})
+            d = date.fromisoformat(r["segments"]["date"])
+            row = _blank_row("google", "campaign")
+            row.update(date=d, date_start=d, date_end=d, campaign=c.get("name") or "(no name)",
+                       status=(c.get("status") or "").title(),
+                       spend=round(int(m.get("costMicros", 0)) / 1_000_000, 2),
+                       impressions=int(m.get("impressions", 0)), clicks=int(m.get("clicks", 0)),
+                       conversions=round(float(m.get("conversions", 0)), 2),
+                       conv_value=round(float(m.get("conversionsValue", 0)), 2))
+            rows.append(row)
+        return rows
+
+    def search_term_rows(self, customer_id, since: date, until: date):
+        res = self.query(customer_id, (
+            "SELECT search_term_view.search_term, campaign.name, metrics.cost_micros, metrics.impressions, "
+            "metrics.clicks, metrics.conversions FROM search_term_view "
+            f"WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}' "
+            "AND metrics.impressions > 0"))
+        rows = []
+        for r in res:
+            m = r.get("metrics", {})
+            row = _blank_row("google", "search_term")
+            row.update(date_start=since, date_end=until, campaign=r.get("campaign", {}).get("name") or "",
+                       name=r.get("searchTermView", {}).get("searchTerm") or "",
+                       spend=round(int(m.get("costMicros", 0)) / 1_000_000, 2),
+                       impressions=int(m.get("impressions", 0)), clicks=int(m.get("clicks", 0)),
+                       conversions=round(float(m.get("conversions", 0)), 2))
+            if row["name"]:
+                rows.append(row)
+        return rows

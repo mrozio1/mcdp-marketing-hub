@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS rows (
   status TEXT, budget REAL, match_type TEXT
 );
 CREATE INDEX IF NOT EXISTS rows_upload ON rows(upload_id);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
 CREATE TABLE IF NOT EXISTS ai_outputs (
   id INTEGER PRIMARY KEY,
   practice_id INTEGER NOT NULL REFERENCES practices(id) ON DELETE CASCADE,
@@ -59,9 +63,36 @@ def conn():
         c.close()
 
 
+MIGRATIONS = {
+    "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''"},
+    "uploads": {"source": "TEXT DEFAULT 'upload'"},
+}
+
+
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            for col, decl in cols.items():
+                if col not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
+# ---- settings (small key/value store) ----
+def get_setting(key, default=None):
+    with conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else default
+
+
+def set_setting(key, value):
+    with conn() as c:
+        if value is None:
+            c.execute("DELETE FROM settings WHERE key=?", (key,))
+        else:
+            c.execute("INSERT INTO settings(key, value) VALUES (?,?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
 
 def now():
@@ -97,21 +128,27 @@ def update_practice(pid, name, google_budget, meta_budget, notes):
                   (name.strip(), google_budget, meta_budget, notes, pid))
 
 
+def set_practice_accounts(pid, meta_account_id, google_customer_id):
+    with conn() as c:
+        c.execute("UPDATE practices SET meta_account_id=?, google_customer_id=? WHERE id=?",
+                  (meta_account_id or "", google_customer_id or "", pid))
+
+
 def delete_practice(pid):
     with conn() as c:
         c.execute("DELETE FROM practices WHERE id=?", (pid,))
 
 
 # ---- uploads ----
-def save_upload(pid, parsed, filename):
+def save_upload(pid, parsed, filename, source="upload"):
     with conn() as c:
         cur = c.execute(
-            "INSERT INTO uploads(practice_id, platform, level, filename, date_start, date_end, row_count, uploaded_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO uploads(practice_id, platform, level, filename, date_start, date_end, row_count, "
+            "uploaded_at, source) VALUES (?,?,?,?,?,?,?,?,?)",
             (pid, parsed["platform"], parsed["level"], filename,
              parsed["date_start"].isoformat() if parsed["date_start"] else None,
              parsed["date_end"].isoformat() if parsed["date_end"] else None,
-             len(parsed["rows"]), now()))
+             len(parsed["rows"]), now(), source))
         uid = cur.lastrowid
         c.executemany(
             "INSERT INTO rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -122,6 +159,15 @@ def save_upload(pid, parsed, filename):
               r["campaign"], r["name"], r["spend"], r["impressions"], r["clicks"], r["conversions"],
               r["conv_value"], r["status"], r["budget"], r["match_type"]) for r in parsed["rows"]])
         return uid
+
+
+def prune_synced(pid, platform, level, keep=3):
+    """Nightly syncs replace each other; keep only the newest few."""
+    with conn() as c:
+        old = [r["id"] for r in c.execute(
+            "SELECT id FROM uploads WHERE practice_id=? AND platform=? AND level=? AND source='sync' "
+            "ORDER BY uploaded_at DESC, id DESC LIMIT -1 OFFSET ?", (pid, platform, level, keep))]
+        c.executemany("DELETE FROM uploads WHERE id=?", [(i,) for i in old])
 
 
 def uploads(pid):

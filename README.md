@@ -100,7 +100,27 @@ sh enable-ads.sh off
 Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 `ads.<mcdp-domain>` → `http://ads:8000`.
 
-Tests: `cd ads && python -m pytest tests`.
+### Automatic nightly pulls (phase 2)
+
+Read-only connections; nothing is changed in either platform. Each night
+(10:00 UTC ≈ 5 a.m. Central, or **Sync now**) the page pulls month-to-date daily
+campaign data, plus Google search terms, for every practice with linked accounts.
+In the first three days of a month it pulls the whole previous month instead.
+Synced data replaces the previous sync (newest 3 kept) and goes through the same
+analysis as uploads.
+
+```sh
+sh connect-ads.sh meta SYSTEM_USER_TOKEN                     # Meta Business system user, ads_read
+sh connect-ads.sh google DEV_TOKEN CLIENT_ID CLIENT_SECRET MANAGER_ID
+```
+
+Then on the Ads page: **Connections → Connect Google**, and link each practice's
+accounts under **Linked ad accounts**. Meta "results" count `lead`,
+`schedule_total`, `contact_total` and `submit_application_total` actions
+(override with `META_RESULT_ACTIONS`). API versions: Meta v25.0, Google Ads v25
+(override with `META_API_VERSION` / `GOOGLE_ADS_API_VERSION`).
+
+Tests: `cd ads && ADS_DISABLE_SCHEDULER=1 python -m pytest tests` (includes a mock of the Meta and Google APIs).
 
 ## Maintenance
 

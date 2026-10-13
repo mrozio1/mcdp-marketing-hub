@@ -182,6 +182,13 @@ services:
       AI_BASE_URL: http://litellm:4000/v1
       AI_API_KEY: ${LITELLM_MASTER_KEY:-}
       AI_MODEL: gpt-4.1
+      ADS_PUBLIC_URL: ${ADS_PUBLIC_URL:-}
+      # Phase 2: automatic nightly pulls (set by connect-ads.sh)
+      META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:-}
+      GOOGLE_ADS_DEVELOPER_TOKEN: ${GOOGLE_ADS_DEVELOPER_TOKEN:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${GOOGLE_ADS_LOGIN_CUSTOMER_ID:-}
     volumes:
       - ads-data:/data
     ports:

@@ -128,7 +128,7 @@ label { display: grid; gap: 0.3rem; font-weight: 500; font-size: 0.92rem; }
 .sev-medium { border-left-color: var(--amber); }
 .sev-low { border-left-color: #7FA3AB; }
 .ok-note { color: var(--green); font-weight: 500; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-top: 0.75rem; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.25rem; margin-top: 0.75rem; }
 table.data { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 table.data th { text-align: left; font-weight: 600; color: var(--ink-soft); font-size: 0.8rem; border-bottom: 1px solid var(--line); padding: 0.35rem 0.4rem; }
 table.data td { border-bottom: 1px solid #EDF1F2; padding: 0.4rem; vertical-align: top; }
@@ -153,6 +153,27 @@ details.campaigns table { margin-top: 0.6rem; }
 .prose table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.6rem 0; }
 .prose th, .prose td { border-bottom: 1px solid var(--line); padding: 0.35rem 0.4rem; text-align: left; vertical-align: top; }
 
+/* ---- connections ---- */
+.lede { max-width: 70ch; color: var(--ink-soft); margin-top: -0.5rem; }
+.title-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; }
+.title-row h1 { margin: 0; }
+.sync-form { display: flex; align-items: center; gap: 0.75rem; }
+.conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.25rem 0 0.5rem; }
+.conn .state { font-weight: 700; margin-bottom: 0.4rem; color: var(--ink-soft); }
+.conn .state-good { color: var(--green); }
+.conn .state-bad { color: var(--rose); }
+.conn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 0.5rem 0; }
+.section-gap { margin-top: 2rem; }
+table.links { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-m); }
+table.links td, table.links th { padding: 0.6rem 0.75rem; }
+select { font: inherit; color: inherit; width: 100%; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--paper); }
+.tag { font-size: 0.78rem; font-weight: 600; color: var(--teal); background: #E3F1F0; padding: 0.05rem 0.4rem; border-radius: var(--radius-s); }
+.inline-sync { margin-top: 0.6rem; }
+
+/* wide tables scroll inside their own box on small screens */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll table { min-width: 34rem; }
+
 /* ---- login ---- */
 .login { max-width: 22rem; margin: 12vh auto; padding: 0 1rem; }
 .brand-big { font-size: 2.2rem; margin-bottom: 0.25rem; }
@@ -173,15 +194,16 @@ details.campaigns table { margin-top: 0.6rem; }
 }
 
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
   .side-col { order: -1; }
   .row-form { grid-template-columns: 1fr 1fr; }
+  .conn-grid { grid-template-columns: 1fr; }
   .row-form label:first-child { grid-column: 1 / -1; }
 }
 @media (max-width: 640px) {
   h1 { font-size: 1.6rem; }
   .stats { grid-template-columns: 1fr 1fr; }
-  .two, .report-pacing { grid-template-columns: 1fr; }
+  .two, .report-pacing { grid-template-columns: minmax(0, 1fr); }
   .row-form { grid-template-columns: 1fr; }
   .practices thead { display: none; }
   .practices, .practices tbody, .practices tr, .practices th, .practices td { display: block; width: 100% !important; }

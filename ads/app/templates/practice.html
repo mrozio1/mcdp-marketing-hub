@@ -11,7 +11,7 @@
     {% set has_data = views|selectattr('upload')|list or views|selectattr('search_upload')|list %}
     {% if not has_data %}
       <section class="empty">
-        <p>Upload this practice’s first export to see results. Use the form on the right.</p>
+        <p>{% if p.meta_account_id or p.google_customer_id %}This practice’s accounts are linked. Use “Sync now” to pull its numbers, or wait for tonight’s sync.{% else %}Upload this practice’s first export to see results, or link its ad accounts on the right.{% endif %}</p>
       </section>
     {% endif %}
 
@@ -19,7 +19,7 @@
     <section class="platform" id="{{ v.key }}">
       <h2>{{ v.label }}</h2>
       {% if v.upload %}
-        <p class="muted small">From {{ v.upload.filename }} · {{ v.upload.date_start or '?' }} to {{ v.upload.date_end or '?' }}</p>
+        <p class="muted small">{% if v.upload.source == 'sync' %}Synced {{ v.upload.uploaded_at.replace('T', ' ')[:16] }}{% else %}From {{ v.upload.filename }}{% endif %} · {{ v.upload.date_start or '?' }} to {{ v.upload.date_end or '?' }}</p>
       {% endif %}
 
       {{ ruler(v.pacing, 'Budget pacing') }}
@@ -68,7 +68,7 @@
       {% if v.campaigns %}
       <details class="campaigns">
         <summary>All campaigns ({{ v.campaigns|length }})</summary>
-        <table class="data">
+        <div class="table-scroll"><table class="data">
           <thead><tr><th>Campaign</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Conv.</th><th class="num">Cost/conv.</th><th class="num">CTR</th></tr></thead>
           <tbody>
           {% for c in v.campaigns %}
@@ -76,7 +76,7 @@
                 <td class="num">{{ '%g'|format(c.conversions) }}</td><td class="num">{{ c.cpa|money }}</td><td class="num">{{ c.ctr|pct }}</td></tr>
           {% endfor %}
           </tbody>
-        </table>
+        </table></div>
       </details>
       {% endif %}
     </section>
@@ -121,6 +121,38 @@
       </details>
     </section>
 
+    {% if meta_on or google_on %}
+    <section class="panel">
+      <h2>Linked ad accounts</h2>
+      <form method="post" action="/p/{{ p.id }}/accounts" class="stack">
+        {% if meta_on %}
+        <label>Meta ad account
+          <select name="meta_account_id">
+            <option value="">Not linked</option>
+            {% for a in meta_accounts %}<option value="{{ a.id }}" {% if a.id == p.meta_account_id %}selected{% endif %}>{{ a.name }}{% if not a.active %} (inactive){% endif %}</option>{% endfor %}
+            {% if p.meta_account_id and not (meta_accounts|selectattr('id', 'equalto', p.meta_account_id)|list) %}<option value="{{ p.meta_account_id }}" selected>{{ p.meta_account_id }}</option>{% endif %}
+          </select>
+        </label>
+        {% else %}<input type="hidden" name="meta_account_id" value="{{ p.meta_account_id or '' }}">{% endif %}
+        {% if google_on %}
+        <label>Google Ads account
+          <select name="google_customer_id">
+            <option value="">Not linked</option>
+            {% for a in google_accounts %}<option value="{{ a.id }}" {% if a.id == p.google_customer_id %}selected{% endif %}>{{ a.name }} ({{ a.id[:3] }}-{{ a.id[3:6] }}-{{ a.id[6:] }}){% if not a.active %} (inactive){% endif %}</option>{% endfor %}
+            {% if p.google_customer_id and not (google_accounts|selectattr('id', 'equalto', p.google_customer_id)|list) %}<option value="{{ p.google_customer_id }}" selected>{{ p.google_customer_id }}</option>{% endif %}
+          </select>
+        </label>
+        {% else %}<input type="hidden" name="google_customer_id" value="{{ p.google_customer_id or '' }}">{% endif %}
+        <button type="submit" class="btn btn-quiet">Save links</button>
+      </form>
+      {% if p.meta_account_id or p.google_customer_id %}
+      <form method="post" action="/sync" data-busy="Syncing…" class="inline-sync">
+        <input type="hidden" name="back" value="/p/{{ p.id }}"><button class="linklike" type="submit">Sync now</button>
+      </form>
+      {% endif %}
+    </section>
+    {% endif %}
+
     <section class="panel">
       <h2>Budgets and notes</h2>
       <form method="post" action="/p/{{ p.id }}/settings" class="stack">
@@ -138,7 +170,7 @@
       <ul class="uploads">
         {% for u in uploads %}
         <li>
-          <span>{{ 'Google' if u.platform == 'google' else 'Meta' }} · {{ {'campaign':'campaigns','search_term':'search terms','ad':'ad sets/ads'}[u.level] }}<br>
+          <span>{{ 'Google' if u.platform == 'google' else 'Meta' }} · {{ {'campaign':'campaigns','search_term':'search terms','ad':'ad sets/ads'}[u.level] }}{% if u.source == 'sync' %} · <span class="tag">synced</span>{% endif %}<br>
           <span class="muted small">{{ u.date_start or '?' }} to {{ u.date_end or '?' }} · {{ u.row_count }} rows</span></span>
           <form method="post" action="/p/{{ p.id }}/uploads/{{ u.id }}/delete" data-confirm="Remove this upload?"><button class="linklike danger" type="submit">Remove</button></form>
         </li>

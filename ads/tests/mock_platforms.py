@@ -1,0 +1,133 @@
+"""Stand-in for Meta Graph API, Google Ads API and Google OAuth, mimicking real response shapes."""
+import json
+import threading
+import urllib.parse
+from datetime import date, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+META_TOKEN = "EAAG-good-meta-token"
+GOOGLE_DEV = "dev-token-123"
+REFRESH = "1//refresh-abc"
+ACCESS = "ya29.access-xyz"
+MCC = "1112223333"
+LOG = []
+
+
+def _days(since, until):
+    d = date.fromisoformat(since)
+    while d <= date.fromisoformat(until):
+        yield d
+        d += timedelta(days=1)
+
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _json(self, code, obj):
+        b = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    # ---------------- GET ----------------
+    def do_GET(self):
+        u = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        LOG.append(("GET", u.path, dict(self.headers)))
+        if u.path.startswith("/v25.0/"):
+            if q.get("access_token") != META_TOKEN:
+                return self._json(400, {"error": {"message": "Invalid OAuth access token - Cannot parse access token",
+                                                  "type": "OAuthException", "code": 190}})
+            if u.path == "/v25.0/me/adaccounts":
+                return self._json(200, {"data": [
+                    {"account_id": "555001", "name": "Heights Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555001"},
+                    {"account_id": "555002", "name": "Havens Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555002"},
+                    {"account_id": "555009", "name": "Old Test Account", "currency": "USD", "account_status": 2, "id": "act_555009"}]})
+            if u.path.endswith("/insights"):
+                tr = json.loads(q["time_range"])
+                rows = []
+                for d in _days(tr["since"], tr["until"]):
+                    rows.append({"campaign_name": "Heights - Free Consult Leads", "spend": "14.50", "impressions": "1200",
+                                 "inline_link_clicks": "22", "date_start": d.isoformat(), "date_stop": d.isoformat(),
+                                 "actions": [{"action_type": "lead", "value": "1"},
+                                             {"action_type": "onsite_conversion.lead_grouped", "value": "1"},
+                                             {"action_type": "link_click", "value": "22"}]})
+                    rows.append({"campaign_name": "Heights - Smile Gallery Video", "spend": "11.20", "impressions": "3300",
+                                 "inline_link_clicks": "14", "date_start": d.isoformat(), "date_stop": d.isoformat(),
+                                 "actions": [{"action_type": "video_view", "value": "900"}]})
+                # page 1 / page 2 like the real API
+                page = int(q.get("page", "1"))
+                half = len(rows) // 2
+                if page == 1:
+                    nxt = f"http://{self.headers['Host']}{u.path}?{urllib.parse.urlencode({**q, 'page': 2})}"
+                    return self._json(200, {"data": rows[:half], "paging": {"next": nxt}})
+                return self._json(200, {"data": rows[half:], "paging": {}})
+        if u.path == "/o/oauth2/v2/auth":
+            # Pretend the user approved: bounce back with a code
+            back = q["redirect_uri"] + "?" + urllib.parse.urlencode({"code": "auth-code-1", "state": q["state"]})
+            self.send_response(302)
+            self.send_header("Location", back)
+            self.end_headers()
+            return
+        if u.path == "/v25/customers:listAccessibleCustomers":
+            return self._json(200, {"resourceNames": [f"customers/{MCC}"]})
+        self._json(404, {"error": {"message": "not found"}})
+
+    # ---------------- POST ----------------
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        LOG.append(("POST", u.path, dict(self.headers), body))
+        if u.path == "/token":
+            f = dict(urllib.parse.parse_qsl(body))
+            if f.get("grant_type") == "authorization_code" and f.get("code") == "auth-code-1":
+                return self._json(200, {"access_token": ACCESS, "refresh_token": REFRESH, "expires_in": 3599})
+            if f.get("grant_type") == "refresh_token" and f.get("refresh_token") == REFRESH:
+                return self._json(200, {"access_token": ACCESS, "expires_in": 3599})
+            return self._json(400, {"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
+        if u.path.endswith("googleAds:searchStream"):
+            if self.headers.get("developer-token") != GOOGLE_DEV:
+                return self._json(401, [{"error": {"code": 401, "message": "Request is missing required authentication credential.",
+                                                   "details": [{"errors": [{"message": "The developer token is not approved."}]}]}}])
+            if self.headers.get("Authorization") != f"Bearer {ACCESS}":
+                return self._json(401, [{"error": {"code": 401, "message": "Invalid credentials"}}])
+            q = json.loads(body)["query"]
+            if "FROM customer_client" in q:
+                assert self.headers.get("login-customer-id") == MCC
+                return self._json(200, [{"results": [
+                    {"customerClient": {"id": MCC, "descriptiveName": "MCDP Manager", "manager": True, "status": "ENABLED"}},
+                    {"customerClient": {"id": "4445556666", "descriptiveName": "Heights Orthodontics", "manager": False, "status": "ENABLED"}},
+                    {"customerClient": {"id": "4445557777", "descriptiveName": "Havens Orthodontics", "manager": False, "status": "ENABLED"}}]}])
+            since, until = q.split("BETWEEN '")[1].split("'")[0], q.split("AND '")[1].split("'")[0]
+            if "FROM campaign" in q:
+                res = []
+                for d in _days(since, until):
+                    res.append({"campaign": {"name": "Invisalign - Search", "status": "ENABLED"}, "segments": {"date": d.isoformat()},
+                                "metrics": {"costMicros": "48250000", "impressions": "410", "clicks": "21", "conversions": 1.5,
+                                            "conversionsValue": 0.0}})
+                    res.append({"campaign": {"name": "PMax - Smile Promo", "status": "ENABLED"}, "segments": {"date": d.isoformat()},
+                                "metrics": {"costMicros": "20000000", "impressions": "1630", "clicks": "14"}})
+                # streamed in two batches like the real API
+                return self._json(200, [{"results": res[: len(res) // 2]}, {"results": res[len(res) // 2:]}])
+            if "FROM search_term_view" in q:
+                return self._json(200, [{"results": [
+                    {"searchTermView": {"searchTerm": "invisalign cost near me"}, "campaign": {"name": "Invisalign - Search"},
+                     "metrics": {"costMicros": "235200000", "impressions": "1204", "clicks": "98", "conversions": 12.0}},
+                    {"searchTermView": {"searchTerm": "invisalign jobs"}, "campaign": {"name": "Invisalign - Search"},
+                     "metrics": {"costMicros": "60450000", "impressions": "402", "clicks": "31"}}]}])
+        self._json(404, {"error": {"message": "not found"}})
+
+
+def start(port=9944):
+    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+if __name__ == "__main__":
+    import sys
+    srv = ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 9944), H)
+    srv.serve_forever()
