@@ -96,6 +96,14 @@ All numbers are calculated exactly; the AI only explains them, following rules
 condensed from [claude-ads](https://github.com/AgriciDaniel/claude-ads) (see
 `ads/NOTICE.md`).
 
+### Emailing results (Outlook)
+
+**Email this page** on a practice page (or **Email this report** on the report) opens a
+preview of an Outlook-safe email (tables and inline styles only, so Outlook for Windows
+draws it correctly). Tick which sections to include, then either **Copy for Outlook**
+and paste into a new message, or **Download Outlook draft (.eml)**, which Outlook for
+Windows opens as an unsent draft ready to address. Write-ups can be removed with the ×.
+
 ### Making the fixes (approve each change)
 
 On a practice page, **Prepare fixes** turns the findings into exact changes, checked

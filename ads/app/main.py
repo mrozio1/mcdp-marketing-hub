@@ -11,12 +11,12 @@ from pathlib import Path
 
 import markdown as md
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, scope, sync
+from . import actions, ai, db, emailfmt, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -400,6 +400,74 @@ async def fixes_draft(request: Request, pid: int, target: str = Form("")):
     except (actions.ActionError, ai.AIError, cx.ConnectorError) as e:
         flash(request, str(e), "error")
     return _fix_back(pid)
+
+
+@app.post("/p/{pid}/ai/{kind}/delete")
+def ai_delete(request: Request, pid: int, kind: str, back: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if kind in ai.TASKS:
+        db.delete_ai(pid, kind)
+        flash(request, {"fixes": "Fix list removed.", "creative": "Ad ideas removed.",
+                        "report": "Monthly report removed."}[kind])
+    return RedirectResponse(f"/p/{pid}" + ("#ai" if back != "report" else ""), status_code=303)
+
+
+# ---------- email export (Outlook-friendly) ----------
+def _email_parts(p, inc_param):
+    from datetime import date as _date
+    allp = db.practices()
+    views = practice_views(p, with_breakdown=True)
+    writeups = {}
+    for kind in ("fixes", "creative", "report"):
+        out = db.latest_ai(p["id"], kind)
+        if out:
+            writeups[kind] = emailfmt.inline_styles(render_md(out["content"]))
+    month = _date.today().isoformat()[:7]
+    changes = [c for c in db.changes(p["id"], ["applied"]) if (c.get("applied_at") or "").startswith(month)]
+    master = is_master(p, allp)
+    available = {"summary": any(v["totals"] for v in views),
+                 "practices": any(v["breakdown"] and v["breakdown"]["by_practice"] for v in views),
+                 "attention": any(v["findings"] for v in views),
+                 "search": any(v["search_terms"] for v in views),
+                 "campaigns": any(v["campaigns"] for v in views),
+                 "fixes": "fixes" in writeups, "creative": "creative" in writeups, "report": "report" in writeups,
+                 "changes": bool(changes)}
+    if inc_param is None:
+        inc = {k for k, ok in available.items() if ok}
+    else:
+        inc = {k for k in inc_param.split(",") if available.get(k)}
+    subject = emailfmt.subject_for(p, views)
+    doc = templates.env.get_template("email_body.html").render(
+        p=p, views=views, master=master, inc=inc, writeups=writeups, changes=changes, em=emailfmt,
+        subject=subject, today=_date.today().strftime("%B %-d, %Y"))
+    return {"doc": doc, "subject": subject, "inc": inc, "available": available}
+
+
+@app.get("/p/{pid}/email", response_class=HTMLResponse)
+def email_preview(request: Request, pid: int, inc: str | None = None, picked: str = ""):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/", status_code=303)
+    parts = _email_parts(p, inc if (inc is not None or picked) else None)
+    body = parts["doc"].split("<body", 1)[1].split(">", 1)[1].rsplit("</body>", 1)[0]
+    return page(request, "email.html", p=p, body=body, subject=parts["subject"], inc=parts["inc"],
+                available=parts["available"], sections=emailfmt.SECTIONS, inc_param=",".join(sorted(parts["inc"])))
+
+
+@app.get("/p/{pid}/email.eml")
+def email_download(request: Request, pid: int, inc: str | None = None):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/", status_code=303)
+    parts = _email_parts(p, inc)
+    fname = re.sub(r"[^A-Za-z0-9 _-]+", "", parts["subject"]).strip().replace(" ", "-")[:80] or "ad-results"
+    return Response(emailfmt.eml(parts["subject"], parts["doc"]), media_type="message/rfc822",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.eml"'})
 
 
 @app.get("/p/{pid}/report", response_class=HTMLResponse)

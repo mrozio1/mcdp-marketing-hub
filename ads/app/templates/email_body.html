@@ -1,0 +1,151 @@
+{#- Outlook-safe email: tables + inline styles only. `inc` = sections to include. -#}
+{%- set F = em.FONT -%}
+{%- set td = "font-family:" ~ F ~ ";font-size:13px;color:" ~ em.INK ~ ";border-bottom:1px solid " ~ em.LINE ~ ";padding:6px 8px;" -%}
+{%- set th = "font-family:" ~ F ~ ";font-size:12px;color:" ~ em.SOFT ~ ";font-weight:600;text-align:left;border-bottom:1px solid " ~ em.LINE ~ ";padding:6px 8px;" -%}
+{%- set h2 = "font-family:" ~ F ~ ";font-size:18px;font-weight:700;color:" ~ em.INK ~ ";margin:0 0 8px;" -%}
+{%- set h3 = "font-family:" ~ F ~ ";font-size:15px;font-weight:700;color:" ~ em.INK ~ ";margin:18px 0 6px;" -%}
+{%- set ptxt = "font-family:" ~ F ~ ";font-size:14px;line-height:1.5;color:" ~ em.INK ~ ";margin:0 0 8px;" -%}
+{%- set small = "font-family:" ~ F ~ ";font-size:12px;line-height:1.45;color:" ~ em.SOFT ~ ";margin:0 0 8px;" -%}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>{{ subject }}</title></head>
+<body style="margin:0;padding:0;background:#ffffff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;background:#ffffff;">
+<tr><td align="left" style="padding:16px 12px;">
+<!--[if mso]><table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;max-width:640px;">
+
+<tr><td style="padding:0 0 14px;border-bottom:3px solid {{ em.TEAL }};">
+  <p style="font-family:{{ F }};font-size:12px;letter-spacing:0.04em;text-transform:uppercase;color:{{ em.TEAL }};margin:0 0 4px;font-weight:700;">Advertising results</p>
+  <p style="font-family:{{ F }};font-size:22px;font-weight:700;color:{{ em.INK }};margin:0;">{{ p.name }}</p>
+  <p style="{{ small }}margin:4px 0 0;">{% for v in views if v.upload %}{{ v.label }}: {{ v.upload.date_start or '?' }} to {{ v.upload.date_end or '?' }}{% if not loop.last %} · {% endif %}{% endfor %}{% if master %} · all campaigns{% elif p.campaign_filter %} · campaigns containing “{{ p.campaign_filter }}”{% endif %}</p>
+</td></tr>
+
+{% for v in views if v.totals %}
+<tr><td style="padding:20px 0 4px;">
+  <p style="{{ h2 }}">{{ v.label }}</p>
+
+  {% if 'summary' in inc %}
+  {% set pc = v.pacing %}
+  {% if pc.available and pc.budget %}
+    {% set fill = [[pc.spend / pc.budget * 100, 100]|min, 0]|max %}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 4px;">
+      <tr><td style="font-family:{{ F }};font-size:13px;color:{{ em.INK }};font-weight:600;padding:0 0 4px;">Budget pacing</td>
+          <td align="right" style="font-family:{{ F }};font-size:13px;color:{{ em.INK }};padding:0 0 4px;"><b>{{ pc.spend|money }}</b> <span style="color:{{ em.SOFT }};">of {{ pc.budget|money }}</span></td></tr>
+    </table>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+      <tr>
+        {% if fill > 0 %}<td width="{{ '%d'|format(fill|round) }}%" height="10" bgcolor="{{ em.bar_color(pc.status) }}" style="background:{{ em.bar_color(pc.status) }};height:10px;font-size:0;line-height:0;">&nbsp;</td>{% endif %}
+        {% if fill < 100 %}<td height="10" bgcolor="#E3E9EA" style="background:#E3E9EA;height:10px;font-size:0;line-height:0;">&nbsp;</td>{% endif %}
+      </tr>
+    </table>
+    <p style="font-family:{{ F }};font-size:13px;color:{{ em.bar_color(pc.status) if pc.status in ('over', 'under') else em.INK }};margin:6px 0 2px;">
+      {%- if pc.days_elapsed >= pc.days_in_month -%}
+        {%- if pc.remaining < 0 %}{{ pc.month }} ended {{ (-pc.remaining)|money }} over budget.{% elif pc.status == 'under' %}{{ pc.month }} ended {{ pc.remaining|money }} under budget.{% else %}{{ pc.month }} ended on budget.{% endif -%}
+      {%- elif pc.status == 'over' %}Ahead of budget: on pace for {{ pc.projected|money }} this month.
+      {%- elif pc.status == 'under' %}Behind budget: on pace for {{ pc.projected|money }} this month.
+      {%- else %}On track for {{ pc.month }}.{% endif -%}
+    </p>
+    <p style="{{ small }}">Day {{ pc.days_elapsed }} of {{ pc.days_in_month }}; {{ pc.expected|money }} expected by now.</p>
+  {% elif pc.available %}
+    <p style="{{ small }}">{{ pc.spend|money }} spent in {{ pc.month }} (no monthly budget set).</p>
+  {% endif %}
+
+  {% set t = v.totals %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:8px 0 4px;">
+    <tr>
+    {% for label, val in [('Spend', t.spend|money), ('Conversions', '%g'|format(t.conversions)), ('Cost per conversion', t.cpa|money), ('Click-through rate', t.ctr|pct)] %}
+      <td width="25%" valign="top" style="padding:8px 8px 8px 0;border-top:2px solid {{ em.LINE }};">
+        <p style="font-family:{{ F }};font-size:11px;color:{{ em.SOFT }};margin:0 0 2px;">{{ label }}</p>
+        <p style="font-family:{{ F }};font-size:18px;font-weight:700;color:{{ em.INK }};margin:0;">{{ val }}</p>
+      </td>
+    {% endfor %}
+    </tr>
+  </table>
+  {% endif %}
+
+  {% set b = v.breakdown %}
+  {% if 'practices' in inc and b and b.by_practice %}
+  <p style="{{ h3 }}">By practice</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr><td style="{{ th }}">Practice</td><td align="right" style="{{ th }}text-align:right;">Spend</td><td align="right" style="{{ th }}text-align:right;">Conv.</td><td align="right" style="{{ th }}text-align:right;">Cost/conv.</td></tr>
+    {% for x in b.by_practice %}
+    <tr><td style="{{ td }}">{{ x.practice.name }}</td><td align="right" style="{{ td }}text-align:right;">{{ x.spend|money }}</td><td align="right" style="{{ td }}text-align:right;">{{ '%g'|format(x.conversions) }}</td><td align="right" style="{{ td }}text-align:right;">{{ x.cpa|money }}</td></tr>
+    {% endfor %}
+    {% if b.unassigned.count %}
+    <tr><td style="{{ td }}color:{{ em.SOFT }};">Not assigned to a practice</td><td align="right" style="{{ td }}text-align:right;color:{{ em.SOFT }};">{{ b.unassigned.spend|money }}</td><td align="right" style="{{ td }}text-align:right;color:{{ em.SOFT }};">{{ '%g'|format(b.unassigned.conversions) }}</td><td align="right" style="{{ td }}text-align:right;color:{{ em.SOFT }};">{{ b.unassigned.cpa|money }}</td></tr>
+    {% endif %}
+  </table>
+  {% endif %}
+
+  {% if 'attention' in inc and v.findings %}
+  <p style="{{ h3 }}">What needs attention</p>
+  {% for f in v.findings %}
+  {% set sc = em.ROSE if f.severity == 'high' else (em.AMBER if f.severity == 'medium' else em.LINE) %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 8px;">
+    <tr><td width="4" bgcolor="{{ sc }}" style="background:{{ sc }};width:4px;font-size:0;line-height:0;">&nbsp;</td>
+        <td style="padding:2px 0 2px 10px;">
+          <p style="font-family:{{ F }};font-size:14px;font-weight:600;color:{{ em.INK }};margin:0 0 2px;">{{ f.title }}</p>
+          <p style="font-family:{{ F }};font-size:13px;line-height:1.45;color:{{ em.SOFT }};margin:0;">{{ f.detail }}</p>
+        </td></tr>
+  </table>
+  {% endfor %}
+  {% endif %}
+
+  {% set st = v.search_terms %}
+  {% if 'search' in inc and st %}
+  <p style="{{ h3 }}">Search terms</p>
+  <p style="{{ ptxt }}">{{ st.wasted_count }} of {{ st.term_count }} search terms cost money without a conversion: <b>{{ st.wasted_total|money }}</b> of {{ st.total_spend|money }}.</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr><td style="{{ th }}">Costing money, no conversions</td><td align="right" style="{{ th }}text-align:right;">Cost</td><td align="right" style="{{ th }}text-align:right;">Clicks</td></tr>
+    {% for x in st.wasted_terms[:8] %}<tr><td style="{{ td }}">{{ x.name }}</td><td align="right" style="{{ td }}text-align:right;">{{ x.spend|money }}</td><td align="right" style="{{ td }}text-align:right;">{{ x.clicks }}</td></tr>{% endfor %}
+  </table>
+  {% if st.winning_terms %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin-top:10px;">
+    <tr><td style="{{ th }}">Bringing in conversions</td><td align="right" style="{{ th }}text-align:right;">Conv.</td><td align="right" style="{{ th }}text-align:right;">Cost/conv.</td></tr>
+    {% for x in st.winning_terms[:8] %}<tr><td style="{{ td }}">{{ x.name }}</td><td align="right" style="{{ td }}text-align:right;">{{ '%g'|format(x.conversions) }}</td><td align="right" style="{{ td }}text-align:right;">{{ x.cpa|money }}</td></tr>{% endfor %}
+  </table>
+  {% endif %}
+  {% endif %}
+
+  {% if 'campaigns' in inc and v.campaigns %}
+  <p style="{{ h3 }}">Campaigns</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr><td style="{{ th }}">Campaign</td><td align="right" style="{{ th }}text-align:right;">Spend</td><td align="right" style="{{ th }}text-align:right;">Conv.</td><td align="right" style="{{ th }}text-align:right;">Cost/conv.</td><td align="right" style="{{ th }}text-align:right;">CTR</td></tr>
+    {% for c in v.campaigns[:15] %}
+    <tr><td style="{{ td }}">{{ c.name }}</td><td align="right" style="{{ td }}text-align:right;">{{ c.spend|money }}</td><td align="right" style="{{ td }}text-align:right;">{{ '%g'|format(c.conversions) }}</td><td align="right" style="{{ td }}text-align:right;">{{ c.cpa|money }}</td><td align="right" style="{{ td }}text-align:right;">{{ c.ctr|pct }}</td></tr>
+    {% endfor %}
+  </table>
+  {% if v.campaigns|length > 15 %}<p style="{{ small }}margin-top:4px;">…and {{ v.campaigns|length - 15 }} smaller campaigns.</p>{% endif %}
+  {% endif %}
+</td></tr>
+{% endfor %}
+
+{% for kind, title in [('report', 'Monthly report'), ('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
+{% if kind in inc and writeups.get(kind) %}
+<tr><td style="padding:22px 0 4px;border-top:1px solid {{ em.LINE }};">
+  <p style="{{ h2 }}">{{ title }}</p>
+  {{ writeups[kind]|safe }}
+</td></tr>
+{% endif %}
+{% endfor %}
+
+{% if 'changes' in inc and changes %}
+<tr><td style="padding:22px 0 4px;border-top:1px solid {{ em.LINE }};">
+  <p style="{{ h2 }}">Changes made</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    {% for ch in changes %}
+    <tr><td style="{{ td }}">{{ 'Google Ads' if ch.platform == 'google' else 'Meta' }}: {{ ch.title }}</td><td align="right" style="{{ td }}text-align:right;color:{{ em.SOFT }};white-space:nowrap;">{{ ch.applied_at[:10] }}</td></tr>
+    {% endfor %}
+  </table>
+</td></tr>
+{% endif %}
+
+<tr><td style="padding:18px 0 0;">
+  <p style="{{ small }}">Prepared {{ today }} from {{ 'live Google Ads and Meta data' if views|selectattr('upload')|selectattr('upload.source', 'equalto', 'sync')|list else 'the latest ad platform exports' }}. Figures are exact; written sections are AI-assisted and reviewed by the MCDP marketing team.</p>
+</td></tr>
+</table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td></tr>
+</table>
+</body></html>

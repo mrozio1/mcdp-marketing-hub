@@ -260,3 +260,32 @@ tr.muted td { color: var(--ink-soft); }
 .fix-history form { flex: none; }
 .fix-group label.fix-all { display: inline-flex; flex-direction: row; white-space: nowrap; font-weight: 500; }
 .budget-why { margin: 0.25rem 0 0.5rem; }
+
+/* ---- remove (x) on write-ups ---- */
+.writeup-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.writeup-head h3 { margin: 0 0 0.6rem; }
+.writeup-head form { flex: none; margin: 0; }
+.x-btn { width: 2rem; height: 2rem; border-radius: 50%; border: 1px solid transparent; background: transparent;
+         color: var(--ink-soft); font-size: 1.35rem; line-height: 1; cursor: pointer; display: inline-grid; place-items: center; }
+.x-btn:hover, .x-btn:focus-visible { color: var(--rose); border-color: #EBC7D2; background: #FBEFF3; }
+.report-chip { display: inline-flex; align-items: center; gap: 0.15rem; }
+.report-chip form { margin: 0; }
+.report-tools { gap: 0.75rem; flex-wrap: wrap; }
+.report-tools form { margin: 0; }
+
+/* ---- email export ---- */
+.email-layout { display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.email-tools { display: grid; gap: 1rem; position: sticky; top: 1rem; }
+.email-tools .btn { width: 100%; text-align: center; }
+.email-tools p.small { margin: -0.2rem 0 0.4rem; }
+.copy-status { color: var(--green, #2E7D52); min-height: 1.2em; margin: 0.4rem 0; font-weight: 600; }
+.subject-field { margin-top: 0.4rem; }
+.subject-row { display: flex; gap: 0.5rem; align-items: center; }
+.subject-row input { flex: 1; min-width: 0; }
+.sections { display: grid; gap: 0.45rem; }
+.sections label.check { display: flex; flex-direction: row; gap: 0.5rem; align-items: center; font-weight: 400; }
+.sections input { accent-color: var(--teal); width: 1rem; height: 1rem; }
+.email-frame { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-m); padding: 0.5rem; overflow-x: auto; }
+.preview-label { margin: 0 0 0.5rem; }
+.page-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: -0.4rem 0 1.2rem; }
+@media (max-width: 820px) { .email-layout { grid-template-columns: minmax(0, 1fr); } .email-tools { position: static; } }

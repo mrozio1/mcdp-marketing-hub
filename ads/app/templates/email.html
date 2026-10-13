@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Email · {{ p.name }}{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/p/{{ p.id }}">{{ p.name }}</a></p>
+<h1>Email this page</h1>
+
+<div class="email-layout">
+  <aside class="email-tools">
+    <section class="panel">
+      <h2>Send it from Outlook</h2>
+      <div class="stack">
+        <button class="btn" type="button" id="copy-email">Copy for Outlook</button>
+        <p class="muted small">Then open a new email in Outlook and paste (Ctrl+V). Works in Outlook for Windows, Mac and on the web.</p>
+        <a class="btn btn-quiet" href="/p/{{ p.id }}/email.eml?inc={{ inc_param }}">Download Outlook draft (.eml)</a>
+        <p class="muted small">Opens in Outlook for Windows as a new message, ready to address and send.</p>
+      </div>
+      <p class="copy-status small" id="copy-status" role="status" aria-live="polite"></p>
+      <label class="subject-field">Subject
+        <span class="subject-row"><input id="subject" value="{{ subject }}" readonly><button class="linklike small" type="button" id="copy-subject">Copy</button></span>
+      </label>
+    </section>
+    <section class="panel">
+      <h2>Include</h2>
+      <form method="get" action="/p/{{ p.id }}/email" id="sections-form" class="sections">
+        <input type="hidden" name="picked" value="1">
+        <input type="hidden" name="inc" id="inc-field" value="{{ inc_param }}">
+        {% for key, label in sections if available[key] %}
+          <label class="check"><input type="checkbox" value="{{ key }}" {% if key in inc %}checked{% endif %}> {{ label }}</label>
+        {% else %}
+          <p class="muted small">Nothing to send yet: sync or upload data first.</p>
+        {% endfor %}
+      </form>
+    </section>
+  </aside>
+
+  <div class="email-preview">
+    <p class="muted small preview-label">Preview: this is exactly what the email will look like.</p>
+    <div class="email-frame"><div id="email-content">{{ body|safe }}</div></div>
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById('sections-form');
+  form.addEventListener('change', () => {
+    document.getElementById('inc-field').value =
+      [...form.querySelectorAll('input[type=checkbox]:checked')].map(b => b.value).join(',');
+    form.submit();
+  });
+  const status = document.getElementById('copy-status');
+  const say = msg => { status.textContent = msg; };
+  async function copyRich(node) {
+    const html = node.innerHTML, text = node.innerText;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html], {type: 'text/html'}), 'text/plain': new Blob([text], {type: 'text/plain'})})]);
+    } catch (e) {
+      const r = document.createRange(); r.selectNodeContents(node);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      document.execCommand('copy'); sel.removeAllRanges();
+    }
+  }
+  document.getElementById('copy-email').addEventListener('click', async () => {
+    await copyRich(document.getElementById('email-content'));
+    say('Copied. Paste it into a new Outlook email.');
+  });
+  document.getElementById('copy-subject').addEventListener('click', async () => {
+    const f = document.getElementById('subject');
+    try { await navigator.clipboard.writeText(f.value); } catch (e) { f.select(); document.execCommand('copy'); }
+    say('Subject copied.');
+  });
+</script>
+{% endblock %}

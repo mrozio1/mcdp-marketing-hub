@@ -304,3 +304,9 @@ def update_change(cid, **fields):
     sets = ", ".join(f"{k}=?" for k in fields)
     with conn() as c:
         c.execute(f"UPDATE changes SET {sets} WHERE id=?", (*fields.values(), cid))
+
+
+def delete_ai(pid, kind):
+    """Remove a practice's write-ups of one kind (older versions too, so none reappears)."""
+    with conn() as c:
+        c.execute("DELETE FROM ai_outputs WHERE practice_id=? AND kind=?", (pid, kind))

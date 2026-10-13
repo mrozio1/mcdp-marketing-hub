@@ -6,6 +6,7 @@
 <h1>{{ p.name }}</h1>
 {% if master %}<p class="scope-note"><span class="tag tag-master">Master record</span> Every campaign in the linked accounts, with a breakdown by practice.</p>
 {% elif p.campaign_filter %}<p class="scope-note">Campaigns containing <strong>{{ p.campaign_filter }}</strong> <a class="small" href="#settings">change</a></p>{% endif %}
+<div class="page-actions"><a class="btn btn-quiet" href="/p/{{ p.id }}/email">Email this page</a></div>
 
 <div class="layout">
   <div class="main-col">
@@ -223,21 +224,26 @@
     {% endif %}
 
     {% if has_data %}
-    <section class="ai">
+    <section class="ai" id="ai">
       <h2>Write-ups</h2>
       {% if not ai_on %}<p class="flash flash-error">AI isn’t switched on for this page yet. Run <code>sh enable-ads.sh</code> on the server.</p>{% endif %}
       <div class="ai-actions">
         <form method="post" action="/p/{{ p.id }}/ai/fixes" data-busy="Writing fixes…"><button type="submit" class="btn" {% if not ai_on %}disabled{% endif %}>Explain and fix</button></form>
         <form method="post" action="/p/{{ p.id }}/ai/creative" data-busy="Writing ideas…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write ad ideas</button></form>
         <form method="post" action="/p/{{ p.id }}/ai/report" data-busy="Writing report…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write monthly report</button></form>
-        {% if ai_out.report %}<a class="btn btn-quiet" href="/p/{{ p.id }}/report">Open last report</a>{% endif %}
+        {% if ai_out.report %}<span class="report-chip"><a class="btn btn-quiet" href="/p/{{ p.id }}/report">Open last report</a><form method="post" action="/p/{{ p.id }}/ai/report/delete" data-confirm="Remove the monthly report?"><button class="x-btn" type="submit" aria-label="Remove the monthly report" title="Remove">&times;</button></form></span>{% endif %}
       </div>
       <p class="muted small">Write-ups take about 20–60 seconds. They use only the numbers above and are suggestions to review before changing anything in Google or Meta.</p>
       {% for kind, title in [('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
         {% set out = ai_out[kind] %}
         {% if out %}
         <article class="writeup" id="ai-{{ kind }}">
-          <h3>{{ title }} <span class="muted small">written {{ out.created_at.replace('T', ' ')[:16] }}</span></h3>
+          <div class="writeup-head">
+            <h3>{{ title }} <span class="muted small">written {{ out.created_at.replace('T', ' ')[:16] }}</span></h3>
+            <form method="post" action="/p/{{ p.id }}/ai/{{ kind }}/delete" data-confirm="Remove this write-up?">
+              <button class="x-btn" type="submit" aria-label="Remove this write-up" title="Remove">&times;</button>
+            </form>
+          </div>
           <div class="prose">{{ out.content|markdown|safe }}</div>
         </article>
         {% endif %}
