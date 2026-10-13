@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% from "_macros.html" import ruler %}
+{% block title %}{{ p.name }}{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">Practices</a></p>
+<h1>{{ p.name }}</h1>
+
+<div class="layout">
+  <div class="main-col">
+
+    {% set has_data = views|selectattr('upload')|list or views|selectattr('search_upload')|list %}
+    {% if not has_data %}
+      <section class="empty">
+        <p>Upload this practice’s first export to see results. Use the form on the right.</p>
+      </section>
+    {% endif %}
+
+    {% for v in views if v.upload or v.search_upload %}
+    <section class="platform" id="{{ v.key }}">
+      <h2>{{ v.label }}</h2>
+      {% if v.upload %}
+        <p class="muted small">From {{ v.upload.filename }} · {{ v.upload.date_start or '?' }} to {{ v.upload.date_end or '?' }}</p>
+      {% endif %}
+
+      {{ ruler(v.pacing, 'Budget pacing') }}
+
+      {% if v.totals %}
+      <dl class="stats">
+        <div><dt>Spend</dt><dd>{{ v.totals.spend|money }}</dd></div>
+        <div><dt>Conversions</dt><dd>{{ '%g'|format(v.totals.conversions) }}</dd></div>
+        <div><dt>Cost per conversion</dt><dd>{{ v.totals.cpa|money }}</dd></div>
+        <div><dt>Click-through rate</dt><dd>{{ v.totals.ctr|pct }}</dd></div>
+      </dl>
+      {% endif %}
+
+      {% if v.findings %}
+      <h3>What needs attention</h3>
+      <ul class="findings">
+        {% for f in v.findings %}
+        <li class="finding sev-{{ f.severity }}">
+          <p class="finding-title">{{ f.title }}</p>
+          <p>{{ f.detail }}</p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% elif v.totals %}
+      <p class="ok-note">Nothing stands out in this export. Campaigns are converting near the practice’s average.</p>
+      {% endif %}
+
+      {% if v.search_terms %}
+      {% set st = v.search_terms %}
+      <h3>Search terms</h3>
+      <p>{{ st.wasted_count }} of {{ st.term_count }} search terms cost money without a conversion: <strong>{{ st.wasted_total|money }}</strong> of {{ st.total_spend|money }}.</p>
+      <div class="two">
+        <div>
+          <h4>Costing money, no conversions</h4>
+          <table class="data"><thead><tr><th>Search term</th><th class="num">Cost</th><th class="num">Clicks</th></tr></thead>
+          <tbody>{% for t in st.wasted_terms[:12] %}<tr><td>{{ t.name }}</td><td class="num">{{ t.spend|money }}</td><td class="num">{{ t.clicks }}</td></tr>{% endfor %}</tbody></table>
+        </div>
+        <div>
+          <h4>Bringing in conversions</h4>
+          <table class="data"><thead><tr><th>Search term</th><th class="num">Conv.</th><th class="num">Cost/conv.</th></tr></thead>
+          <tbody>{% for t in st.winning_terms[:12] %}<tr><td>{{ t.name }}</td><td class="num">{{ '%g'|format(t.conversions) }}</td><td class="num">{{ t.cpa|money }}</td></tr>{% else %}<tr><td colspan="3" class="muted">None in this report.</td></tr>{% endfor %}</tbody></table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if v.campaigns %}
+      <details class="campaigns">
+        <summary>All campaigns ({{ v.campaigns|length }})</summary>
+        <table class="data">
+          <thead><tr><th>Campaign</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Conv.</th><th class="num">Cost/conv.</th><th class="num">CTR</th></tr></thead>
+          <tbody>
+          {% for c in v.campaigns %}
+            <tr><td>{{ c.name }}</td><td class="num">{{ c.spend|money }}</td><td class="num">{{ '{:,}'.format(c.clicks) }}</td>
+                <td class="num">{{ '%g'|format(c.conversions) }}</td><td class="num">{{ c.cpa|money }}</td><td class="num">{{ c.ctr|pct }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </details>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    {% if has_data %}
+    <section class="ai">
+      <h2>Write-ups</h2>
+      {% if not ai_on %}<p class="flash flash-error">AI isn’t switched on for this page yet. Run <code>sh enable-ads.sh</code> on the server.</p>{% endif %}
+      <div class="ai-actions">
+        <form method="post" action="/p/{{ p.id }}/ai/fixes" data-busy="Writing fixes…"><button type="submit" class="btn" {% if not ai_on %}disabled{% endif %}>Explain and fix</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/creative" data-busy="Writing ideas…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write ad ideas</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/report" data-busy="Writing report…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write monthly report</button></form>
+        {% if ai_out.report %}<a class="btn btn-quiet" href="/p/{{ p.id }}/report">Open last report</a>{% endif %}
+      </div>
+      <p class="muted small">Write-ups take about 20–60 seconds. They use only the numbers above and are suggestions to review before changing anything in Google or Meta.</p>
+      {% for kind, title in [('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
+        {% set out = ai_out[kind] %}
+        {% if out %}
+        <article class="writeup" id="ai-{{ kind }}">
+          <h3>{{ title }} <span class="muted small">written {{ out.created_at.replace('T', ' ')[:16] }}</span></h3>
+          <div class="prose">{{ out.content|markdown|safe }}</div>
+        </article>
+        {% endif %}
+      {% endfor %}
+    </section>
+    {% endif %}
+  </div>
+
+  <aside class="side-col">
+    <section class="panel">
+      <h2>Upload an export</h2>
+      <form method="post" action="/p/{{ p.id }}/upload" enctype="multipart/form-data" class="stack" data-busy="Reading…">
+        <input type="file" name="file" accept=".csv,.tsv,text/csv" required>
+        <button type="submit" class="btn">Upload</button>
+      </form>
+      <details class="how">
+        <summary>Which export do I need?</summary>
+        <p><strong>Google Ads:</strong> Campaigns → set the date range → Download (⬇) → .csv. For wasted searches, also download Insights and reports → Search terms the same way. Add the “Day” segment for budget pacing.</p>
+        <p><strong>Meta Ads Manager:</strong> Campaigns tab → set the date range → Reports → Export table data → .csv.</p>
+        <p>The page works out the platform and report type by itself. A new upload replaces the previous one for that platform; older uploads stay listed below.</p>
+      </details>
+    </section>
+
+    <section class="panel">
+      <h2>Budgets and notes</h2>
+      <form method="post" action="/p/{{ p.id }}/settings" class="stack">
+        <label>Name<input name="name" value="{{ p.name }}" required></label>
+        <label>Google Ads monthly budget<input name="google_budget" type="number" min="0" step="1" value="{{ '%g'|format(p.google_budget or 0) }}"></label>
+        <label>Meta Ads monthly budget<input name="meta_budget" type="number" min="0" step="1" value="{{ '%g'|format(p.meta_budget or 0) }}"></label>
+        <label>Notes for write-ups<textarea name="notes" rows="3" placeholder="Services to push, location, offers you actually run…">{{ p.notes or '' }}</textarea></label>
+        <button type="submit" class="btn btn-quiet">Save</button>
+      </form>
+    </section>
+
+    <section class="panel" id="uploads">
+      <h2>Uploads</h2>
+      {% if uploads %}
+      <ul class="uploads">
+        {% for u in uploads %}
+        <li>
+          <span>{{ 'Google' if u.platform == 'google' else 'Meta' }} · {{ {'campaign':'campaigns','search_term':'search terms','ad':'ad sets/ads'}[u.level] }}<br>
+          <span class="muted small">{{ u.date_start or '?' }} to {{ u.date_end or '?' }} · {{ u.row_count }} rows</span></span>
+          <form method="post" action="/p/{{ p.id }}/uploads/{{ u.id }}/delete" data-confirm="Remove this upload?"><button class="linklike danger" type="submit">Remove</button></form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="muted">None yet.</p>{% endif %}
+    </section>
+
+    <form method="post" action="/p/{{ p.id }}/delete" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
+      <button class="linklike danger" type="submit">Delete this practice</button>
+    </form>
+  </aside>
+</div>
+{% endblock %}

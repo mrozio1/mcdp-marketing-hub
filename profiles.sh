@@ -9,3 +9,4 @@ PROFILE=""
 if grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+' .env 2>/dev/null; then PROFILE="$PROFILE --profile tunnel"; fi
 if grep -qE '^AI_PROVIDER_KEY=.+' .env 2>/dev/null; then PROFILE="$PROFILE --profile ai"; fi
 if grep -qE '^CF_API_TOKEN=.+' .env 2>/dev/null; then PROFILE="$PROFILE --profile cfimages"; fi
+if grep -qE '^ADS_PASSWORD=.+' .env 2>/dev/null; then PROFILE="$PROFILE --profile ads"; fi

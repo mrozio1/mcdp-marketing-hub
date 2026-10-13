@@ -8,7 +8,7 @@ OUT=${BACKUP_DIR:-/backups}
 MEDIA=${UPLOAD_DIR:-/uploads}
 
 prune() {
-  for pattern in 'db-*.sql.gz' 'uploads-*.tgz'; do
+  for pattern in 'db-*.sql.gz' 'uploads-*.tgz' 'ads-*.tgz'; do
     # shellcheck disable=SC2012,SC2086
     ls -1t "$OUT"/$pattern 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r f; do rm -f "$f"; done
   done
@@ -26,6 +26,9 @@ backup() {
   if ! tar czf "$OUT/uploads-$stamp.tgz" -C "$MEDIA" .; then
     rm -f "$OUT/uploads-$stamp.tgz"
     echo "$(date) ERROR: media backup failed"; ok=1
+  fi
+  if [ -f /ads-data/ads.db ]; then
+    tar czf "$OUT/ads-$stamp.tgz" -C /ads-data . || { echo "$(date) ERROR: ads backup failed"; ok=1; }
   fi
   prune
   [ "$ok" = 0 ] && echo "$(date) Backup written: db-$stamp.sql.gz, uploads-$stamp.tgz"

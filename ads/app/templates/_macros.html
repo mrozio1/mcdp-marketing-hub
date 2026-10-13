@@ -1,0 +1,33 @@
+{% macro ruler(pc, label) -%}
+{# Pacing ruler: fill = spend so far vs. monthly budget; tick = where spend should be today. #}
+{% if not pc.available %}
+  <div class="ruler ruler-empty"><span class="ruler-label">{{ label }}</span><span class="muted">{{ pc.reason or 'No export yet' }}</span></div>
+{% elif not pc.budget %}
+  <div class="ruler ruler-empty"><span class="ruler-label">{{ label }}</span>
+    <span>{{ pc.spend|money }} in {{ pc.month }}</span><span class="muted">· set a monthly budget to see pacing</span></div>
+{% else %}
+  {% set fill = [pc.spend / pc.budget * 100, 100]|min %}
+  {% set tick = pc.expected / pc.budget * 100 %}
+  <div class="ruler ruler-{{ pc.status }}">
+    <div class="ruler-head">
+      <span class="ruler-label">{{ label }}</span>
+      <span class="ruler-figure">{{ pc.spend|money }} <span class="muted">of {{ pc.budget|money }}</span></span>
+    </div>
+    <div class="ruler-track" role="img"
+         aria-label="{{ label }}: {{ pc.spend|money }} spent of {{ pc.budget|money }}; {{ pc.expected|money }} expected by day {{ pc.days_elapsed }}">
+      <div class="ruler-fill" style="width: {{ '%.1f'|format(fill) }}%"></div>
+      <div class="ruler-tick" style="left: {{ '%.1f'|format(tick) }}%"></div>
+    </div>
+    <div class="ruler-foot">
+      {% if pc.days_elapsed >= pc.days_in_month %}
+        {% if pc.remaining < 0 %}{{ pc.month }} ended {{ (-pc.remaining)|money }} over budget.
+        {% elif pc.status == 'under' %}{{ pc.month }} ended {{ pc.remaining|money }} under budget.
+        {% else %}{{ pc.month }} ended on budget.{% endif %}
+      {% elif pc.status == 'over' %}Ahead of budget: on pace for {{ pc.projected|money }} this month.
+      {% elif pc.status == 'under' %}Behind budget: on pace for {{ pc.projected|money }} this month.
+      {% else %}On track for {{ pc.month }}.{% endif %}
+      <span class="muted">Day {{ pc.days_elapsed }} of {{ pc.days_in_month }}{% if pc.days_elapsed < pc.days_in_month %} · {{ pc.daily_to_hit|money }}/day to land on budget{% endif %}</span>
+    </div>
+  </div>
+{% endif %}
+{%- endmacro %}

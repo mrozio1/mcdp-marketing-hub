@@ -73,9 +73,38 @@ sh enable-cf-images.sh CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN   # token: "Wo
 sh enable-cf-images.sh off
 ```
 
+## Ads page (Google Ads + Meta Ads, per practice)
+
+A separate page (container `postiz-ads`) for paid ads. Add each practice with its
+monthly Google and Meta budgets, upload the CSV exports, and it shows:
+
+- **What needs attention**: campaigns spending without conversions, campaigns far
+  above the practice's own cost per conversion, low click-through, and missing
+  conversion tracking (checked first).
+- **Search terms** costing money with no conversions, and the ones that convert.
+- **Budget pacing** against each practice's monthly budget.
+- **AI write-ups** through the same translator as Postiz: what to fix (with
+  negative-keyword candidates taken only from the uploaded search terms), ad
+  ideas, and a printable monthly report per practice.
+
+All numbers are calculated exactly; the AI only explains them, following rules
+condensed from [claude-ads](https://github.com/AgriciDaniel/claude-ads) (see
+`ads/NOTICE.md`). Nothing is changed in Google or Meta.
+
+```sh
+sh enable-ads.sh                  # first time: prints the team password
+sh enable-ads.sh NEW_PASSWORD     # change it
+sh enable-ads.sh off
+```
+
+Public address: add a public hostname to the same Cloudflare tunnel, e.g.
+`ads.<mcdp-domain>` → `http://ads:8000`.
+
+Tests: `cd ads && python -m pytest tests`.
+
 ## Maintenance
 
-- Backups: automatic once a day (database + media) via the `postiz-backup`
+- Backups: automatic once a day (database, media and the Ads page data) via the `postiz-backup`
   container into `./backups`, newest 14 kept. No cron needed (NAS crontabs often
   aren't available to non-root users). Run one now with `sh backup.sh`;
   check with `docker logs postiz-backup`.

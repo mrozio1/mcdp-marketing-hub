@@ -75,11 +75,11 @@ esac
 
 say "Pulling images (first run takes a few minutes)"
 # shellcheck disable=SC2086
-$DOCKER compose $PROFILE pull
+$DOCKER compose $PROFILE pull --ignore-buildable
 
 say "Starting the stack"
 # shellcheck disable=SC2086
-$DOCKER compose $PROFILE up -d
+$DOCKER compose $PROFILE up -d --build
 
 say "Waiting for Postiz to answer (first start can take 2-3 minutes)"
 for _ in $(seq 1 60); do

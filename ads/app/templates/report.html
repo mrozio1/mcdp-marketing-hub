@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import ruler %}
+{% block title %}{{ p.name }} report{% endblock %}
+{% block bodyclass %}report-page{% endblock %}
+{% block content %}
+<div class="report-tools no-print">
+  <a href="/p/{{ p.id }}">Back to {{ p.name }}</a>
+  <button class="btn" type="button" onclick="window.print()">Print or save as PDF</button>
+</div>
+<article class="report">
+  <header>
+    <p class="muted">Advertising report</p>
+    <h1>{{ p.name }}</h1>
+    {% if report %}<p class="muted small">Prepared {{ report.created_at[:10] }}</p>{% endif %}
+  </header>
+  <section class="report-pacing">
+    {% for v in views if v.upload %}{{ ruler(v.pacing, v.label) }}{% endfor %}
+  </section>
+  {% if report %}
+    <div class="prose">{{ report.content|markdown|safe }}</div>
+  {% else %}
+    <p class="empty">No report written yet. Go back and choose “Write monthly report”.</p>
+  {% endif %}
+</article>
+{% endblock %}

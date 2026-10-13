@@ -82,6 +82,7 @@ services:
       - ./backup-loop.sh:/backup-loop.sh:ro
       - ./backups:/backups
       - postiz-uploads:/uploads:ro
+      - ads-data:/ads-data:ro
     networks: [postiz-network]
     depends_on:
       postiz-postgres: { condition: service_healthy }
@@ -168,6 +169,27 @@ services:
     networks: [postiz-network]
     profiles: [cfimages]
 
+  # ---- Ads page: per-practice Google/Meta export analysis (enable-ads.sh) ----
+  ads:
+    build: ./ads
+    image: mcdp-ads:local
+    pull_policy: build
+    container_name: postiz-ads
+    restart: unless-stopped
+    environment:
+      ADS_PASSWORD: ${ADS_PASSWORD:-}
+      ADS_SECRET: ${ADS_SECRET:-}
+      AI_BASE_URL: http://litellm:4000/v1
+      AI_API_KEY: ${LITELLM_MASTER_KEY:-}
+      AI_MODEL: gpt-4.1
+    volumes:
+      - ads-data:/data
+    ports:
+      # Server-only by default; the public reaches it through the Cloudflare tunnel.
+      - "${LOCAL_BIND:-127.0.0.1}:${ADS_PORT:-4010}:8000"
+    networks: [postiz-network]
+    profiles: [ads]
+
   # ---- Cloudflare Tunnel: public HTTPS URL with no open ports on the server ----
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -187,6 +209,7 @@ volumes:
   postiz-redis:
   temporal-postgres:
   temporal-elasticsearch:
+  ads-data:
 
 networks:
   postiz-network:
