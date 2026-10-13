@@ -1,9 +1,10 @@
 #!/bin/sh
-# Save the keys the Ads page needs to pull Meta and Google Ads numbers automatically.
+# Optional: the easy way is the Ads page itself (Connections: paste the Meta token,
+# upload the Google service account key). This script stores keys on the server instead.
 # Usage:
 #   sh connect-ads.sh meta SYSTEM_USER_TOKEN
-#   sh connect-ads.sh google DEVELOPER_TOKEN OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET [MANAGER_ACCOUNT_ID]
-#   sh connect-ads.sh meta off | google off
+#   sh connect-ads.sh google-oauth OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET [MANAGER_ACCOUNT_ID]
+#   sh connect-ads.sh meta off | google-oauth off
 set -eu
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "ERROR: run install.sh first (.env not found)." >&2; exit 1; }
@@ -16,7 +17,7 @@ setvar() {
   if grep -qE "^$1=" .env; then sed -i.bak "s|^$1=.*|$1=$2|" .env && rm -f .env.bak
   else echo "$1=$2" >> .env; fi
 }
-usage() { sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1; }
+usage() { sed -n '5,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1; }
 
 # Public address of the Ads page (needed for Google sign-in): default to ads.<same domain as Postiz>.
 if [ -z "$(getvar ADS_PUBLIC_URL)" ]; then
@@ -35,18 +36,17 @@ case "${1:-}" in
       [ "${#2}" -ge 40 ] || { echo "ERROR: that doesn't look like a full Meta token (they're 150+ characters)." >&2; exit 1; }
       setvar META_ACCESS_TOKEN "$2"; echo "Saved the Meta token."
     fi ;;
-  google)
+  google-oauth)
     if [ "${2:-}" = off ]; then
-      for k in GOOGLE_ADS_DEVELOPER_TOKEN GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_ADS_LOGIN_CUSTOMER_ID; do delvar "$k"; done
-      echo "Google connection keys removed."
+      for k in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_ADS_LOGIN_CUSTOMER_ID GOOGLE_ADS_DEVELOPER_TOKEN; do delvar "$k"; done
+      echo "Google sign-in keys removed."
     else
-      [ -n "${2:-}" ] && [ -n "${3:-}" ] && [ -n "${4:-}" ] || usage
-      case "$3" in *.apps.googleusercontent.com) ;; *) echo "ERROR: the OAuth client ID should end in .apps.googleusercontent.com. Check the order: developer token, client ID, client secret." >&2; exit 1 ;; esac
-      setvar GOOGLE_ADS_DEVELOPER_TOKEN "$2"
-      setvar GOOGLE_OAUTH_CLIENT_ID "$3"
-      setvar GOOGLE_OAUTH_CLIENT_SECRET "$4"
-      if [ -n "${5:-}" ]; then setvar GOOGLE_ADS_LOGIN_CUSTOMER_ID "$(echo "$5" | tr -cd '0-9')"; fi
-      echo "Saved the Google Ads keys."
+      [ -n "${2:-}" ] && [ -n "${3:-}" ] || usage
+      case "$2" in *.apps.googleusercontent.com) ;; *) echo "ERROR: the OAuth client ID should end in .apps.googleusercontent.com. Order: client ID, then client secret." >&2; exit 1 ;; esac
+      setvar GOOGLE_OAUTH_CLIENT_ID "$2"
+      setvar GOOGLE_OAUTH_CLIENT_SECRET "$3"
+      if [ -n "${4:-}" ]; then setvar GOOGLE_ADS_LOGIN_CUSTOMER_ID "$(echo "$4" | tr -cd '0-9')"; fi
+      echo "Saved the Google sign-in keys."
     fi ;;
   *) usage ;;
 esac
@@ -57,7 +57,7 @@ echo "Restarting the Ads page..."
 $DOCKER compose $PROFILE up -d ads >/dev/null
 url=$(getvar ADS_PUBLIC_URL)
 echo "Done. Open ${url:-the Ads page}/connections to check the connection."
-if [ "${1}" = google ] && [ "${2}" != off ]; then
+if [ "${1}" = google-oauth ] && [ "${2}" != off ]; then
   echo "Then click 'Connect Google'. The OAuth client must list this redirect URI:"
   echo "  ${url:-https://YOUR-ADS-ADDRESS}/google/callback"
 fi

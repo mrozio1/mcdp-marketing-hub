@@ -5,11 +5,12 @@ import urllib.parse
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-META_TOKEN = "EAAG-good-meta-token"
+META_TOKEN = "EAAG" + "Zx9mK2pQ" * 22  # real tokens are 150+ chars
 GOOGLE_DEV = "dev-token-123"
 REFRESH = "1//refresh-abc"
 ACCESS = "ya29.access-xyz"
 MCC = "1112223333"
+SA_EMAIL = "mcdp-ads-reader@mcdp-ads.iam.gserviceaccount.com"
 LOG = []
 
 
@@ -87,9 +88,20 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"access_token": ACCESS, "refresh_token": REFRESH, "expires_in": 3599})
             if f.get("grant_type") == "refresh_token" and f.get("refresh_token") == REFRESH:
                 return self._json(200, {"access_token": ACCESS, "expires_in": 3599})
+            if f.get("grant_type") == "urn:ietf:params:oauth:grant-type:jwt-bearer":
+                import base64
+                parts = f.get("assertion", "").split(".")
+                if len(parts) == 3:
+                    pad = lambda x: x + "=" * (-len(x) % 4)
+                    hdr = json.loads(base64.urlsafe_b64decode(pad(parts[0])))
+                    claims = json.loads(base64.urlsafe_b64decode(pad(parts[1])))
+                    if hdr.get("alg") == "RS256" and claims.get("iss") == SA_EMAIL and "adwords" in claims.get("scope", ""):
+                        return self._json(200, {"access_token": ACCESS, "expires_in": 3599, "token_type": "Bearer"})
+                return self._json(400, {"error": "invalid_grant", "error_description": "Invalid JWT Signature."})
             return self._json(400, {"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
         if u.path.endswith("googleAds:searchStream"):
-            if self.headers.get("developer-token") != GOOGLE_DEV:
+            dev = self.headers.get("developer-token")
+            if dev is not None and dev != GOOGLE_DEV:
                 return self._json(401, [{"error": {"code": 401, "message": "Request is missing required authentication credential.",
                                                    "details": [{"errors": [{"message": "The developer token is not approved."}]}]}}])
             if self.headers.get("Authorization") != f"Bearer {ACCESS}":

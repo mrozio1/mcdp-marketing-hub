@@ -2,45 +2,63 @@
 {% block title %}Connections{% endblock %}
 {% block content %}
 <h1>Connections</h1>
-<p class="lede">Connected accounts are pulled automatically every night (around 5 a.m. Central). Nothing is ever changed in Meta or Google; the page only reads numbers.</p>
+<p class="lede">Connected accounts are pulled automatically every night (around 5 a.m. Central). Nothing is ever changed in Meta or Google; this page only reads numbers.</p>
 
 <div class="conn-grid">
-  <section class="panel conn">
+  <section class="panel conn" id="meta">
     <h2>Meta Ads</h2>
-    {% if meta_on %}
-      {% set mc = checked.get('meta') %}
-      {% if mc and not mc.ok %}
-        <p class="state state-bad">Token problem</p><p class="small">{{ mc.error }}</p>
-      {% else %}
-        <p class="state state-good">Connected</p>
-        <p>{{ meta_accounts|length }} ad account{{ '' if meta_accounts|length == 1 else 's' }} visible.</p>
-      {% endif %}
+    {% set mc = checked.get('meta') %}
+    {% if meta_on and mc and not mc.ok %}
+      <p class="state state-bad">Token problem</p><p class="small">{{ mc.error }}</p>
+    {% elif meta_on %}
+      <p class="state state-good">Connected</p>
+      <p>{{ meta_accounts|length }} ad account{{ '' if meta_accounts|length == 1 else 's' }} visible.</p>
     {% else %}
-      <p class="state">Not set up</p>
-      <p class="small">Save a Meta system user token on the server: <code>sh connect-ads.sh meta TOKEN</code></p>
+      <p class="state">Not connected</p>
     {% endif %}
+    <form method="post" action="/connections/meta" class="stack" data-busy="Checking…">
+      <label>{{ 'Replace' if meta_on else 'Paste' }} system user token
+        <input name="token" type="password" autocomplete="off" required placeholder="EAAG…">
+      </label>
+      <button class="btn {{ 'btn-quiet' if meta_on else '' }}" type="submit">Save and check</button>
+    </form>
+    <details class="how">
+      <summary>Where do I get this?</summary>
+      <p>In <strong>Meta Business Settings → Users → System users</strong>: add a system user, use <strong>Assign assets</strong> to give it the practices’ ad accounts (view performance is enough), then <strong>Generate token</strong> for the MCDP Social app with the <code>ads_read</code> permission and no expiry.</p>
+    </details>
+    {% if meta_from_page %}<form method="post" action="/connections/meta/remove" data-confirm="Remove the Meta token?"><button class="linklike danger" type="submit">Remove token</button></form>{% endif %}
   </section>
 
-  <section class="panel conn">
+  <section class="panel conn" id="google">
     <h2>Google Ads</h2>
-    {% if not google_keys %}
-      <p class="state">Not set up</p>
-      <p class="small">Save the Google Ads keys on the server: <code>sh connect-ads.sh google DEV_TOKEN CLIENT_ID CLIENT_SECRET MANAGER_ID</code></p>
-    {% elif not google_connected %}
-      <p class="state">Keys saved — sign-in needed</p>
-      <p><a class="btn" href="/google/connect">Connect Google</a></p>
-      <p class="small muted">Sign in with a Google account that can see the practices’ Google Ads accounts. Google’s sign-in page will send you back to <code>{{ redirect_uri }}</code>, so that address must be listed in the OAuth client.</p>
+    {% set gc = checked.get('google') %}
+    {% if google_connected and gc and not gc.ok %}
+      <p class="state state-bad">Connection problem</p><p class="small">{{ gc.error }}</p>
+    {% elif google_connected %}
+      <p class="state state-good">Connected</p>
+      <p>{{ google_accounts|length }} Google Ads account{{ '' if google_accounts|length == 1 else 's' }} visible.</p>
     {% else %}
-      {% set gc = checked.get('google') %}
-      {% if gc and not gc.ok %}
-        <p class="state state-bad">Connection problem</p><p class="small">{{ gc.error }}</p>
-        <p><a class="btn btn-quiet" href="/google/connect">Connect Google again</a></p>
-      {% else %}
-        <p class="state state-good">Connected</p>
-        <p>{{ google_accounts|length }} Google Ads account{{ '' if google_accounts|length == 1 else 's' }} visible.</p>
-      {% endif %}
-      <form method="post" action="/google/disconnect" data-confirm="Disconnect Google? Already-synced numbers are kept."><button class="linklike danger" type="submit">Disconnect</button></form>
+      <p class="state">Not connected</p>
     {% endif %}
+    {% if google_sa %}<p class="small">Robot account: <code class="break-all">{{ google_sa }}</code></p>{% endif %}
+    <form method="post" action="/connections/google" enctype="multipart/form-data" class="stack" data-busy="Checking…">
+      <label>{{ 'Replace' if google_sa else 'Upload' }} service account key (.json)
+        <input type="file" name="keyfile" accept=".json,application/json" {% if not google_sa %}required{% endif %}>
+      </label>
+      <label>Manager account ID <span class="muted small">(optional, if the practices sit under one)</span>
+        <input name="manager_id" inputmode="numeric" placeholder="123-456-7890" value="{% if manager_id %}{{ manager_id[:3] }}-{{ manager_id[3:6] }}-{{ manager_id[6:] }}{% endif %}">
+      </label>
+      <button class="btn {{ 'btn-quiet' if google_sa else '' }}" type="submit">Save and check</button>
+    </form>
+    <details class="how">
+      <summary>Where do I get this?</summary>
+      <p>In <strong>Google Cloud</strong>: create a project, enable the <strong>Google Ads API</strong> and apply for <strong>Explorer</strong> access on its overview page. Then <strong>IAM &amp; Admin → Service Accounts</strong>: create one, open it, <strong>Keys → Add key → JSON</strong>.</p>
+      <p>In <strong>Google Ads</strong> (the manager account, or each practice account): <strong>Admin → Access and security → Users → +</strong>, add the robot account’s email with <strong>Read only</strong> access.</p>
+    </details>
+    {% if google_oauth and not google_sa %}
+      <p class="small muted">Or, if your team prefers personal sign-in: <a href="/google/connect">Connect Google</a> (redirect address <code class="break-all">{{ redirect_uri }}</code>).</p>
+    {% endif %}
+    {% if google_connected %}<form method="post" action="/connections/google/remove" data-confirm="Remove the Google connection? Already-synced numbers are kept."><button class="linklike danger" type="submit">Remove connection</button></form>{% endif %}
   </section>
 </div>
 

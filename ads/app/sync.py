@@ -51,7 +51,7 @@ def refresh_account_lists():
             result["meta"] = {"ok": True, "count": len(accts)}
         except cx.ConnectorError as e:
             result["meta"] = {"ok": False, "error": str(e)}
-    if cx.google_configured() and db.get_setting("google_refresh_token"):
+    if cx.google_service_account() or (cx.google_oauth_configured() and db.get_setting("google_refresh_token")):
         try:
             accts = cx.GoogleClient(db.get_setting("google_refresh_token")).accounts()
             db.set_setting("google_accounts", json.dumps(accts))

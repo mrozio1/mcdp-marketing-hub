@@ -102,3 +102,47 @@ def test_sync_all_feeds_analysis_and_prunes(env):
     assert any(f["kind"] == "zero-conv-campaign" and f["campaign"] == "PMax - Smile Promo" for f in findings)
     pc = pacing(rows, 3000)
     assert pc["days_elapsed"] == 12 and pc["spend"] == 819.0
+
+
+def _make_service_account_json():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                            serialization.NoEncryption()).decode()
+    import json
+    return json.dumps({"type": "service_account", "project_id": "mcdp-ads", "private_key_id": "abc",
+                       "private_key": pem, "client_email": mp.SA_EMAIL, "client_id": "1",
+                       "token_uri": "https://oauth2.googleapis.com/token", "extra": "ignored"})
+
+
+def test_service_account_key_validation(env):
+    cx, *_ = env
+    with pytest.raises(cx.ConnectorError, match="isn't JSON"):
+        cx.parse_service_account("not json")
+    with pytest.raises(cx.ConnectorError, match="isn't a service account key"):
+        cx.parse_service_account('{"installed": {"client_id": "x"}}')
+    cleaned = cx.parse_service_account(_make_service_account_json())
+    assert '"extra"' not in cleaned and mp.SA_EMAIL in cleaned
+
+
+def test_google_via_service_account_and_page_keys(env, monkeypatch):
+    cx, db, sync = env
+    # No developer token and no OAuth client at all: the 2026 Cloud-project + service-account path.
+    for k in ("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET",
+              "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "META_ACCESS_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    assert not cx.google_configured() and not cx.meta_configured()
+    db.set_setting("google_service_account_json", cx.parse_service_account(_make_service_account_json()))
+    db.set_setting("google_ads_login_customer_id", "1112223333")
+    db.set_setting("meta_access_token", mp.META_TOKEN)          # saved from the page, not the env
+    try:
+        assert cx.google_configured() and cx.meta_configured()
+        g = cx.GoogleClient()
+        assert "developer-token" not in g._headers()
+        assert [a["name"] for a in g.accounts()] == ["Havens Orthodontics", "Heights Orthodontics"]
+        res = sync.refresh_account_lists()
+        assert res["google"] == {"ok": True, "count": 2} and res["meta"] == {"ok": True, "count": 3}
+    finally:
+        for k in ("google_service_account_json", "google_ads_login_customer_id", "meta_access_token"):
+            db.set_setting(k, None)

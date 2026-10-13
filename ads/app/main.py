@@ -193,8 +193,7 @@ def practice_page(request: Request, pid: int):
     return page(request, "practice.html", p=p, views=practice_views(p), uploads=db.uploads(pid),
                 ai_out={k: db.latest_ai(pid, k) for k in ai.TASKS},
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
-                meta_on=cx.meta_configured(),
-                google_on=cx.google_configured() and bool(db.get_setting("google_refresh_token")))
+                meta_on=cx.meta_configured(), google_on=google_ready())
 
 
 @app.post("/p/{pid}/settings")
@@ -288,6 +287,10 @@ def report(request: Request, pid: int):
 
 
 # ---------- connections (phase 2: automatic pulls) ----------
+def google_ready():
+    return bool(cx.google_service_account()) or (cx.google_oauth_configured()
+                                                and bool(db.get_setting("google_refresh_token")))
+
 def redirect_uri(request: Request):
     base = PUBLIC_URL or str(request.base_url).rstrip("/")
     return base + "/google/callback"
@@ -318,9 +321,12 @@ def connections(request: Request):
         checked = _json.loads(db.get_setting("accounts_checked") or "{}")
     except ValueError:
         checked = {}
+    sa = cx.google_service_account()
     return page(request, "connections.html",
                 meta_on=cx.meta_configured(), google_keys=cx.google_configured(),
-                google_connected=bool(db.get_setting("google_refresh_token")),
+                google_sa=sa["client_email"] if sa else None, google_oauth=cx.google_oauth_configured(),
+                google_connected=google_ready(), manager_id=cx.setting("GOOGLE_ADS_LOGIN_CUSTOMER_ID"),
+                meta_from_page=bool(db.get_setting("meta_access_token")),
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 checked=checked, redirect_uri=redirect_uri(request), practices=db.practices(),
                 window=sync.sync_window())
@@ -356,8 +362,8 @@ async def sync_now(request: Request, back: str = Form("/")):
 def google_connect(request: Request):
     if (r := guard(request)):
         return r
-    if not cx.google_configured():
-        flash(request, "Save the Google Ads keys on the server first (sh connect-ads.sh google ...).", "error")
+    if not cx.google_oauth_configured():
+        flash(request, "Google sign-in isn't set up on the server. Upload a service account key instead.", "error")
         return RedirectResponse("/connections", status_code=303)
     state = os.urandom(16).hex()
     request.session["google_state"] = state
@@ -406,3 +412,67 @@ def practice_accounts(request: Request, pid: int, meta_account_id: str = Form(""
     db.set_practice_accounts(pid, meta_account_id.strip(), google_customer_id.strip())
     flash(request, "Linked accounts saved. Use “Sync now” to pull their numbers.")
     return RedirectResponse(f"/p/{pid}", status_code=303)
+
+
+def _check_and_report(request, platform_key, label):
+    res = sync.refresh_account_lists().get(platform_key)
+    if res and res.get("ok"):
+        flash(request, f"{label} connected. {res['count']} account{'s' if res['count'] != 1 else ''} found.")
+    elif res:
+        flash(request, f"{label} saved, but checking it failed: {res['error']}", "error")
+
+
+@app.post("/connections/meta")
+async def save_meta(request: Request, token: str = Form("")):
+    if (r := guard(request)):
+        return r
+    token = token.strip()
+    if len(token) < 40 or any(ch.isspace() for ch in token):
+        flash(request, "That doesn't look like a full Meta token. Copy the whole token (usually 150+ characters).", "error")
+        return RedirectResponse("/connections", status_code=303)
+    db.set_setting("meta_access_token", token)
+    await asyncio.to_thread(_check_and_report, request, "meta", "Meta")
+    return RedirectResponse("/connections", status_code=303)
+
+
+@app.post("/connections/meta/remove")
+def remove_meta(request: Request):
+    if (r := guard(request)):
+        return r
+    db.set_setting("meta_access_token", None)
+    db.set_setting("meta_accounts", None)
+    flash(request, "Meta token removed. Synced numbers already pulled are kept.")
+    return RedirectResponse("/connections", status_code=303)
+
+
+@app.post("/connections/google")
+async def save_google(request: Request, keyfile: UploadFile = File(None), manager_id: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if keyfile is not None and keyfile.filename:
+        raw = (await keyfile.read(64 * 1024)).decode(errors="replace")
+        try:
+            db.set_setting("google_service_account_json", cx.parse_service_account(raw))
+        except cx.ConnectorError as e:
+            flash(request, str(e), "error")
+            return RedirectResponse("/connections", status_code=303)
+    mid = "".join(ch for ch in manager_id if ch.isdigit())
+    if manager_id.strip() and len(mid) != 10:
+        flash(request, "The manager account ID should be 10 digits, like 123-456-7890.", "error")
+        return RedirectResponse("/connections", status_code=303)
+    db.set_setting("google_ads_login_customer_id", mid or None)
+    if not cx.google_service_account():
+        flash(request, "Upload the service account key file (.json) too.", "error")
+        return RedirectResponse("/connections", status_code=303)
+    await asyncio.to_thread(_check_and_report, request, "google", "Google")
+    return RedirectResponse("/connections", status_code=303)
+
+
+@app.post("/connections/google/remove")
+def remove_google(request: Request):
+    if (r := guard(request)):
+        return r
+    for k in ("google_service_account_json", "google_refresh_token", "google_accounts"):
+        db.set_setting(k, None)
+    flash(request, "Google connection removed. Synced numbers already pulled are kept.")
+    return RedirectResponse("/connections", status_code=303)

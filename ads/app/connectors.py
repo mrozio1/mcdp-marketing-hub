@@ -13,6 +13,9 @@ import urllib.parse
 import urllib.request
 from datetime import date
 
+# Google Ads access now comes from the Google Cloud project (developer tokens were retired
+# on 2026-09-09); a service account added as a read-only user in Google Ads is the simplest path.
+
 META_VERSION = os.environ.get("META_API_VERSION", "v25.0")
 META_BASE = os.environ.get("META_GRAPH_BASE", "https://graph.facebook.com").rstrip("/")
 GOOGLE_VERSION = os.environ.get("GOOGLE_ADS_API_VERSION", "v25")
@@ -30,6 +33,18 @@ META_LEAD_FALLBACK = ["onsite_conversion.lead_grouped", "offsite_conversion.fb_p
 
 class ConnectorError(RuntimeError):
     pass
+
+
+def setting(name):
+    """Keys saved on the Connections page win; environment variables are the fallback."""
+    try:
+        from . import db
+        v = db.get_setting(name.lower())
+        if v:
+            return v
+    except Exception:
+        pass
+    return os.environ.get(name, "")
 
 
 def _http(url, data=None, headers=None, method=None, timeout=60):
@@ -82,11 +97,11 @@ def _blank_row(platform, level):
 
 # ------------------------------------------------------------------ Meta
 def meta_configured():
-    return bool(os.environ.get("META_ACCESS_TOKEN"))
+    return bool(setting("META_ACCESS_TOKEN"))
 
 
 def _meta_get(path, params):
-    token = os.environ.get("META_ACCESS_TOKEN", "")
+    token = setting("META_ACCESS_TOKEN")
     if not token:
         raise ConnectorError("No Meta token saved yet.")
     q = urllib.parse.urlencode({**params, "access_token": token})
@@ -144,9 +159,53 @@ def meta_campaign_rows(account_id, since: date, until: date):
 
 
 # ------------------------------------------------------------------ Google
+def google_service_account():
+    raw = setting("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not raw:
+        return None
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        return None
+    return info if info.get("client_email") and info.get("private_key") else None
+
+
+def parse_service_account(raw):
+    """Validate an uploaded key file; returns the cleaned JSON text."""
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        raise ConnectorError("That file isn't a Google service account key (it isn't JSON).")
+    if info.get("type") != "service_account" or not info.get("client_email") or not info.get("private_key"):
+        raise ConnectorError("That JSON file isn't a service account key. In Google Cloud: IAM & Admin → "
+                             "Service Accounts → your account → Keys → Add key → JSON.")
+    return json.dumps({k: info[k] for k in ("type", "project_id", "private_key_id", "private_key",
+                                             "client_email", "client_id", "token_uri") if k in info})
+
+
+def google_oauth_configured():
+    return bool(os.environ.get("GOOGLE_OAUTH_CLIENT_ID") and os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"))
+
+
 def google_configured():
-    return all(os.environ.get(k) for k in
-               ("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"))
+    return bool(google_service_account()) or google_oauth_configured()
+
+
+def _service_account_token(info):
+    """OAuth 2.0 JWT-bearer flow for a service account (no extra HTTP library needed)."""
+    import time as _t
+    from google.auth import crypt, jwt
+    try:
+        signer = crypt.RSASigner.from_service_account_info(info)
+    except Exception as e:
+        raise ConnectorError(f"The service account key couldn't be read: {e}")
+    token_uri = os.environ.get("GOOGLE_OAUTH_TOKEN_URL") or info.get("token_uri") or "https://oauth2.googleapis.com/token"
+    now = int(_t.time())
+    assertion = jwt.encode(signer, {"iss": info["client_email"], "scope": GOOGLE_SCOPE, "aud": token_uri,
+                                    "iat": now, "exp": now + 3600})
+    data = urllib.parse.urlencode({"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                                   "assertion": assertion.decode() if isinstance(assertion, bytes) else assertion}).encode()
+    return _http(token_uri, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})["access_token"]
 
 
 def google_auth_url(redirect_uri, state):
@@ -181,17 +240,24 @@ def _clean_id(cid):
 
 
 class GoogleClient:
-    def __init__(self, refresh_token):
-        if not google_configured():
-            raise ConnectorError("Google Ads keys aren't saved yet.")
-        if not refresh_token:
-            raise ConnectorError("Google isn't connected yet. Use 'Connect Google' on the Connections page.")
-        self.token = _google_access_token(refresh_token)
-        self.login_cid = _clean_id(os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID", ""))
+    def __init__(self, refresh_token=None):
+        sa = google_service_account()
+        if sa:
+            self.token = _service_account_token(sa)
+        elif google_oauth_configured():
+            if not refresh_token:
+                raise ConnectorError("Google isn't connected yet. Use 'Connect Google' on the Connections page.")
+            self.token = _google_access_token(refresh_token)
+        else:
+            raise ConnectorError("Google isn't set up yet. Upload a service account key on the Connections page.")
+        self.login_cid = _clean_id(setting("GOOGLE_ADS_LOGIN_CUSTOMER_ID"))
 
     def _headers(self, login_cid=None):
-        h = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
-             "developer-token": os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"]}
+        h = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        # Developer tokens were retired in Sept 2026 (access now comes from the Cloud project);
+        # still sent if configured, since the API ignores it.
+        if os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN"):
+            h["developer-token"] = os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"]
         lc = login_cid or self.login_cid
         if lc:
             h["login-customer-id"] = lc

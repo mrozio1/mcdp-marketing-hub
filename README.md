@@ -109,13 +109,21 @@ In the first three days of a month it pulls the whole previous month instead.
 Synced data replaces the previous sync (newest 3 kept) and goes through the same
 analysis as uploads.
 
-```sh
-sh connect-ads.sh meta SYSTEM_USER_TOKEN                     # Meta Business system user, ads_read
-sh connect-ads.sh google DEV_TOKEN CLIENT_ID CLIENT_SECRET MANAGER_ID
-```
+Set up on the Ads page under **Connections** (no terminal needed):
 
-Then on the Ads page: **Connections → Connect Google**, and link each practice's
-accounts under **Linked ad accounts**. Meta "results" count `lead`,
+- **Meta:** paste a Business Settings *system user* token (`ads_read`, assets =
+  the practices' ad accounts, no expiry) for the MCDP Social app.
+- **Google:** Google retired developer tokens on 2026-09-09; access now comes from a
+  Google Cloud project. Create a project, enable the Google Ads API, apply for
+  Explorer access, create a *service account* with a JSON key, and add its email as a
+  **Read only** user in the Google Ads manager account (or each practice account).
+  Upload the key on the Connections page with the manager account ID.
+
+Then link each practice's accounts under **Linked ad accounts**. Keys entered on the
+page are stored in the Ads database (included in backups); `connect-ads.sh` can
+store them in `.env` instead, and also supports personal Google sign-in
+(`google-oauth CLIENT_ID CLIENT_SECRET [MANAGER_ID]`).
+Meta "results" count `lead`,
 `schedule_total`, `contact_total` and `submit_application_total` actions
 (override with `META_RESULT_ACTIONS`). API versions: Meta v25.0, Google Ads v25
 (override with `META_API_VERSION` / `GOOGLE_ADS_API_VERSION`).

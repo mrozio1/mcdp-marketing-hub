@@ -213,3 +213,7 @@ select { font: inherit; color: inherit; width: 100%; padding: 0.5rem 0.6rem; bor
   .practices td.num::before { content: "Money at stake: "; color: var(--ink-soft); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+.break-all { word-break: break-all; }
+.conn form.stack { margin-top: 0.75rem; }
+.conn details.how { margin-bottom: 0.6rem; }
