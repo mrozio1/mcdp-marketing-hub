@@ -46,7 +46,8 @@ if [ "$1" = off ]; then
 fi
 
 setvar AI_PROVIDER_KEY "$1"
-if [ -n "${2:-}" ]; then setvar AI_TEXT_MODEL "$2"; fi
+# New text model chosen: drop the old backup so a matching one is picked below.
+if [ -n "${2:-}" ]; then setvar AI_TEXT_MODEL "$2"; delvar AI_TEXT_FALLBACK_MODEL; fi
 if [ -n "${3:-}" ]; then setvar AI_IMAGE_MODEL "$3"; fi
 
 master=$(grep -E '^LITELLM_MASTER_KEY=' .env | tail -1 | cut -d= -f2- || true)
@@ -128,6 +129,7 @@ case "$out" in
       if [ -n "$text_m" ]; then
         echo "Switching to gemini/$text_m"
         setvar AI_TEXT_MODEL "gemini/$text_m"
+        delvar AI_TEXT_FALLBACK_MODEL
         # Leave images alone if they run through Cloudflare (enable-cf-images.sh).
         if [ -n "$img_m" ] && [ "$img_m" != "$picked" ] && ! grep -qE '^CF_API_TOKEN=.+' .env; then setvar AI_IMAGE_MODEL "gemini/$img_m"; fi
         start_ai
@@ -140,5 +142,13 @@ esac
 case "$out" in
   TIMEOUT) echo "The AI translator didn't come up in 2 minutes. Check: $DOCKER logs postiz-ai --tail 50"; exit 1 ;;
   HTTPERR*) echo "The AI provider refused the request:"; echo "  $out"; echo "Check the key (and model name), then re-run this script."; exit 1 ;;
-  *) echo "AI is working using $(grep -E '^AI_TEXT_MODEL=' .env | tail -1 | cut -d= -f2-) (test reply: $out)."; echo "Refresh Postiz to use it."; exit 0 ;;
+  *)
+    getvar() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true; }
+    . ./ai-fallback.sh
+    if [ -z "$(getvar AI_TEXT_FALLBACK_MODEL)" ]; then
+      set_ai_fallback
+      # shellcheck disable=SC2086
+      [ -z "$(getvar AI_TEXT_FALLBACK_MODEL)" ] || $DOCKER compose $PROFILE up -d litellm >/dev/null
+    fi
+    echo "AI is working using $(grep -E '^AI_TEXT_MODEL=' .env | tail -1 | cut -d= -f2-) (test reply: $out)."; echo "Refresh Postiz to use it."; exit 0 ;;
 esac

@@ -61,6 +61,11 @@ The script tests the connection and reports a bad key or model name; if a
 Gemini model has been retired it picks the current one automatically.
 Model mapping lives in `litellm.yaml`. Check anytime with `sh test-ai.sh`.
 
+Busy periods: if the main model is overloaded (Gemini's "high demand" 503s), the
+translator retries twice, then answers from a backup model (`AI_TEXT_FALLBACK_MODEL`;
+for Gemini, the scripts pick the newest "flash-lite" model, which runs on separate
+capacity). The Ads page also retries briefly before showing a plain "busy" message.
+
 ### Free AI images via Cloudflare Workers AI
 
 Gemini's free tier allows no image generation. `cf-image.py` is a tiny adapter

@@ -36,6 +36,8 @@ fi
 [ -n "$(getvar ADS_SECRET)" ] || setvar ADS_SECRET "$(rand 32)"
 
 . ./profiles.sh
+. ./ai-fallback.sh
+set_ai_fallback
 echo "Building and starting the Ads page (first time takes a few minutes)..."
 # shellcheck disable=SC2086
 $DOCKER compose $PROFILE up -d --build

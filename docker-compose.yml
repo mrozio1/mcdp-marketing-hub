@@ -145,6 +145,7 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       AI_PROVIDER_KEY: ${AI_PROVIDER_KEY:-}
       AI_TEXT_MODEL: ${AI_TEXT_MODEL:-gemini/gemini-2.5-flash}
+      AI_TEXT_FALLBACK_MODEL: ${AI_TEXT_FALLBACK_MODEL:-${AI_TEXT_MODEL:-gemini/gemini-2.5-flash}}
       AI_IMAGE_MODEL: ${AI_IMAGE_MODEL:-gemini/gemini-2.5-flash-image}
       AI_IMAGE_KEY: ${AI_IMAGE_KEY:-${AI_PROVIDER_KEY:-}}
       AI_IMAGE_API_BASE: ${AI_IMAGE_API_BASE:-}

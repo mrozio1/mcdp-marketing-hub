@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -13,6 +14,7 @@ AI_BASE_URL = os.environ.get("AI_BASE_URL", "http://litellm:4000/v1").rstrip("/"
 AI_API_KEY = os.environ.get("AI_API_KEY", "")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4.1")   # mapped by the translator to the chosen provider
 GUIDE = (Path(__file__).parent / "guides.md").read_text()
+RETRY_WAITS = (4, 12)   # seconds between tries when the provider is briefly overloaded
 
 
 class AIError(RuntimeError):
@@ -114,20 +116,32 @@ def generate(kind, context):
     req = urllib.request.Request(f"{AI_BASE_URL}/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {AI_API_KEY}",
                                           "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=180) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")
+    data = None
+    waits = RETRY_WAITS
+    for attempt in range(len(waits) + 1):
         try:
-            detail = json.loads(detail)["error"]["message"]
-        except (ValueError, KeyError, TypeError):
-            pass
-        if e.code == 429:
-            raise AIError("The AI provider's free limit is used up for now. Try again in a few minutes.")
-        raise AIError(f"The AI provider returned an error ({e.code}): {str(detail)[:300]}")
-    except Exception as e:
-        raise AIError(f"Couldn't reach the AI service: {e}")
+            with urllib.request.urlopen(req, timeout=180) as r:
+                data = json.load(r)
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")
+            try:
+                detail = json.loads(detail)["error"]["message"]
+            except (ValueError, KeyError, TypeError):
+                pass
+            busy = e.code in (500, 502, 503, 504, 529) or any(
+                w in str(detail).lower() for w in ("high demand", "overloaded", "unavailable"))
+            if busy and attempt < len(waits):
+                time.sleep(waits[attempt])   # usually clears within seconds
+                continue
+            if busy:
+                raise AIError("Google's free AI is busy right now (this happens at peak times and passes "
+                              "quickly). Nothing is wrong on our side; click the button again in a minute.")
+            if e.code == 429:
+                raise AIError("The AI provider's free limit is used up for now. Try again in a few minutes.")
+            raise AIError(f"The AI provider returned an error ({e.code}): {str(detail)[:300]}")
+        except Exception as e:
+            raise AIError(f"Couldn't reach the AI service: {e}")
     content = (data.get("choices") or [{}])[0].get("message", {}).get("content")
     if not content:
         raise AIError("The AI returned an empty answer. Try again.")

@@ -18,6 +18,14 @@ model_list:
     litellm_params: *text
   - model_name: gpt-4o-2024-08-06
     litellm_params: *text
+  # Used only when the main text model is overloaded or failing (e.g. Gemini "high demand" 503s).
+  # Defaults to the main model; enable-ai.sh / enable-ads.sh pick a lighter Gemini model, which
+  # runs on separate capacity.
+  - model_name: text-backup
+    litellm_params:
+      model: os.environ/AI_TEXT_FALLBACK_MODEL
+      api_key: os.environ/AI_PROVIDER_KEY
+      api_base: os.environ/AI_API_BASE
   # Images can use a different provider than text (e.g. Cloudflare via cf-image).
   - model_name: chatgpt-image-latest
     litellm_params:
@@ -28,6 +36,11 @@ model_list:
 litellm_settings:
   drop_params: true        # silently drop OpenAI-only options other providers reject
   request_timeout: 120
+  num_retries: 2           # brief overloads usually clear within seconds
+  fallbacks:
+    - gpt-4.1: [text-backup]
+    - gpt-5.2: [text-backup]
+    - gpt-4o-2024-08-06: [text-backup]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
