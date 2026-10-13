@@ -94,7 +94,31 @@ monthly Google and Meta budgets, upload the CSV exports, and it shows:
 
 All numbers are calculated exactly; the AI only explains them, following rules
 condensed from [claude-ads](https://github.com/AgriciDaniel/claude-ads) (see
-`ads/NOTICE.md`). Nothing is changed in Google or Meta.
+`ads/NOTICE.md`).
+
+### Making the fixes (approve each change)
+
+On a practice page, **Prepare fixes** turns the findings into exact changes, checked
+against the live Google Ads and Meta accounts:
+
+- **Block wasted searches** — exact-match negative keywords for search terms that cost
+  money and never converted anywhere (Search campaigns only; up to 20 at a time).
+- **Pause campaigns** spending with no conversions.
+- **Bring budgets in line** — every active campaign's daily budget moves by the same
+  percentage so the month lands on the practice's budget; at most halved or +50% per step.
+  Shared Google budgets and Meta lifetime budgets are left alone.
+- **New ads** — the AI writes a Google responsive search ad or a Meta ad (copying an
+  existing ad's image, landing page and button); always created **paused**.
+
+Nothing changes until someone ticks changes and clicks **Apply**. Before applying (and
+undoing), the current value is read again; if it was changed in Google or Meta meanwhile,
+nothing is changed and the item is marked out of date. Every applied change has **Undo**,
+and the practice page keeps the history.
+
+Access needed for fixes: the Google robot account at **Standard** access (not Read only),
+and a Meta system user token with `ads_management` (ad accounts assigned with *Manage
+campaigns*; Pages with *Create ads* for new ads). Google's Explorer access tier allows
+these changes (up to 2,880 operations a day).
 
 ```sh
 sh enable-ads.sh                  # first time: prints the team password

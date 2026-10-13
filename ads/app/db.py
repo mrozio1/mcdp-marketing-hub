@@ -40,6 +40,23 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+CREATE TABLE IF NOT EXISTS changes (
+  id INTEGER PRIMARY KEY,
+  practice_id INTEGER NOT NULL REFERENCES practices(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  account TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT DEFAULT '',
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'proposed',
+  result TEXT DEFAULT '',
+  error TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  applied_at TEXT,
+  undone_at TEXT
+);
+CREATE INDEX IF NOT EXISTS changes_practice ON changes(practice_id, status);
 CREATE TABLE IF NOT EXISTS ai_outputs (
   id INTEGER PRIMARY KEY,
   practice_id INTEGER NOT NULL REFERENCES practices(id) ON DELETE CASCADE,
@@ -234,3 +251,56 @@ def copy_latest_uploads(src_pid, dst_pid):
             c.execute("INSERT INTO rows SELECT ?, date, date_start, date_end, campaign, name, spend, impressions, "
                       "clicks, conversions, conv_value, status, budget, match_type FROM rows WHERE upload_id=?",
                       (cur.lastrowid, u["id"]))
+
+
+# ---- proposed / applied changes to Google and Meta ----
+def _change(r):
+    import json
+    d = dict(r)
+    d["payload"] = json.loads(d["payload"] or "{}")
+    d["result"] = json.loads(d["result"] or "{}") if d["result"] else {}
+    return d
+
+
+def replace_proposals(pid, proposals, kinds=None):
+    """Swap the practice's open proposals (optionally only some kinds) for a fresh set."""
+    import json
+    with conn() as c:
+        if kinds:
+            c.executemany("DELETE FROM changes WHERE practice_id=? AND status='proposed' AND kind=?",
+                          [(pid, k) for k in kinds])
+        else:
+            c.execute("DELETE FROM changes WHERE practice_id=? AND status='proposed'", (pid,))
+        for p in proposals:
+            c.execute("INSERT INTO changes(practice_id, platform, account, kind, title, detail, payload, created_at) "
+                      "VALUES (?,?,?,?,?,?,?,?)", (pid, p["platform"], p["account"], p["kind"], p["title"],
+                                                   p.get("detail", ""), json.dumps(p["payload"]), now()))
+
+
+def changes(pid, statuses=None, limit=200):
+    with conn() as c:
+        if statuses:
+            q = ",".join("?" * len(statuses))
+            rows = c.execute(f"SELECT * FROM changes WHERE practice_id=? AND status IN ({q}) "
+                             "ORDER BY COALESCE(applied_at, created_at) DESC, id DESC LIMIT ?",
+                             (pid, *statuses, limit))
+        else:
+            rows = c.execute("SELECT * FROM changes WHERE practice_id=? ORDER BY id DESC LIMIT ?", (pid, limit))
+        return [_change(r) for r in rows]
+
+
+def change(cid):
+    with conn() as c:
+        r = c.execute("SELECT * FROM changes WHERE id=?", (cid,)).fetchone()
+        return _change(r) if r else None
+
+
+def update_change(cid, **fields):
+    import json
+    if "result" in fields and not isinstance(fields["result"], str):
+        fields["result"] = json.dumps(fields["result"])
+    if "payload" in fields and not isinstance(fields["payload"], str):
+        fields["payload"] = json.dumps(fields["payload"])
+    sets = ", ".join(f"{k}=?" for k in fields)
+    with conn() as c:
+        c.execute(f"UPDATE changes SET {sets} WHERE id=?", (*fields.values(), cid))

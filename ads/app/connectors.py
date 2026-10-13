@@ -1,8 +1,8 @@
 """
-Read-only connectors for Meta Ads (Marketing API insights) and Google Ads (API searchStream).
-Both return rows in the same shape as parse.parse_export(), so synced data flows
-through the exact same analysis as uploaded exports. Nothing is ever written to
-either platform.
+Connectors for Meta Ads (Marketing API) and Google Ads (API searchStream).
+Reads return rows in the same shape as parse.parse_export(), so synced data flows
+through the exact same analysis as uploaded exports. Writes (actions.py) only happen
+when someone clicks Apply on a proposed change.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def _explain(code, j, raw):
             if "not associated with any Ads accounts" in msg:
                 return ("The key works, but this account hasn't been added in Google Ads yet. In Google Ads "
                         "(the manager account, or each practice account): Admin → Access and security → Users → +, "
-                        "add the robot account's email with Read only access, then click Refresh account lists. "
+                        "add the robot account's email with Standard access (Read only also works if you only want reports), then click Refresh account lists. "
                         f"(HTTP {code})")
             if msg:
                 return f"{msg} (HTTP {code})"
@@ -122,6 +122,32 @@ def _meta_paged(path, params, limit_pages=50):
         out.extend(data.get("data", []))
         pages += 1
     return out
+
+
+def _meta_write(path, params, method="POST"):
+    token = setting("META_ACCESS_TOKEN")
+    if not token:
+        raise ConnectorError("No Meta token saved yet.")
+    body = urllib.parse.urlencode({k: (json.dumps(v) if isinstance(v, (dict, list)) else v)
+                                   for k, v in {**params, "access_token": token}.items()}).encode()
+    try:
+        return _http(f"{META_BASE}/{META_VERSION}/{path}", data=body, method=method,
+                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+    except ConnectorError as e:
+        raise ConnectorError(_write_hint(str(e), "meta")) from None
+
+
+def _write_hint(msg, platform):
+    low = msg.lower()
+    if platform == "meta" and ("ads_management" in low or "(#200)" in low or "permission" in low):
+        return ("Meta refused the change: the system user token can only read. In Business Settings → System "
+                "users → MCDP_Ads_Reader, give the ad accounts 'Manage campaigns' access, then Generate token "
+                "again with ads_management ticked, and paste it on the Connections page. (" + msg + ")")
+    if platform == "google" and ("permission" in low or "not permitted" in low or "read only" in low
+                                 or "read-only" in low):
+        return ("Google refused the change: the robot account has Read only access. In Google Ads → Admin → "
+                "Access and security, change mcdp-ads-reader's access to Standard. (" + msg + ")")
+    return msg
 
 
 def meta_accounts():
@@ -277,6 +303,19 @@ class GoogleClient:
         for b in batches if isinstance(batches, list) else [batches]:
             out.extend(b.get("results", []))
         return out
+
+    def mutate(self, customer_id, service, operations):
+        """service e.g. 'campaigns', 'campaignBudgets', 'campaignCriteria', 'adGroupAds'."""
+        cid = _clean_id(customer_id)
+        url = f"{GOOGLE_BASE}/{GOOGLE_VERSION}/customers/{cid}/{service}:mutate"
+        try:
+            res = _http(url, data={"operations": operations}, headers=self._headers(self._login_for(cid)))
+        except ConnectorError as e:
+            raise ConnectorError(_write_hint(str(e), "google")) from None
+        return res.get("results", [])
+
+    def search(self, customer_id, gaql):
+        return self.query(customer_id, gaql, login_cid=self._login_for(customer_id))
 
     def accounts(self):
         """Every practice (non-manager) account the robot can read, found by asking Google which accounts

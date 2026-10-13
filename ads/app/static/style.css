@@ -233,3 +233,30 @@ select { font: inherit; color: inherit; width: 100%; padding: 0.5rem 0.6rem; bor
 .btn-small { padding: 0.3rem 0.7rem; font-size: 0.85rem; }
 tr.muted td { color: var(--ink-soft); }
 @media (max-width: 560px) { .split-list li { flex-direction: column; align-items: flex-start; gap: 0.4rem; } }
+
+/* ---- fixes: propose → tick → apply → undo ---- */
+.fixes { margin: 2rem 0; }
+.fix-prepare { margin: 0.8rem 0 1.2rem; }
+.fix-list { display: grid; gap: 1rem; }
+.fix-group { border: 1px solid #DCE4E5; border-radius: var(--radius-m); background: var(--paper); padding: 0.8rem 1rem 0.4rem; margin: 0; min-width: 0; }
+.fix-group legend { font-weight: 600; padding: 0 0.3rem; }
+.fix-group ul, .fix-history ul { list-style: none; margin: 0; padding: 0; }
+.fix-all { display: inline-flex; gap: 0.4rem; align-items: center; margin-bottom: 0.3rem; color: var(--teal); cursor: pointer; }
+.fix { display: flex; gap: 0.8rem; justify-content: space-between; align-items: flex-start; padding: 0.55rem 0; border-top: 1px solid #E8EEEF; }
+.fix-main { display: flex; gap: 0.6rem; align-items: flex-start; cursor: pointer; min-width: 0; overflow-wrap: anywhere; font-weight: 400; }
+.fix-main input { margin-top: 0.3rem; flex: none; width: 1.05rem; height: 1.05rem; accent-color: var(--teal); }
+.fix-error { color: var(--rose); }
+.fix-stale .fix-main, .fix-failed .fix-main { opacity: 0.85; }
+.ad-preview { display: block; margin-top: 0.35rem; padding: 0.45rem 0.6rem; background: #F1F6F6; border-radius: var(--radius-s); }
+.tag-google { color: #1F5FA8; background: #E6EEF8; }
+.tag-meta { color: #4B3FA0; background: #ECEAF8; }
+.apply-btn { justify-self: start; }
+.fix-draft { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: flex-end; margin: 1.4rem 0 0.6rem; }
+.fix-draft label { min-width: 0; flex: 1 1 16rem; }
+.fix-draft select { width: 100%; }
+.fix-history { margin-top: 1.2rem; }
+.fix-history summary { cursor: pointer; font-weight: 600; color: var(--teal); }
+.fix-history li { display: flex; gap: 0.8rem; justify-content: space-between; align-items: flex-start; padding: 0.5rem 0; border-top: 1px solid #E8EEEF; overflow-wrap: anywhere; }
+.fix-history form { flex: none; }
+.fix-group label.fix-all { display: inline-flex; flex-direction: row; white-space: nowrap; font-weight: 500; }
+.budget-why { margin: 0.25rem 0 0.5rem; }

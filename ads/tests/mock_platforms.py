@@ -14,6 +14,33 @@ SA_EMAIL = "mcdp-ads-reader@mcdp-ads.iam.gserviceaccount.com"
 CLIENTS = {"4445556666": "Heights Orthodontics", "4445557777": "Havens Orthodontics"}
 ACCESSIBLE = {MCC}   # accounts the signed-in user/robot was added to; tests may change this
 LOG = []
+READ_ONLY = {"google": False, "meta": False}   # simulate read-only access levels
+
+
+def _fresh_state():
+    return {
+        "g_campaigns": {"901": {"name": "Invisalign - Search", "status": "ENABLED", "channel": "SEARCH", "budget": "b1"},
+                        "902": {"name": "PMax - Smile Promo", "status": "ENABLED", "channel": "PERFORMANCE_MAX", "budget": "b2"}},
+        "g_budgets": {"b1": {"micros": 50_000_000, "shared": False}, "b2": {"micros": 20_000_000, "shared": False}},
+        "g_negatives": {},       # resource -> (campaign_id, text)
+        "g_ads": {},             # resource -> payload
+        "m_objects": {"c1": {"name": "Heights - Free Consult Leads", "status": "ACTIVE", "daily_budget": "2000"},
+                      "c2": {"name": "Heights - Smile Gallery Video", "status": "ACTIVE"},
+                      "as2": {"name": "Video viewers", "status": "ACTIVE", "daily_budget": "1500", "campaign_id": "c2"}},
+        "m_created": {},
+        "seq": 100,
+    }
+
+
+STATE = _fresh_state()
+
+
+def reset():
+    STATE.clear()
+    STATE.update(_fresh_state())
+    READ_ONLY.update(google=False, meta=False)
+
+
 _DENIED = [{"error": {"code": 403, "message": "The caller does not have permission", "details": [{"errors": [{
     "message": "User doesn't have permission to access customer. Note: If you're accessing a client customer, "
                "the manager's customer id must be set in the 'login-customer-id' header."}]}]}}]
@@ -55,6 +82,26 @@ class H(BaseHTTPRequestHandler):
                     {"account_id": "555001", "name": "Heights Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555001"},
                     {"account_id": "555002", "name": "Havens Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555002"},
                     {"account_id": "555009", "name": "Old Test Account", "currency": "USD", "account_status": 2, "id": "act_555009"}]})
+            obj = u.path[len("/v25.0/"):]
+            if obj == "act_555001/campaigns":
+                return self._json(200, {"data": [dict(id=k, **{f: v for f, v in o.items()})
+                                                 for k, o in STATE["m_objects"].items() if k.startswith("c")]})
+            if obj == "act_555001/adsets":
+                return self._json(200, {"data": [dict(id=k, **o) for k, o in STATE["m_objects"].items() if k.startswith("as")]})
+            if obj == "c1/ads":
+                return self._json(200, {"data": [{"id": "ad1", "name": "Free consult - smile photo", "adset_id": "as1",
+                                                  "effective_status": "ACTIVE", "creative": {"id": "cr1", "object_story_spec": {
+                                                      "page_id": "777", "instagram_user_id": "888", "link_data": {
+                                                          "link": "https://heightsortho.example/consult", "image_hash": "abc123",
+                                                          "message": "Book your free consult.", "name": "Free Consult",
+                                                          "call_to_action": {"type": "BOOK_NOW"}}}}}]})
+            if obj == "c2/ads":
+                return self._json(200, {"data": [{"id": "ad2", "adset_id": "as2", "effective_status": "ACTIVE",
+                                                  "creative": {"id": "cr2", "object_story_spec": {"page_id": "777",
+                                                               "video_data": {"video_id": "v1"}}}}]})
+            if obj in STATE["m_objects"]:
+                o = STATE["m_objects"][obj]
+                return self._json(200, {"id": obj, **{f: o.get(f) for f in q.get("fields", "").split(",") if f in o}})
             if u.path.endswith("/insights"):
                 tr = json.loads(q["time_range"])
                 rows = []
@@ -90,6 +137,19 @@ class H(BaseHTTPRequestHandler):
         self._json(404, {"error": {"message": "not found"}})
 
     # ---------------- POST ----------------
+    def do_DELETE(self):
+        u = urllib.parse.urlparse(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        f = {**q, **dict(urllib.parse.parse_qsl(body))}
+        LOG.append(("DELETE", u.path, dict(self.headers), body))
+        if f.get("access_token") != META_TOKEN:
+            return self._json(400, {"error": {"message": "Invalid OAuth access token", "code": 190}})
+        obj = u.path[len("/v25.0/"):]
+        if STATE["m_created"].pop(obj, None) is not None:
+            return self._json(200, {"success": True})
+        return self._json(404, {"error": {"message": "not found", "code": 100}})
+
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
@@ -111,6 +171,70 @@ class H(BaseHTTPRequestHandler):
                         return self._json(200, {"access_token": ACCESS, "expires_in": 3599, "token_type": "Bearer"})
                 return self._json(400, {"error": "invalid_grant", "error_description": "Invalid JWT Signature."})
             return self._json(400, {"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
+        if u.path.startswith("/v25.0/"):
+            f = dict(urllib.parse.parse_qsl(body))
+            if f.get("access_token") != META_TOKEN:
+                return self._json(400, {"error": {"message": "Invalid OAuth access token", "code": 190}})
+            if READ_ONLY["meta"]:
+                return self._json(403, {"error": {"message": "(#200) Requires ads_management permission to manage the object", "code": 200}})
+            obj = u.path[len("/v25.0/"):]
+            if obj == "act_555001/adcreatives":
+                STATE["seq"] += 1
+                cid = f"cr{STATE['seq']}"
+                STATE["m_created"][cid] = {"type": "creative", "spec": json.loads(f["object_story_spec"])}
+                return self._json(200, {"id": cid})
+            if obj == "act_555001/ads":
+                STATE["seq"] += 1
+                aid = f"ad{STATE['seq']}"
+                STATE["m_created"][aid] = {"type": "ad", "status": f["status"], "adset_id": f["adset_id"],
+                                           "creative": json.loads(f["creative"])}
+                return self._json(200, {"id": aid})
+            if obj in STATE["m_objects"]:
+                for k in ("status", "daily_budget"):
+                    if k in f:
+                        STATE["m_objects"][obj][k] = f[k]
+                return self._json(200, {"success": True})
+            return self._json(404, {"error": {"message": "Unsupported post request.", "code": 100}})
+        if u.path.endswith(":mutate"):
+            if self.headers.get("Authorization") != f"Bearer {ACCESS}":
+                return self._json(401, [{"error": {"code": 401, "message": "Invalid credentials"}}])
+            if READ_ONLY["google"]:
+                return self._json(403, {"error": {"code": 403, "message": "The caller does not have permission",
+                                                  "details": [{"errors": [{"message": "The user is not permitted to perform this action."}]}]}})
+            service = u.path.rsplit("/", 1)[1].split(":")[0]
+            ops = json.loads(body)["operations"]
+            results = []
+            for op in ops:
+                if "create" in op and service == "campaignCriteria":
+                    c = op["create"]
+                    camp = c["campaign"].rsplit("/", 1)[1]
+                    STATE["seq"] += 1
+                    rn = f"customers/4445556666/campaignCriteria/{camp}~{STATE['seq']}"
+                    STATE["g_negatives"][rn] = (camp, c["keyword"]["text"].lower())
+                    results.append({"resourceName": rn})
+                elif "create" in op and service == "adGroupAds":
+                    c = op["create"]
+                    assert c["status"] == "PAUSED"
+                    STATE["seq"] += 1
+                    rn = f"{c['adGroup'].replace('adGroups', 'adGroupAds')}~{STATE['seq']}"
+                    STATE["g_ads"][rn] = c
+                    results.append({"resourceName": rn})
+                elif "remove" in op:
+                    STATE["g_negatives"].pop(op["remove"], None) or STATE["g_ads"].pop(op["remove"], None)
+                    results.append({"resourceName": op["remove"]})
+                elif "update" in op and service == "campaigns":
+                    cid = op["update"]["resourceName"].rsplit("/", 1)[1]
+                    assert op["updateMask"] == "status"
+                    STATE["g_campaigns"][cid]["status"] = op["update"]["status"]
+                    results.append({"resourceName": op["update"]["resourceName"]})
+                elif "update" in op and service == "campaignBudgets":
+                    bid = op["update"]["resourceName"].rsplit("/", 1)[1]
+                    assert int(op["update"]["amountMicros"]) % 10000 == 0
+                    STATE["g_budgets"][bid]["micros"] = int(op["update"]["amountMicros"])
+                    results.append({"resourceName": op["update"]["resourceName"]})
+                else:
+                    return self._json(400, [{"error": {"code": 400, "message": f"unsupported op {op}"}}])
+            return self._json(200, {"results": results})
         if u.path.endswith("googleAds:searchStream"):
             dev = self.headers.get("developer-token")
             if dev is not None and dev != GOOGLE_DEV:
@@ -135,6 +259,34 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, [{"results": [{"customer": {
                     "id": target, "descriptiveName": "MCDP Manager" if target == MCC else CLIENTS.get(target, target),
                     "manager": target == MCC, "status": "ENABLED"}}]}])
+            cust = "customers/4445556666"
+            if "FROM campaign_budget" in q:
+                bid = q.split("campaignBudgets/")[1].split("'")[0]
+                return self._json(200, [{"results": [{"campaignBudget": {"amountMicros": str(STATE["g_budgets"][bid]["micros"])}}]}])
+            if "FROM campaign_criterion" in q:
+                return self._json(200, [{"results": [
+                    {"campaign": {"id": c}, "campaignCriterion": {"resourceName": rn, "keyword": {"text": t}}}
+                    for rn, (c, t) in STATE["g_negatives"].items()
+                    if "campaign.id = " not in q or q.split("campaign.id = ")[1].split()[0] == c]}])
+            if "FROM ad_group_ad" in q:
+                if "901" not in q:
+                    return self._json(200, [])
+                return self._json(200, [{"results": [
+                    {"adGroup": {"resourceName": f"{cust}/adGroups/71", "name": "Invisalign general"},
+                     "adGroupAd": {"ad": {"finalUrls": ["https://heightsortho.example/invisalign"],
+                                          "responsiveSearchAd": {"headlines": [{"text": "Invisalign in Heights"}]}}},
+                     "metrics": {"costMicros": "300000000"}}]}])
+            if "FROM campaign WHERE campaign.id = " in q:
+                cid = q.split("campaign.id = ")[1].split()[0]
+                return self._json(200, [{"results": [{"campaign": {"status": STATE["g_campaigns"][cid]["status"]}}]}])
+            if "FROM campaign WHERE campaign.status != 'REMOVED'" in q:
+                return self._json(200, [{"results": [
+                    {"campaign": {"id": cid, "resourceName": f"{cust}/campaigns/{cid}", "name": c["name"], "status": c["status"],
+                                  "advertisingChannelType": c["channel"]},
+                     "campaignBudget": {"resourceName": f"{cust}/campaignBudgets/{c['budget']}",
+                                        "amountMicros": str(STATE["g_budgets"][c["budget"]]["micros"]),
+                                        "explicitlyShared": STATE["g_budgets"][c["budget"]]["shared"]}}
+                    for cid, c in STATE["g_campaigns"].items()]}])
             since, until = q.split("BETWEEN '")[1].split("'")[0], q.split("AND '")[1].split("'")[0]
             if "FROM campaign" in q:
                 res = []

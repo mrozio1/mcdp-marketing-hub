@@ -128,6 +128,100 @@
     </section>
     {% endfor %}
 
+    {% set linked = (p.google_customer_id and google_on) or (p.meta_account_id and meta_on) %}
+    {% if has_data and linked %}
+    <section class="fixes" id="fixes">
+      <h2>Make the fixes</h2>
+      <p class="muted">“Prepare fixes” turns the numbers above into exact changes, checked against the live accounts. Nothing changes in Google or Meta until you tick changes and click Apply, and every change can be undone.</p>
+      <form method="post" action="/p/{{ p.id }}/fixes/prepare" data-busy="Checking the accounts…" class="fix-prepare">
+        <button class="btn" type="submit">{{ 'Prepare fixes again' if fixes_open else 'Prepare fixes' }}</button>
+      </form>
+
+      {% if fixes_open %}
+      <form method="post" action="/p/{{ p.id }}/fixes/apply" class="fix-list" data-busy="Applying…">
+        {% for kind, label in kind_labels.items() %}
+          {% set group = fixes_open|selectattr('kind', 'equalto', kind)|list %}
+          {% if group %}
+          <fieldset class="fix-group">
+            <legend>{{ label }} <span class="muted small">({{ group|length }})</span></legend>
+            {% if group|length > 1 %}<label class="fix-all small"><input type="checkbox" data-all="{{ kind }}"> Select all</label>{% endif %}
+            {% if kind == 'budget' %}
+              {% for plat, label2 in [('google', 'Google'), ('meta', 'Meta')] %}
+                {% set pg = group|selectattr('platform', 'equalto', plat)|list %}
+                {% if pg %}<p class="muted small budget-why"><span class="tag tag-{{ plat }}">{{ label2 }}</span> {{ pg[0].detail }}</p>{% endif %}
+              {% endfor %}
+            {% endif %}
+            <ul>
+            {% for ch in group %}
+              <li class="fix fix-{{ ch.status }}">
+                <label class="fix-main">
+                  <input type="checkbox" name="ids" value="{{ ch.id }}" data-group="{{ kind }}">
+                  <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span> {{ ch.title }}
+                  {% if kind != 'budget' and ch.detail %}<br><span class="muted small">{{ ch.detail }}</span>{% endif %}
+                  {% if kind == 'draft_ad' %}
+                    <span class="ad-preview">
+                    {% if ch.platform == 'google' %}
+                      <strong class="small">Headlines</strong> <span class="small">{{ ch.payload.headlines|join(' · ') }}</span><br>
+                      <strong class="small">Descriptions</strong> <span class="small">{{ ch.payload.descriptions|join(' · ') }}</span>
+                    {% else %}
+                      <strong class="small">Text</strong> <span class="small">{{ ch.payload.primary_text }}</span><br>
+                      <strong class="small">Headline</strong> <span class="small">{{ ch.payload.headline }}</span>{% if ch.payload.description %} · <span class="small">{{ ch.payload.description }}</span>{% endif %}
+                    {% endif %}
+                    </span>
+                  {% endif %}
+                  {% if ch.error %}<br><span class="fix-error small">{{ 'Out of date' if ch.status == 'stale' else 'Didn’t go through' }}: {{ ch.error }}</span>{% endif %}
+                  </span>
+                </label>
+                <button class="linklike small" type="submit" formaction="/p/{{ p.id }}/fixes/{{ ch.id }}/dismiss" data-busy="…">Dismiss</button>
+              </li>
+            {% endfor %}
+            </ul>
+          </fieldset>
+          {% endif %}
+        {% endfor %}
+        <button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
+      </form>
+      {% endif %}
+
+      {% set draftable = [] %}
+      {% for v in views if v.campaigns and ((v.key == 'google' and p.google_customer_id and google_on) or (v.key == 'meta' and p.meta_account_id and meta_on)) %}{% set _ = draftable.append(v) %}{% endfor %}
+      {% if draftable %}
+      <form method="post" action="/p/{{ p.id }}/fixes/draft" class="fix-draft" data-busy="Writing the ad…">
+        <label>New ad for
+          <select name="target">
+            {% for v in draftable %}
+            <optgroup label="{{ v.label }}">
+              {% for c in v.campaigns %}<option value="{{ v.key }}|{{ c.name }}">{{ c.name }}</option>{% endfor %}
+            </optgroup>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn btn-quiet" type="submit" {% if not ai_on %}disabled{% endif %}>Write a new ad</button>
+        <span class="muted small">The AI writes it from what’s working; it appears above for review and is created paused when applied.</span>
+      </form>
+      {% endif %}
+
+      {% if fixes_done %}
+      <details class="fix-history" {% if not fixes_open %}open{% endif %}>
+        <summary>Changes made ({{ fixes_done|length }})</summary>
+        <ul>
+        {% for ch in fixes_done %}
+          <li>
+            <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span>
+              {% if ch.status == 'undone' %}<s>{{ ch.title }}</s> <span class="muted small">undone {{ ch.undone_at.replace('T', ' ')[:16] }}</span>
+              {% else %}{{ ch.title }} <span class="muted small">applied {{ ch.applied_at.replace('T', ' ')[:16] }}</span>{% endif %}
+              {% if ch.error %}<br><span class="fix-error small">{{ ch.error }}</span>{% endif %}</span>
+            {% if ch.status == 'applied' %}
+            <form method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/undo" data-busy="Undoing…" data-confirm="Undo this change in {{ 'Google Ads' if ch.platform == 'google' else 'Meta' }}?"><button class="linklike small" type="submit">Undo</button></form>
+            {% endif %}
+          </li>
+        {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
+
     {% if has_data %}
     <section class="ai">
       <h2>Write-ups</h2>

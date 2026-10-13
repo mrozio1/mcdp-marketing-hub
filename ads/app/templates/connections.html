@@ -2,7 +2,7 @@
 {% block title %}Connections{% endblock %}
 {% block content %}
 <h1>Connections</h1>
-<p class="lede">Connected accounts are pulled automatically every night (around 5 a.m. Central). Nothing is ever changed in Meta or Google; this page only reads numbers.</p>
+<p class="lede">Connected accounts are pulled automatically every night (around 5 a.m. Central). Changes are only made in Meta or Google when someone ticks a fix on a practice page and clicks Apply.</p>
 
 <div class="conn-grid">
   <section class="panel conn" id="meta">
@@ -24,9 +24,9 @@
     </form>
     <details class="how">
       <summary>Where do I get this?</summary>
-      <p>In <strong>Meta Business Settings → Users → System users</strong>: add a system user and use <strong>Assign assets</strong> to give it the practices’ ad accounts (view performance is enough).</p>
+      <p>In <strong>Meta Business Settings → Users → System users</strong>: add a system user and use <strong>Assign assets</strong> to give it the practices’ ad accounts with <strong>Manage campaigns</strong> (View performance is enough for reports only). To write new ads, also assign the practices’ Facebook Pages with <strong>Create ads</strong>.</p>
       <p>Then <strong>Accounts → Apps → MCDP Social → Assign people</strong>: add the system user with full control. Without this, Generate token says “No permissions available”.</p>
-      <p>Finally <strong>Generate token</strong> for MCDP Social with the <code>ads_read</code> permission and no expiry. If <code>ads_read</code> isn’t offered, add the “Measure ad performance data with Marketing API” use case to the app in developers.facebook.com.</p>
+      <p>Finally <strong>Generate token</strong> for MCDP Social with no expiry and the <code>ads_read</code> and <code>ads_management</code> permissions (<code>ads_read</code> alone is read-only). If <code>ads_read</code> isn’t offered, add the “Measure ad performance data with Marketing API” use case to the app in developers.facebook.com.</p>
     </details>
     {% if meta_from_page %}<form method="post" action="/connections/meta/remove" data-confirm="Remove the Meta token?"><button class="linklike danger" type="submit">Remove token</button></form>{% endif %}
   </section>
@@ -55,7 +55,7 @@
     <details class="how">
       <summary>Where do I get this?</summary>
       <p>In <strong>Google Cloud</strong>: create a project, enable the <strong>Google Ads API</strong> and apply for <strong>Explorer</strong> access on its overview page. Then <strong>IAM &amp; Admin → Service Accounts</strong>: create one, open it, <strong>Keys → Add key → JSON</strong>.</p>
-      <p>In <strong>Google Ads</strong> (the manager account, or each practice account): <strong>Admin → Access and security → Users → +</strong>, add the robot account’s email with <strong>Read only</strong> access.</p>
+      <p>In <strong>Google Ads</strong> (the manager account, or each practice account): <strong>Admin → Access and security → Users → +</strong>, add the robot account’s email with <strong>Standard</strong> access, so fixes can be applied (<strong>Read only</strong> is enough for reports only).</p>
     </details>
     {% if google_oauth and not google_sa %}
       <p class="small muted">Or, if your team prefers personal sign-in: <a href="/google/connect">Connect Google</a> (redirect address <code class="break-all">{{ redirect_uri }}</code>).</p>

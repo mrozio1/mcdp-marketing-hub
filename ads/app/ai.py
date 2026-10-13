@@ -105,21 +105,64 @@ def build_context(practice, platforms):
     return "\n".join(parts)
 
 
+JSON_TASKS = {
+    "google_ad": (
+        "Write one new Google responsive search ad for this campaign. Return JSON only: "
+        '{"headlines": [10 to 15 strings, each 30 characters or fewer], '
+        '"descriptions": [4 strings, each 90 characters or fewer]}. Count characters carefully. '
+        "Vary the angles (offer, trust, convenience, outcome, call to action); include the location or "
+        "practice name in a few headlines; don't repeat the existing headlines. Follow the dental "
+        "advertising care rules strictly (no guarantees, no before/after claims, no prices unless given)."
+    ),
+    "meta_ad": (
+        "Write one new Meta (Facebook/Instagram) ad for this campaign, as a fresh angle on what the "
+        'current ad says. Return JSON only: {"primary_text": "1-3 short sentences, under 200 characters", '
+        '"headline": "40 characters or fewer", "description": "under 30 characters"}. Follow the dental '
+        "advertising care rules strictly (no guarantees, no before/after claims, no prices unless given)."
+    ),
+}
+
+
+def _chat(messages, temperature=0.4, max_tokens=3000, json_mode=False):
+    if not available():
+        raise AIError("AI isn't switched on for the Ads page. Run: sh enable-ads.sh")
+    body = {"model": AI_MODEL, "temperature": temperature, "max_tokens": max_tokens, "messages": messages}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    return _post(body)
+
+
+def generate_json(kind, context):
+    """Ad text as structured data, for creating paused draft ads."""
+    if kind not in JSON_TASKS:
+        raise AIError("Unknown request.")
+    text = _chat([
+        {"role": "system", "content": "You write ad copy for a group of dental and orthodontic practices. "
+                                      "Reply with a single JSON object and nothing else.\n\n" + GUIDE},
+        {"role": "user", "content": JSON_TASKS[kind] + "\n\n--- CONTEXT ---\n" + context},
+    ], temperature=0.7, max_tokens=1500, json_mode=True)
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        raw = raw[raw.find("{"):]
+    try:
+        start, end = raw.find("{"), raw.rfind("}")
+        return json.loads(raw[start:end + 1])
+    except ValueError:
+        raise AIError("The AI's answer wasn't in the expected format. Try again.")
+
+
 def generate(kind, context):
     if kind not in TASKS:
         raise AIError("Unknown request.")
-    if not available():
-        raise AIError("AI isn't switched on for the Ads page. Run: sh enable-ads.sh")
-    body = {
-        "model": AI_MODEL,
-        "temperature": 0.4,
-        "max_tokens": 3000,
-        "messages": [
-            {"role": "system", "content": "You are a careful paid-media analyst for a group of dental and "
-                                          "orthodontic practices. Write in Markdown.\n\n" + GUIDE},
-            {"role": "user", "content": TASKS[kind] + "\n\n--- ACCOUNT DATA ---\n" + context},
-        ],
-    }
+    return _chat([
+        {"role": "system", "content": "You are a careful paid-media analyst for a group of dental and "
+                                      "orthodontic practices. Write in Markdown.\n\n" + GUIDE},
+        {"role": "user", "content": TASKS[kind] + "\n\n--- ACCOUNT DATA ---\n" + context},
+    ])
+
+
+def _post(body):
     req = urllib.request.Request(f"{AI_BASE_URL}/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {AI_API_KEY}",
                                           "Content-Type": "application/json"})

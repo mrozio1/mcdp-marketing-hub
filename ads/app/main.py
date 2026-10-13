@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import ai, db, scope, sync
+from . import actions, ai, db, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -210,7 +210,10 @@ def practice_page(request: Request, pid: int):
                 master=is_master(p, allp),
                 ai_out={k: db.latest_ai(pid, k) for k in ai.TASKS},
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
-                meta_on=cx.meta_configured(), google_on=google_ready())
+                meta_on=cx.meta_configured(), google_on=google_ready(),
+                fixes_open=db.changes(pid, ["proposed", "failed", "stale"]),
+                fixes_done=db.changes(pid, ["applied", "undone"], limit=40),
+                kind_labels=actions.KIND_LABELS)
 
 
 @app.post("/p/{pid}/settings")
@@ -315,6 +318,88 @@ async def ai_generate(request: Request, pid: int, kind: str):
         return RedirectResponse(f"/p/{pid}/report", status_code=303)
     flash(request, {"fixes": "Fix list written.", "creative": "Ad ideas written."}[kind])
     return RedirectResponse(f"/p/{pid}#ai-{kind}", status_code=303)
+
+
+# ---------- fixes: proposed in the page, applied in Google / Meta only on click ----------
+def _fix_back(pid):
+    return RedirectResponse(f"/p/{pid}#fixes", status_code=303)
+
+
+@app.post("/p/{pid}/fixes/prepare")
+async def fixes_prepare(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/", status_code=303)
+    n, notes = await asyncio.to_thread(actions.prepare, p, practice_views(p))
+    msg = (f"{n} change{'s' if n != 1 else ''} ready to review." if n
+           else "Nothing to change right now: no wasted searches to block, campaigns to pause or budgets off track.")
+    bad = [x for x in notes if "Google:" in x[:8] or "Meta:" in x[:6]]
+    flash(request, " ".join([msg, *notes]), "error" if bad and not n else "ok")
+    return _fix_back(pid)
+
+
+@app.post("/p/{pid}/fixes/apply")
+async def fixes_apply(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()]
+    done, problems = 0, []
+    for cid in ids:
+        ch = db.change(cid)
+        if not ch or ch["practice_id"] != pid:
+            continue
+        ok, msg = await asyncio.to_thread(actions.apply_change, ch)
+        if ok:
+            done += 1
+        else:
+            problems.append(f"{ch['title']}: {msg}")
+    msg = f"Applied {done} change{'s' if done != 1 else ''} in Google / Meta." if done else "Nothing was applied."
+    if problems:
+        msg += f" {len(problems)} didn't go through — " + problems[0] + (" (see the list for the rest)" if len(problems) > 1 else "")
+    flash(request, msg, "error" if problems else "ok")
+    return _fix_back(pid)
+
+
+@app.post("/p/{pid}/fixes/{cid}/undo")
+async def fixes_undo(request: Request, pid: int, cid: int):
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if ch and ch["practice_id"] == pid:
+        ok, msg = await asyncio.to_thread(actions.undo_change, ch)
+        flash(request, f"Undone: {ch['title']}." if ok else f"Couldn't undo: {msg}", "ok" if ok else "error")
+    return _fix_back(pid)
+
+
+@app.post("/p/{pid}/fixes/{cid}/dismiss")
+def fixes_dismiss(request: Request, pid: int, cid: int):
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if ch and ch["practice_id"] == pid and ch["status"] in ("proposed", "failed", "stale"):
+        db.update_change(cid, status="dismissed")
+    return _fix_back(pid)
+
+
+@app.post("/p/{pid}/fixes/draft")
+async def fixes_draft(request: Request, pid: int, target: str = Form("")):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    platform, _, campaign = target.partition("|")
+    if not p or platform not in ("google", "meta") or not campaign:
+        flash(request, "Pick a campaign for the new ad.", "error")
+        return _fix_back(pid)
+    try:
+        await asyncio.to_thread(actions.draft_ad, p, platform, campaign, ai.generate_json)
+        flash(request, f"New ad written for {campaign}. Review it below, then tick it and Apply to create it "
+                       "(it's created paused).")
+    except (actions.ActionError, ai.AIError, cx.ConnectorError) as e:
+        flash(request, str(e), "error")
+    return _fix_back(pid)
 
 
 @app.get("/p/{pid}/report", response_class=HTMLResponse)

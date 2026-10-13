@@ -26,10 +26,31 @@
 </main>
 <script>
   // Disable buttons on submit so slow AI requests aren't sent twice, and say what's happening.
-  document.querySelectorAll('form[data-busy]').forEach(f => f.addEventListener('submit', () => {
-    const b = f.querySelector('button[type=submit]');
-    if (b) { b.disabled = true; b.textContent = f.dataset.busy; }
+  document.querySelectorAll('form[data-busy]').forEach(f => f.addEventListener('submit', e => {
+    const b = e.submitter || f.querySelector('button[type=submit]');
+    if (b) { b.disabled = true; b.textContent = b.dataset.busy || f.dataset.busy; }
   }));
+  // Fixes list: "select all" per group, and keep the Apply button's count current.
+  const fixForm = document.querySelector('form.fix-list');
+  if (fixForm) {
+    const boxes = () => [...fixForm.querySelectorAll('input[name=ids]')];
+    const btn = fixForm.querySelector('.apply-btn');
+    const sync = () => {
+      const n = boxes().filter(b => b.checked).length;
+      btn.disabled = n === 0;
+      btn.textContent = n ? `Apply ${n} change${n === 1 ? '' : 's'}` : 'Tick the changes to apply';
+      fixForm.querySelectorAll('input[data-all]').forEach(a => {
+        const g = boxes().filter(b => b.dataset.group === a.dataset.all);
+        a.checked = g.length > 0 && g.every(b => b.checked);
+      });
+    };
+    fixForm.addEventListener('change', e => {
+      if (e.target.dataset.all) boxes().filter(b => b.dataset.group === e.target.dataset.all)
+        .forEach(b => { b.checked = e.target.checked; });
+      sync();
+    });
+    sync();
+  }
   document.querySelectorAll('form[data-confirm]').forEach(f => f.addEventListener('submit', e => {
     if (!window.confirm(f.dataset.confirm)) e.preventDefault();
   }));
