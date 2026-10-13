@@ -82,7 +82,7 @@ def conn():
 
 MIGRATIONS = {
     "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''",
-                  "campaign_filter": "TEXT DEFAULT ''"},
+                  "campaign_filter": "TEXT DEFAULT ''", "campaign_list": "TEXT DEFAULT '[]'"},
     "uploads": {"source": "TEXT DEFAULT 'upload'"},
 }
 
@@ -310,3 +310,37 @@ def delete_ai(pid, kind):
     """Remove a practice's write-ups of one kind (older versions too, so none reappears)."""
     with conn() as c:
         c.execute("DELETE FROM ai_outputs WHERE practice_id=? AND kind=?", (pid, kind))
+
+
+def add_campaigns(pid, names):
+    """Add campaigns to a practice by exact name. Returns how many were new."""
+    import json
+    with conn() as c:
+        r = c.execute("SELECT campaign_list FROM practices WHERE id=?", (pid,)).fetchone()
+        if not r:
+            return 0
+        try:
+            have = json.loads(r["campaign_list"] or "[]")
+        except ValueError:
+            have = []
+        seen = {" ".join(n.split()).lower() for n in have}
+        added = 0
+        for n in names:
+            n = " ".join((n or "").split())
+            if n and n.lower() not in seen:
+                have.append(n)
+                seen.add(n.lower())
+                added += 1
+        c.execute("UPDATE practices SET campaign_list=? WHERE id=?", (json.dumps(have), pid))
+        return added
+
+
+def remove_campaign(pid, name):
+    import json
+    with conn() as c:
+        r = c.execute("SELECT campaign_list FROM practices WHERE id=?", (pid,)).fetchone()
+        if not r:
+            return
+        key = " ".join((name or "").split()).lower()
+        have = [n for n in json.loads(r["campaign_list"] or "[]") if " ".join(n.split()).lower() != key]
+        c.execute("UPDATE practices SET campaign_list=? WHERE id=?", (json.dumps(have), pid))

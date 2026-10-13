@@ -98,11 +98,12 @@ def platform_view(practice, key, label, all_practices=None):
     up = db.latest_upload(practice["id"], key, "campaign") or db.latest_upload(practice["id"], key, "ad")
     view = {"key": key, "label": label, "upload": up, "budget": budget, "campaigns": [], "findings": [],
             "totals": None, "pacing": {"available": False}, "search_terms": None, "search_upload": None,
-            "filtered": scope.has_filter(practice), "camp_total": 0, "breakdown": None}
+            "filtered": scope.has_filter(practice), "camp_total": 0, "breakdown": None, "all_names": []}
     if up:
         all_rows = db.upload_rows(up["id"])
         rows = scope.apply(all_rows, practice)
         view["camp_total"] = len({r["campaign"] for r in all_rows})
+        view["all_names"] = sorted({r["campaign"] for r in all_rows if r.get("campaign")}, key=str.lower)
         if rows:
             camps, tot, findings = analyze_campaigns(rows)
             view.update(campaigns=camps, totals=tot, findings=findings, pacing=pacing(rows, budget))
@@ -206,11 +207,16 @@ def practice_page(request: Request, pid: int):
     if not p:
         return RedirectResponse("/", status_code=303)
     allp = db.practices()
-    return page(request, "practice.html", p=p, views=practice_views(p, with_breakdown=True), uploads=db.uploads(pid),
-                master=is_master(p, allp),
+    views = practice_views(p, with_breakdown=True)
+    included = {c["name"] for v in views for c in v["campaigns"]}
+    add_options = sorted({n for v in views for n in v["all_names"]} - included, key=str.lower)
+    return page(request, "practice.html", p=p, views=views, uploads=db.uploads(pid),
+                master=is_master(p, allp), add_options=add_options,
                 ai_out={k: db.latest_ai(pid, k) for k in ai.TASKS},
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 meta_on=cx.meta_configured(), google_on=google_ready(),
+                assign_targets=[q for q in allp if q["id"] != pid],
+                added=scope.added_campaigns(p),
                 fixes_open=db.changes(pid, ["proposed", "failed", "stale"]),
                 fixes_done=db.changes(pid, ["applied", "undone"], limit=40),
                 kind_labels=actions.KIND_LABELS)
@@ -260,6 +266,58 @@ def practice_split(request: Request, pid: int, name: str = Form(...), campaign_f
     flash(request, f"Created {name.strip()}, showing campaigns containing “{campaign_filter.strip()}”. "
                    "Set its monthly budgets so pacing works.")
     return RedirectResponse(f"/p/{new_id}", status_code=303)
+
+
+# ---------- adding campaigns to practices by exact name ----------
+def _adopt_master_data(master, target):
+    """A practice receiving campaigns from the master gets the same ad accounts (and, if it has
+    no data yet, the master's latest data) so the campaigns show up straight away."""
+    meta = target.get("meta_account_id") or master.get("meta_account_id") or ""
+    goog = target.get("google_customer_id") or master.get("google_customer_id") or ""
+    if (meta, goog) != (target.get("meta_account_id") or "", target.get("google_customer_id") or ""):
+        db.set_practice_accounts(target["id"], meta, goog)
+    if not db.uploads(target["id"]):
+        db.copy_latest_uploads(master["id"], target["id"])
+
+
+@app.post("/p/{pid}/assign")
+async def assign_campaigns(request: Request, pid: int):
+    """From the master record: add ticked campaigns to an existing practice."""
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    names = [n for n in form.getlist("campaign") if str(n).strip()]
+    target = db.practice(int(form.get("target") or 0)) if str(form.get("target") or "").isdigit() else None
+    master = db.practice(pid)
+    if not master or not target or target["id"] == pid:
+        flash(request, "Pick the practice to add the campaigns to.", "error")
+    elif not names:
+        flash(request, "Tick at least one campaign to add.", "error")
+    else:
+        n = db.add_campaigns(target["id"], names)
+        _adopt_master_data(master, target)
+        flash(request, f"Added {n} campaign{'s' if n != 1 else ''} to {target['name']}."
+              + ("" if n == len(names) else " (Some were already there.)"))
+    return RedirectResponse(f"/p/{pid}#by-practice", status_code=303)
+
+
+@app.post("/p/{pid}/campaigns/add")
+def practice_campaign_add(request: Request, pid: int, name: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if name.strip() and db.practice(pid):
+        n = db.add_campaigns(pid, [name])
+        flash(request, f"Added “{name.strip()}”." if n else "That campaign was already added.")
+    return RedirectResponse(f"/p/{pid}#campaigns", status_code=303)
+
+
+@app.post("/p/{pid}/campaigns/remove")
+def practice_campaign_remove(request: Request, pid: int, name: str = Form("")):
+    if (r := guard(request)):
+        return r
+    db.remove_campaign(pid, name)
+    flash(request, f"Removed “{name.strip()}” from this practice.")
+    return RedirectResponse(f"/p/{pid}#campaigns", status_code=303)
 
 
 @app.post("/p/{pid}/upload")

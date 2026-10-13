@@ -165,7 +165,10 @@ account, link the same account to each and give each practice a *Campaigns to in
 filter (words in the campaign names, comma-separated; `-word` excludes). A practice with no
 filter is the **master record**: it shows every campaign, a spend breakdown by practice,
 campaigns no practice claims yet, and one-click **Create practice** suggestions grouped from
-campaign names. Filters apply when the page reads the data, so changing one takes effect
+campaign names. Campaigns whose names don't fit the pattern (e.g. a dated promotion) can be
+added to a practice by exact name: tick them on the master record and pick the practice, or
+use **Campaigns added by name** on the practice page (× to remove). A campaign added by name
+counts only for that practice. Filters apply when the page reads the data, so changing one takes effect
 immediately; each shared account is pulled once per sync. Keys entered on the
 page are stored in the Ads database (included in backups); `connect-ads.sh` can
 store them in `.env` instead, and also supports personal Google sign-in

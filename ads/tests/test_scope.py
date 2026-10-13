@@ -98,7 +98,7 @@ def test_master_split_and_filtered_practice(client):
     p = db.practice(new_id)
     assert p["campaign_filter"] == "invisalign" and p["google_customer_id"] == "4445556666"
     html = c.get(f"/p/{new_id}").text
-    assert "1 of 2 campaigns" in html and "PMax - Smile Promo" not in html
+    assert "1 of 2 campaigns" in html and "<td>PMax - Smile Promo</td>" not in html
     assert "$579.00" in html                                   # 12 days x $48.25 only
     assert "invisalign jobs" in html                            # its search terms carried over
 
@@ -137,3 +137,64 @@ def test_suggestions_group_related_campaigns():
         ("Bandeen Orthodontics", "Bandeen Orthodontics", 2), ("Havens Orthodontics", "Havens", 2), ("Brand", "Brand", 1)]
     for s in sg:   # a suggested filter always picks up its own campaigns
         assert all(scope.matches(c["name"], s["filter"]) for c in s["campaigns"])
+
+
+# ---------------- campaigns added to a practice by exact name ----------------
+PROMO = "Price is right at Heights campaign 10-1-2026 Campaign"
+
+
+def test_added_campaigns_belong_only_to_their_practice():
+    heights = {"id": 2, "name": "Heights", "campaign_filter": "Heights Orthodontics",
+               "campaign_list": '["Price is right at Heights campaign 10-1-2026 Campaign", "Bandeen promo for Heights"]'}
+    bandeen = {"id": 3, "name": "Bandeen", "campaign_filter": "bandeen", "campaign_list": "[]"}
+    only_list = {"id": 4, "name": "Promo only", "campaign_filter": "", "campaign_list": '["Spring Promo"]'}
+    claims = scope.claims_from([heights, bandeen, only_list])
+    assert scope.matches(PROMO, heights, claims)
+    assert scope.matches("  price IS right at heights campaign 10-1-2026 campaign ", heights, claims)   # spacing/case
+    assert scope.matches("Heights Orthodontics", heights, claims)                 # words still work
+    assert scope.matches("Bandeen promo for Heights", heights, claims)
+    assert not scope.matches("Bandeen promo for Heights", bandeen, claims)       # added by hand to Heights wins
+    assert scope.matches("Bandeen Orthodontics", bandeen, claims)
+    assert scope.matches("Spring Promo", only_list, claims)
+    assert not scope.matches("Anything else", only_list, claims)                 # list-only practice
+    assert scope.has_filter(only_list)
+
+
+def test_add_campaigns_from_master_and_practice_page(client):
+    c, db, sync, mp = client
+    from datetime import date as _d
+    rows = []
+    for name, spend, conv in (("Heights Orthodontics", 900, 9), (PROMO, 250, 5), ("Bandeen Orthodontics", 600, 2),
+                              ("Spring Promo", 80, 0)):
+        rows.append({"campaign": name, "name": "", "date": _d(2026, 10, 5), "date_start": _d(2026, 10, 5),
+                     "date_end": _d(2026, 10, 5), "spend": spend, "impressions": 1000, "clicks": 40,
+                     "conversions": conv, "conv_value": 0.0, "status": "", "budget": 0.0, "match_type": ""})
+    parsed = {"platform": "google", "level": "campaign", "rows": rows, "date_start": _d(2026, 10, 5),
+              "date_end": _d(2026, 10, 5), "warnings": []}
+    master = db.add_practice("MCDP Ads", 3500, 0)
+    db.save_upload(master, parsed, "export.csv")
+    heights = db.add_practice("Heights Orthodontics", 1500, 0, "Heights Orthodontics")
+    bandeen = db.add_practice("Bandeen Orthodontics", 800, 0, "Bandeen")
+    db.copy_latest_uploads(master, bandeen)
+
+    html = c.get(f"/p/{master}").text
+    assert "Or add campaigns to an existing practice" in html and PROMO in html
+
+    # From the master: tick the promo and add it to Heights (which had no data yet)
+    r = c.post(f"/p/{master}/assign", data={"campaign": [PROMO], "target": str(heights)})
+    assert "Added 1 campaign to Heights Orthodontics" in r.text
+    assert scope.added_campaigns(db.practice(heights)) == [PROMO]
+    page_h = c.get(f"/p/{heights}").text
+    assert "$1,150.00" in page_h and "2 of 4 campaigns" in page_h       # data copied over; 900 + 250
+    assert "Campaigns added by name" in page_h and f'aria-label="Remove {PROMO}"' in page_h
+
+    # Master breakdown now credits it to Heights; only Spring Promo is left unassigned
+    html = c.get(f"/p/{master}").text
+    assert "1 campaign not assigned to a practice yet ($80.00)" in html
+
+    # From the practice page: add another, then remove it with the ×
+    c.post(f"/p/{bandeen}/campaigns/add", data={"name": "Spring Promo"})
+    assert "Spring Promo" in scope.added_campaigns(db.practice(bandeen))
+    c.post(f"/p/{bandeen}/campaigns/remove", data={"name": "Spring Promo"})
+    assert scope.added_campaigns(db.practice(bandeen)) == []
+    assert "Spring Promo" in c.get(f"/p/{bandeen}").text            # offered again in the Add list

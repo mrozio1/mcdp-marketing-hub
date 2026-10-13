@@ -2,10 +2,13 @@
 
 A practice's filter is a comma-separated list of words matched against campaign names
 (case-insensitive, "contains"). A word starting with "-" excludes campaigns containing it.
-A practice with no filter sees every campaign: that is the master record.
+Campaigns whose names don't fit a pattern can also be added to a practice by exact name.
+An added campaign belongs only to the practice(s) it was added to, even if another practice's
+words would match it. A practice with neither sees every campaign: that is the master record.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections import OrderedDict
@@ -27,24 +30,68 @@ def parse_filter(text):
     return inc, exc
 
 
+def norm(name):
+    return " ".join((name or "").split()).lower()
+
+
+def added_campaigns(practice):
+    """Campaign names added to this practice by hand (original spelling), in the order added."""
+    raw = (practice or {}).get("campaign_list") or "[]"
+    try:
+        names = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except ValueError:
+        return []
+    return [n for n in names if isinstance(n, str) and n.strip()]
+
+
 def has_filter(practice):
     inc, exc = parse_filter((practice or {}).get("campaign_filter"))
-    return bool(inc or exc)
+    return bool(inc or exc or added_campaigns(practice))
 
 
-def matches(campaign, practice_or_filter):
-    f = practice_or_filter.get("campaign_filter") if isinstance(practice_or_filter, dict) else practice_or_filter
-    inc, exc = parse_filter(f)
-    name = (campaign or "").lower()
+def claims_from(practices):
+    """{normalized campaign name: {practice ids it was added to by hand}}"""
+    out = {}
+    for q in practices:
+        for n in added_campaigns(q):
+            out.setdefault(norm(n), set()).add(q["id"])
+    return out
+
+
+def _db_claims():
+    from . import db
+    return claims_from(db.practices())
+
+
+def matches(campaign, practice_or_filter, claims=None):
+    if not isinstance(practice_or_filter, dict):
+        inc, exc = parse_filter(practice_or_filter)
+        name = norm(campaign)
+        return not any(e in name for e in exc) and (not inc or any(i in name for i in inc))
+    p = practice_or_filter
+    if not has_filter(p):
+        return True                                   # master record: everything
+    name = norm(campaign)
+    if name in {norm(n) for n in added_campaigns(p)}:
+        return True
+    if claims is None and p.get("id") is not None:
+        claims = _db_claims()
+    if claims and name in claims and p.get("id") not in claims[name]:
+        return False                                  # added by hand to another practice
+    inc, exc = parse_filter(p.get("campaign_filter"))
+    if not inc and not exc:
+        return False                                  # this practice only has hand-added campaigns
     if any(e in name for e in exc):
         return False
     return not inc or any(i in name for i in inc)
 
 
-def apply(rows, practice):
+def apply(rows, practice, claims=None):
     if not has_filter(practice):
         return rows
-    return [r for r in rows if matches(r.get("campaign"), practice)]
+    if claims is None and isinstance(practice, dict) and practice.get("id") is not None:
+        claims = _db_claims()
+    return [r for r in rows if matches(r.get("campaign"), practice, claims)]
 
 
 def group_key(campaign):
@@ -109,7 +156,8 @@ def breakdown(master, platform, rows, practices):
         others.append(q)
     if not others and not camps:
         return None
-    owners = {c["name"]: [q for q in others if matches(c["name"], q)] for c in camps}
+    claims = claims_from(practices)
+    owners = {c["name"]: [q for q in others if matches(c["name"], q, claims)] for c in camps}
     by_practice = []
     for q in others:
         mine = [c for c in camps if q in owners[c["name"]]]
