@@ -112,7 +112,9 @@ analysis as uploads.
 Set up on the Ads page under **Connections** (no terminal needed):
 
 - **Meta:** paste a Business Settings *system user* token (`ads_read`, assets =
-  the practices' ad accounts, no expiry) for the MCDP Social app.
+  the practices' ad accounts, no expiry) for the MCDP Social app. The system user
+  must first be assigned to the app (Accounts → Apps → MCDP Social → Assign people),
+  or Generate token shows "No permissions available".
 - **Google:** Google retired developer tokens on 2026-09-09; access now comes from a
   Google Cloud project. Create a project, enable the Google Ads API, apply for
   Explorer access, create a *service account* with a JSON key, and add its email as a
