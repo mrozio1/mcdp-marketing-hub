@@ -82,6 +82,11 @@ def _explain(code, j, raw):
                         break
             if j.get("error_description"):
                 msg = j["error_description"]
+            if "not associated with any Ads accounts" in msg:
+                return ("The key works, but this account hasn't been added in Google Ads yet. In Google Ads "
+                        "(the manager account, or each practice account): Admin → Access and security → Users → +, "
+                        "add the robot account's email with Read only access, then click Refresh account lists. "
+                        f"(HTTP {code})")
             if msg:
                 return f"{msg} (HTTP {code})"
         elif isinstance(err, str):
