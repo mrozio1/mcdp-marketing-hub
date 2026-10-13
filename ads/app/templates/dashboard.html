@@ -27,6 +27,7 @@
     <tr>
       <th scope="row">
         <a href="/p/{{ it.p.id }}">{{ it.p.name }}</a>
+        {% if it.master %}<span class="tag tag-master">Master</span>{% elif it.p.campaign_filter %}<span class="muted small scope-sub">{{ it.p.campaign_filter|truncate(40) }}</span>{% endif %}
         {% if it.issues %}<span class="issues">{{ it.issues }} to review</span>{% endif %}
       </th>
       {% for v in it.views %}
@@ -37,7 +38,7 @@
   {% endfor %}
   </tbody>
 </table>
-<p class="muted small">“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, from each practice’s latest exports.</p>
+<p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, from each practice’s latest exports.</p>
 {% endif %}
 
 <section class="panel add">
@@ -46,6 +47,7 @@
     <label>Name<input name="name" required placeholder="Heights Orthodontics"></label>
     <label>Google Ads monthly budget<input name="google_budget" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
     <label>Meta Ads monthly budget<input name="meta_budget" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
+    <label>Campaigns to include <span class="muted small">(optional)</span><input name="campaign_filter" placeholder="e.g. Heights"></label>
     <button type="submit" class="btn">Add practice</button>
   </form>
 </section>

@@ -4,6 +4,8 @@
 {% block content %}
 <p class="crumb"><a href="/">Practices</a></p>
 <h1>{{ p.name }}</h1>
+{% if master %}<p class="scope-note"><span class="tag tag-master">Master record</span> Every campaign in the linked accounts, with a breakdown by practice.</p>
+{% elif p.campaign_filter %}<p class="scope-note">Campaigns containing <strong>{{ p.campaign_filter }}</strong> <a class="small" href="#settings">change</a></p>{% endif %}
 
 <div class="layout">
   <div class="main-col">
@@ -18,8 +20,11 @@
     {% for v in views if v.upload or v.search_upload %}
     <section class="platform" id="{{ v.key }}">
       <h2>{{ v.label }}</h2>
+      {% if v.upload and v.filtered and not v.totals %}
+        <p class="flash flash-error">None of the {{ v.camp_total }} campaigns in this {{ v.label }} data contain “{{ p.campaign_filter }}”. Adjust the campaign filter under <a href="#settings">Budgets and notes</a>.</p>
+      {% endif %}
       {% if v.upload %}
-        <p class="muted small">{% if v.upload.source == 'sync' %}Synced {{ v.upload.uploaded_at.replace('T', ' ')[:16] }}{% else %}From {{ v.upload.filename }}{% endif %} · {{ v.upload.date_start or '?' }} to {{ v.upload.date_end or '?' }}</p>
+        <p class="muted small">{% if v.upload.source == 'sync' %}Synced {{ v.upload.uploaded_at.replace('T', ' ')[:16] }}{% else %}From {{ v.upload.filename }}{% endif %} · {{ v.upload.date_start or '?' }} to {{ v.upload.date_end or '?' }}{% if v.filtered and v.totals %} · {{ v.campaigns|length }} of {{ v.camp_total }} campaigns{% endif %}</p>
       {% endif %}
 
       {{ ruler(v.pacing, 'Budget pacing') }}
@@ -31,6 +36,47 @@
         <div><dt>Cost per conversion</dt><dd>{{ v.totals.cpa|money }}</dd></div>
         <div><dt>Click-through rate</dt><dd>{{ v.totals.ctr|pct }}</dd></div>
       </dl>
+      {% endif %}
+
+      {% set b = v.breakdown %}
+      {% if b and (b.by_practice or b.suggestions|length > 1) %}
+      <h3 id="by-practice">By practice</h3>
+      {% if b.by_practice %}
+      <div class="table-scroll"><table class="data">
+        <thead><tr><th>Practice</th><th class="num">Campaigns</th><th class="num">Spend</th><th class="num">Conv.</th><th class="num">Cost/conv.</th></tr></thead>
+        <tbody>
+        {% for x in b.by_practice %}
+          <tr><td><a href="/p/{{ x.practice.id }}">{{ x.practice.name }}</a></td><td class="num">{{ x.count }}</td><td class="num">{{ x.spend|money }}</td>
+              <td class="num">{{ '%g'|format(x.conversions) }}</td><td class="num">{{ x.cpa|money }}</td></tr>
+        {% endfor %}
+        {% if b.unassigned.count %}
+          <tr class="muted"><td>Not assigned yet</td><td class="num">{{ b.unassigned.count }}</td><td class="num">{{ b.unassigned.spend|money }}</td>
+              <td class="num">{{ '%g'|format(b.unassigned.conversions) }}</td><td class="num">{{ b.unassigned.cpa|money }}</td></tr>
+        {% endif %}
+        </tbody>
+      </table></div>
+      {% endif %}
+      {% if b.overlap %}
+      <p class="flash flash-error small">{{ b.overlap|length }} campaign{{ '' if b.overlap|length == 1 else 's' }} match more than one practice’s filter, so {{ 'it is' if b.overlap|length == 1 else 'they are' }} counted twice above: {{ b.overlap[:5]|join(', ') }}{% if b.overlap|length > 5 %}…{% endif %}. Make the filters more specific.</p>
+      {% endif %}
+      {% if b.suggestions %}
+      <details class="split" {% if not b.by_practice %}open{% endif %}>
+        <summary>{{ b.unassigned.count }} campaign{{ '' if b.unassigned.count == 1 else 's' }} not assigned to a practice yet ({{ b.unassigned.spend|money }})</summary>
+        <p class="muted small">Grouped by the start of each campaign name. “Create practice” makes a practice that shows only those campaigns, linked to the same accounts and starting from this data. You can edit its name and filter afterwards.</p>
+        <ul class="split-list">
+        {% for sg in b.suggestions %}
+          <li>
+            <div><strong>{{ sg.name }}</strong> <span class="muted small">{{ sg.count }} campaign{{ '' if sg.count == 1 else 's' }} · {{ sg.spend|money }} · {{ '%g'|format(sg.conversions) }} conv.</span>
+              {% if sg.count > 1 %}<br><span class="muted small">{{ sg.campaigns|map(attribute='name')|join(', ')|truncate(140) }}</span>{% endif %}</div>
+            <form method="post" action="/p/{{ p.id }}/split" class="split-form">
+              <input type="hidden" name="name" value="{{ sg.name }}"><input type="hidden" name="campaign_filter" value="{{ sg.filter }}">
+              <button class="btn btn-quiet btn-small" type="submit">Create practice</button>
+            </form>
+          </li>
+        {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
       {% endif %}
 
       {% if v.findings %}
@@ -153,12 +199,16 @@
     </section>
     {% endif %}
 
-    <section class="panel">
+    <section class="panel" id="settings">
       <h2>Budgets and notes</h2>
       <form method="post" action="/p/{{ p.id }}/settings" class="stack">
         <label>Name<input name="name" value="{{ p.name }}" required></label>
         <label>Google Ads monthly budget<input name="google_budget" type="number" min="0" step="1" value="{{ '%g'|format(p.google_budget or 0) }}"></label>
         <label>Meta Ads monthly budget<input name="meta_budget" type="number" min="0" step="1" value="{{ '%g'|format(p.meta_budget or 0) }}"></label>
+        <label>Campaigns to include
+          <input name="campaign_filter" value="{{ p.campaign_filter or '' }}" placeholder="e.g. Heights" maxlength="500">
+          <span class="muted small">Words in the campaign names, separated by commas. Use this when practices share one ad account. Start a word with “-” to leave those campaigns out. Leave blank to include every campaign{% if master %} (this record){% endif %}.</span>
+        </label>
         <label>Notes for write-ups<textarea name="notes" rows="3" placeholder="Services to push, location, offers you actually run…">{{ p.notes or '' }}</textarea></label>
         <button type="submit" class="btn btn-quiet">Save</button>
       </form>

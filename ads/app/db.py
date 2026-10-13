@@ -64,7 +64,8 @@ def conn():
 
 
 MIGRATIONS = {
-    "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''"},
+    "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''",
+                  "campaign_filter": "TEXT DEFAULT ''"},
     "uploads": {"source": "TEXT DEFAULT 'upload'"},
 }
 
@@ -115,17 +116,22 @@ def practice(pid):
         return dict(r) if r else None
 
 
-def add_practice(name, google_budget=0.0, meta_budget=0.0):
+def add_practice(name, google_budget=0.0, meta_budget=0.0, campaign_filter="", meta_account_id="",
+                 google_customer_id=""):
     with conn() as c:
-        cur = c.execute("INSERT INTO practices(name, google_budget, meta_budget, created_at) VALUES (?,?,?,?)",
-                        (name.strip(), google_budget, meta_budget, now()))
+        cur = c.execute("INSERT INTO practices(name, google_budget, meta_budget, campaign_filter, meta_account_id, "
+                        "google_customer_id, created_at) VALUES (?,?,?,?,?,?,?)",
+                        (name.strip(), google_budget, meta_budget, (campaign_filter or "").strip(),
+                         meta_account_id or "", google_customer_id or "", now()))
         return cur.lastrowid
 
 
-def update_practice(pid, name, google_budget, meta_budget, notes):
+def update_practice(pid, name, google_budget, meta_budget, notes, campaign_filter=None):
     with conn() as c:
         c.execute("UPDATE practices SET name=?, google_budget=?, meta_budget=?, notes=? WHERE id=?",
                   (name.strip(), google_budget, meta_budget, notes, pid))
+        if campaign_filter is not None:
+            c.execute("UPDATE practices SET campaign_filter=? WHERE id=?", (campaign_filter.strip(), pid))
 
 
 def set_practice_accounts(pid, meta_account_id, google_customer_id):
@@ -211,3 +217,20 @@ def latest_ai(pid, kind):
         r = c.execute("SELECT * FROM ai_outputs WHERE practice_id=? AND kind=? ORDER BY id DESC LIMIT 1",
                       (pid, kind)).fetchone()
         return dict(r) if r else None
+
+
+def copy_latest_uploads(src_pid, dst_pid):
+    """Give a new practice the latest data of the record it was split from (same ad account)."""
+    with conn() as c:
+        latest = c.execute(
+            "SELECT u.* FROM uploads u JOIN (SELECT platform, level, MAX(id) AS id FROM uploads "
+            "WHERE practice_id=? GROUP BY platform, level) m ON u.id = m.id", (src_pid,)).fetchall()
+        for u in latest:
+            cur = c.execute(
+                "INSERT INTO uploads(practice_id, platform, level, filename, date_start, date_end, row_count, "
+                "uploaded_at, source) VALUES (?,?,?,?,?,?,?,?,?)",
+                (dst_pid, u["platform"], u["level"], u["filename"], u["date_start"], u["date_end"],
+                 u["row_count"], u["uploaded_at"], u["source"]))
+            c.execute("INSERT INTO rows SELECT ?, date, date_start, date_end, campaign, name, spend, impressions, "
+                      "clicks, conversions, conv_value, status, budget, match_type FROM rows WHERE upload_id=?",
+                      (cur.lastrowid, u["id"]))

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import ai, db, sync
+from . import ai, db, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -93,28 +93,41 @@ def page(request, name, **ctx):
 
 
 # ---------- analysis view-model ----------
-def platform_view(practice, key, label):
+def platform_view(practice, key, label, all_practices=None):
     budget = practice.get(f"{key}_budget") or 0
     up = db.latest_upload(practice["id"], key, "campaign") or db.latest_upload(practice["id"], key, "ad")
     view = {"key": key, "label": label, "upload": up, "budget": budget, "campaigns": [], "findings": [],
-            "totals": None, "pacing": {"available": False}, "search_terms": None, "search_upload": None}
+            "totals": None, "pacing": {"available": False}, "search_terms": None, "search_upload": None,
+            "filtered": scope.has_filter(practice), "camp_total": 0, "breakdown": None}
     if up:
-        rows = db.upload_rows(up["id"])
-        camps, tot, findings = analyze_campaigns(rows)
-        view.update(campaigns=camps, totals=tot, findings=findings, pacing=pacing(rows, budget))
+        all_rows = db.upload_rows(up["id"])
+        rows = scope.apply(all_rows, practice)
+        view["camp_total"] = len({r["campaign"] for r in all_rows})
+        if rows:
+            camps, tot, findings = analyze_campaigns(rows)
+            view.update(campaigns=camps, totals=tot, findings=findings, pacing=pacing(rows, budget))
+        if not view["filtered"] and all_practices is not None:
+            view["breakdown"] = scope.breakdown(practice, key, all_rows, all_practices)
     st_up = db.latest_upload(practice["id"], key, "search_term")
     if st_up:
-        view["search_upload"] = st_up
-        view["search_terms"] = analyze_search_terms(db.upload_rows(st_up["id"]))
-        if not up:  # search terms alone still give a spend picture
-            rows = db.upload_rows(st_up["id"])
-            camps, tot, _ = analyze_campaigns(rows)
-            view.update(campaigns=camps, totals=tot)
+        st_rows = scope.apply(db.upload_rows(st_up["id"]), practice)
+        if st_rows:
+            view["search_upload"] = st_up
+            view["search_terms"] = analyze_search_terms(st_rows)
+            if not up:  # search terms alone still give a spend picture
+                camps, tot, _ = analyze_campaigns(st_rows)
+                view.update(campaigns=camps, totals=tot)
     return view
 
 
-def practice_views(p):
-    return [platform_view(p, k, l) for k, l in PLATFORMS]
+def practice_views(p, with_breakdown=False):
+    allp = db.practices() if with_breakdown else None
+    return [platform_view(p, k, l, allp) for k, l in PLATFORMS]
+
+
+def is_master(p, practices):
+    """No campaign filter while other practices have one: this record shows everything."""
+    return not scope.has_filter(p) and any(scope.has_filter(q) for q in practices if q["id"] != p["id"])
 
 
 # ---------- auth ----------
@@ -152,25 +165,27 @@ def dashboard(request: Request):
     if (r := guard(request)):
         return r
     items = []
-    for p in db.practices():
+    allp = db.practices()
+    for p in allp:
         views = practice_views(p)
         waste = sum(f["amount"] for v in views for f in v["findings"] if f["kind"] in ("zero-conv-campaign", "high-cpa"))
         waste += sum((v["search_terms"] or {}).get("wasted_total", 0) for v in views)
-        items.append({"p": p, "views": views, "waste": round(waste, 2),
+        items.append({"p": p, "views": views, "waste": round(waste, 2), "master": is_master(p, allp),
                       "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium"))})
+    items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
     return page(request, "dashboard.html", items=items)
 
 
 @app.post("/practices")
 def create_practice(request: Request, name: str = Form(...), google_budget: float = Form(0),
-                    meta_budget: float = Form(0)):
+                    meta_budget: float = Form(0), campaign_filter: str = Form("")):
     if (r := guard(request)):
         return r
     if not name.strip():
         flash(request, "Give the practice a name.", "error")
         return RedirectResponse("/", status_code=303)
     try:
-        pid = db.add_practice(name, max(google_budget, 0), max(meta_budget, 0))
+        pid = db.add_practice(name, max(google_budget, 0), max(meta_budget, 0), campaign_filter[:500])
     except sqlite3.IntegrityError:
         flash(request, f"“{name.strip()}” already exists.", "error")
         return RedirectResponse("/", status_code=303)
@@ -190,7 +205,9 @@ def practice_page(request: Request, pid: int):
     p = get_practice_or_404(pid)
     if not p:
         return RedirectResponse("/", status_code=303)
-    return page(request, "practice.html", p=p, views=practice_views(p), uploads=db.uploads(pid),
+    allp = db.practices()
+    return page(request, "practice.html", p=p, views=practice_views(p, with_breakdown=True), uploads=db.uploads(pid),
+                master=is_master(p, allp),
                 ai_out={k: db.latest_ai(pid, k) for k in ai.TASKS},
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 meta_on=cx.meta_configured(), google_on=google_ready())
@@ -198,11 +215,12 @@ def practice_page(request: Request, pid: int):
 
 @app.post("/p/{pid}/settings")
 def practice_settings(request: Request, pid: int, name: str = Form(...), google_budget: float = Form(0),
-                      meta_budget: float = Form(0), notes: str = Form("")):
+                      meta_budget: float = Form(0), notes: str = Form(""), campaign_filter: str = Form("")):
     if (r := guard(request)):
         return r
     try:
-        db.update_practice(pid, name, max(google_budget, 0), max(meta_budget, 0), notes[:2000])
+        db.update_practice(pid, name, max(google_budget, 0), max(meta_budget, 0), notes[:2000],
+                           campaign_filter[:500])
         flash(request, "Saved.")
     except sqlite3.IntegrityError:
         flash(request, "Another practice already has that name.", "error")
@@ -217,6 +235,28 @@ def practice_delete(request: Request, pid: int):
     db.delete_practice(pid)
     flash(request, f"Deleted {p['name'] if p else 'practice'} and its uploads.")
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/p/{pid}/split")
+def practice_split(request: Request, pid: int, name: str = Form(...), campaign_filter: str = Form(...)):
+    """From the master record: make a practice for a group of campaigns, sharing the same ad accounts
+    and starting from the master's latest data, so it shows numbers straight away."""
+    if (r := guard(request)):
+        return r
+    master = db.practice(pid)
+    if not master or not name.strip() or not campaign_filter.strip():
+        return RedirectResponse("/", status_code=303)
+    try:
+        new_id = db.add_practice(name, 0, 0, campaign_filter[:500], master.get("meta_account_id"),
+                                 master.get("google_customer_id"))
+    except sqlite3.IntegrityError:
+        flash(request, f"A practice called “{name.strip()}” already exists. Add “{campaign_filter.strip()}” "
+                       "to its campaign filter instead.", "error")
+        return RedirectResponse(f"/p/{pid}#by-practice", status_code=303)
+    db.copy_latest_uploads(pid, new_id)
+    flash(request, f"Created {name.strip()}, showing campaigns containing “{campaign_filter.strip()}”. "
+                   "Set its monthly budgets so pacing works.")
+    return RedirectResponse(f"/p/{new_id}", status_code=303)
 
 
 @app.post("/p/{pid}/upload")
@@ -260,9 +300,10 @@ async def ai_generate(request: Request, pid: int, kind: str):
     p = db.practice(pid)
     if not p or kind not in ai.TASKS:
         return RedirectResponse("/", status_code=303)
-    views = practice_views(p)
-    if not any(v["upload"] or v["search_upload"] for v in views):
-        flash(request, "Upload a Google Ads or Meta export first.", "error")
+    views = practice_views(p, with_breakdown=True)
+    if not any(v["totals"] for v in views):
+        flash(request, "No numbers for this practice yet: upload an export or sync, and check its campaign filter.",
+              "error")
         return RedirectResponse(f"/p/{pid}", status_code=303)
     try:
         text = await asyncio.to_thread(ai.generate, kind, ai.build_context(p, views))

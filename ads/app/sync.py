@@ -69,12 +69,30 @@ def cached_accounts(platform):
         return []
 
 
-def sync_practice(p, since, until, google=None):
-    """Returns {'meta': 'ok: N rows' | error, 'google': ...} for one practice."""
+def _fetch(cache, key, fn):
+    """Several practices can share one ad account (each with its own campaign filter);
+    pull each account once per sync run. Errors are cached too, so they're reported per practice."""
+    if cache is None:
+        return fn()
+    if key not in cache:
+        try:
+            cache[key] = ("ok", fn())
+        except cx.ConnectorError as e:
+            cache[key] = ("err", e)
+    kind, val = cache[key]
+    if kind == "err":
+        raise val
+    return val
+
+
+def sync_practice(p, since, until, google=None, cache=None):
+    """Returns {'meta': {...}, 'google': {...}} for one practice. Stores the whole account's rows;
+    the practice's campaign filter is applied when the page reads them."""
     out = {}
     if p.get("meta_account_id") and cx.meta_configured():
         try:
-            rows = cx.meta_campaign_rows(p["meta_account_id"], since, until)
+            acct = p["meta_account_id"]
+            rows = _fetch(cache, ("meta", acct), lambda: cx.meta_campaign_rows(acct, since, until))
             db.save_upload(p["id"], _parsed(rows, "meta", "campaign", since, until),
                            f"Synced from Meta ({len(rows)} campaign-days)", source="sync")
             db.prune_synced(p["id"], "meta", "campaign")
@@ -83,11 +101,12 @@ def sync_practice(p, since, until, google=None):
             out["meta"] = {"ok": False, "error": str(e)}
     if p.get("google_customer_id") and google is not None:
         try:
-            rows = google.campaign_rows(p["google_customer_id"], since, until)
+            cid = p["google_customer_id"]
+            rows = _fetch(cache, ("google", cid), lambda: google.campaign_rows(cid, since, until))
             db.save_upload(p["id"], _parsed(rows, "google", "campaign", since, until),
                            f"Synced from Google Ads ({len(rows)} campaign-days)", source="sync")
             db.prune_synced(p["id"], "google", "campaign")
-            terms = google.search_term_rows(p["google_customer_id"], since, until)
+            terms = _fetch(cache, ("google-terms", cid), lambda: google.search_term_rows(cid, since, until))
             if terms:
                 db.save_upload(p["id"], _parsed(terms, "google", "search_term", since, until),
                                f"Synced from Google Ads ({len(terms)} search terms)", source="sync")
@@ -110,9 +129,9 @@ def sync_all(today=None):
                 google = cx.GoogleClient(db.get_setting("google_refresh_token"))
             except cx.ConnectorError as e:
                 google_error = str(e)
-        results = {}
+        results, cache = {}, {}
         for p in practices:
-            r = sync_practice(p, since, until, google)
+            r = sync_practice(p, since, until, google, cache)
             if google_error and p.get("google_customer_id"):
                 r["google"] = {"ok": False, "error": google_error}
             if r:

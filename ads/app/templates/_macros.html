@@ -26,7 +26,7 @@
       {% elif pc.status == 'over' %}Ahead of budget: on pace for {{ pc.projected|money }} this month.
       {% elif pc.status == 'under' %}Behind budget: on pace for {{ pc.projected|money }} this month.
       {% else %}On track for {{ pc.month }}.{% endif %}
-      <span class="muted">Day {{ pc.days_elapsed }} of {{ pc.days_in_month }}{% if pc.days_elapsed < pc.days_in_month %} · {{ pc.daily_to_hit|money }}/day to land on budget{% endif %}</span>
+      <span class="muted">Day {{ pc.days_elapsed }} of {{ pc.days_in_month }}{% if pc.days_elapsed < pc.days_in_month %}{% if pc.daily_to_hit is not none and pc.daily_to_hit > 0 %} · {{ pc.daily_to_hit|money }}/day to land on budget{% elif pc.budget %} · already {{ (pc.spend - pc.budget)|money }} over the monthly budget{% endif %}{% endif %}</span>
     </div>
   </div>
 {% endif %}

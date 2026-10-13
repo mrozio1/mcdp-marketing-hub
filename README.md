@@ -126,7 +126,15 @@ Set up on the Ads page under **Connections** (no terminal needed):
   **Read only** user in the Google Ads manager account (or each practice account).
   Upload the key on the Connections page with the manager account ID.
 
-Then link each practice's accounts under **Linked ad accounts**. Keys entered on the
+Then link each practice's accounts under **Linked ad accounts**.
+
+**Practices sharing one ad account.** If several practices run in one Google or Meta
+account, link the same account to each and give each practice a *Campaigns to include*
+filter (words in the campaign names, comma-separated; `-word` excludes). A practice with no
+filter is the **master record**: it shows every campaign, a spend breakdown by practice,
+campaigns no practice claims yet, and one-click **Create practice** suggestions grouped from
+campaign names. Filters apply when the page reads the data, so changing one takes effect
+immediately; each shared account is pulled once per sync. Keys entered on the
 page are stored in the Ads database (included in backups); `connect-ads.sh` can
 store them in `.env` instead, and also supports personal Google sign-in
 (`google-oauth CLIENT_ID CLIENT_SECRET [MANAGER_ID]`).
