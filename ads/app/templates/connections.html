@@ -89,7 +89,7 @@
       <td>{% if p.google_customer_id %}{{ (google_accounts|selectattr('id', 'equalto', p.google_customer_id)|map(attribute='name')|first) or p.google_customer_id }}{% else %}<span class="muted">Not linked</span>{% endif %}</td>
       <td class="small">
         {% if r %}
-          {% for k, label in [('meta','Meta'), ('google','Google')] if k in r %}
+          {% for k, label in [('meta','Meta'), ('google','Google'), ('facebook','Facebook posts'), ('instagram','Instagram posts')] if k in r %}
             {% if r[k].ok %}<span class="ok-note">{{ label }} ✓</span>{% else %}<span class="danger" title="{{ r[k].error }}">{{ label }}: {{ r[k].error[:80] }}</span>{% endif %}<br>
           {% endfor %}
         {% else %}<span class="muted">—</span>{% endif %}

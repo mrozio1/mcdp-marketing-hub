@@ -137,7 +137,9 @@ def period_for(views):
 
 
 def organic_for(p, views, allp):
-    since, until = period_for(views)
+    """Organic posts for the same window the nightly sync uses (this month to date; the whole
+    previous month in the first 3 days), independent of when ad data was uploaded."""
+    since, until = sync.sync_window()
     return organic.organic_view(p, allp, is_master(p, allp), since, until)
 
 
@@ -242,6 +244,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
     return page(request, "practice.html", p=p, views=views, uploads=db.uploads(pid),
                 master=is_master(p, allp), add_options=add_options,
                 show=show, org=org, combo=organic.combined(views, org),
+                social_status=sync.cached_list("social_status") or {},
                 fb_pages=fb_pages, ig_accounts=ig_accounts,
                 fb_suggest="" if p.get("fb_page_id") else suggest_social(p, fb_pages),
                 ig_suggest="" if p.get("ig_account_id") else suggest_social(p, ig_accounts),

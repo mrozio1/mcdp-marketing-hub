@@ -220,3 +220,33 @@ def test_master_post_report_shows_practice_names(hub):
     heights, havens, master, _ = _setup(c, db, sync)
     html = c.get(f"/p/{master}/posts?period=90d").text
     assert "all practices" in html and "Havens is hiring" in html and "Havens Orthodontics" in html
+
+
+def test_new_post_without_stats_still_shows_and_status_is_visible(hub):
+    """A post from yesterday (no stats from Meta yet) must still appear; the page says what the sync found."""
+    c, db, sync, cx, _ = hub
+    mp.INSIGHTS_DENIED.add("pg1_1")
+    heights, havens, master, status = _setup(c, db, sync)
+    fb = status["results"][str(heights)]["facebook"]
+    assert fb["ok"] and fb["posts"] == 2 and "views not available yet for 1 post" in fb["note"]
+    posts = {p["post_id"]: p for p in db.posts_for(["pg1"], date(2026, 1, 1), date(2026, 12, 31))}
+    assert posts["pg1_1"]["views"] is None and posts["pg1_1"]["likes"] == 40      # kept, counts still read
+    assert any(l[1] == "/v25.0/pg1/published_posts" for l in mp.LOG)              # published_posts edge used
+    html = c.get(f"/p/{heights}?show=organic").text
+    assert "Facebook Page:" in html and "2 posts found in the last sync" in html
+    conn = c.get("/connections").text
+    assert "Facebook posts ✓" in conn and "Instagram posts ✓" in conn
+
+
+def test_old_ad_upload_does_not_hide_recent_posts(hub, monkeypatch):
+    c, db, sync, cx, _ = hub
+    heights, *_ = _setup(c, db, sync)
+    # An ad export from August uploaded later must not narrow the organic window
+    rows = [{"campaign": "Heights - Old", "name": "", "date": date(2026, 8, 5), "date_start": date(2026, 8, 5),
+             "date_end": date(2026, 8, 5), "spend": 10.0, "impressions": 100, "clicks": 5, "conversions": 0.0,
+             "conv_value": 0.0, "status": "", "budget": 0.0, "match_type": ""}]
+    db.save_upload(heights, {"platform": "google", "level": "campaign", "rows": rows, "date_start": date(2026, 8, 5),
+                             "date_end": date(2026, 8, 5), "warnings": []}, "august.csv")
+    monkeypatch.setattr(sync, "sync_window", lambda today=None: (date(2026, 10, 1), date(2026, 10, 12)))
+    html = c.get(f"/p/{heights}?show=organic").text
+    assert "Free smile consults" in html and "2026-10-01 to 2026-10-12" in html

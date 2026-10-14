@@ -169,9 +169,9 @@ def sync_social(practices, today=None):
             out[pid] = {"ok": False, "error": "This Facebook Page " + no_access}
             continue
         try:
-            posts = cx.facebook_posts(pid, tokens[pid], since)
+            posts, note = cx.facebook_posts(pid, tokens[pid], since)
             db.upsert_posts(posts)
-            out[pid] = {"ok": True, "posts": len(posts)}
+            out[pid] = {"ok": True, "posts": len(posts), **({"note": note} if note else {})}
         except cx.ConnectorError as e:
             out[pid] = {"ok": False, "error": str(e)}
     for iid in ig_ids:
@@ -180,9 +180,9 @@ def sync_social(practices, today=None):
             out[iid] = {"ok": False, "error": "This Instagram account " + no_access.replace("it to", "its Facebook Page to")}
             continue
         try:
-            posts = cx.instagram_posts(iid, token, since)
+            posts, note = cx.instagram_posts(iid, token, since)
             db.upsert_posts(posts)
-            out[iid] = {"ok": True, "posts": len(posts)}
+            out[iid] = {"ok": True, "posts": len(posts), **({"note": note} if note else {})}
         except cx.ConnectorError as e:
             out[iid] = {"ok": False, "error": str(e)}
     return out
@@ -208,6 +208,8 @@ def sync_all(today=None):
             if r:
                 results[str(p["id"])] = {"name": p["name"], **r}
         social = sync_social(practices, today)
+        if social:
+            db.set_setting("social_status", json.dumps({"at": db.now(), "accounts": social}))
         for p in practices:
             for key, acct in (("facebook", p.get("fb_page_id")), ("instagram", p.get("ig_account_id"))):
                 if acct and acct in social:

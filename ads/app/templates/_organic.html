@@ -4,6 +4,16 @@
     <h2>Organic posts</h2>
     <a class="btn btn-quiet btn-small" href="/p/{{ p.id }}/posts">Post performance report</a>
   </div>
+  {% set accts = social_status.get('accounts', {}) if social_status else {} %}
+  {% for key, label, acct in [('facebook', 'Facebook Page', p.fb_page_id), ('instagram', 'Instagram', p.ig_account_id)] if acct %}
+    {% set st = accts.get(acct) %}
+    <p class="sync-line small {{ 'danger' if st and not st.ok else 'muted' }}">
+      {{ label }}:
+      {% if not st %}not synced yet — click “Sync now” on the right.
+      {% elif st.ok %}{{ st.posts }} post{{ '' if st.posts == 1 else 's' }} found in the last sync ({{ social_status.at.replace('T', ' ')[:16] }}){% if st.note %} · {{ st.note }}{% endif %}.
+      {% else %}last sync failed — {{ st.error }}{% endif %}
+    </p>
+  {% endfor %}
   <p class="muted small">Unpaid Facebook and Instagram posts published {{ org.since }} to {{ org.until }}{% if not (p.fb_page_id or p.ig_account_id) %} · every Page and Instagram account linked to a practice{% endif %}</p>
   {% if not org.totals or not org.totals.count %}
     <p class="muted">No posts published in this period yet{% if not last_sync.at %}, or the accounts haven’t synced: use “Sync now”{% endif %}.</p>

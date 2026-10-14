@@ -352,3 +352,4 @@ tr.muted td { color: var(--ink-soft); }
 .section-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .section-head h2 { margin: 0; }
 .report.posts-report { max-width: 1120px; }
+.sync-line { margin: 0.15rem 0; }

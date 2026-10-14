@@ -16,7 +16,8 @@ ACCESSIBLE = {MCC}   # accounts the signed-in user/robot was added to; tests may
 LOG = []
 READ_ONLY = {"google": False, "meta": False}   # simulate read-only access levels
 PAGE_TOKENS = {"pg1": "PAGETOKEN-heights", "pg2": "PAGETOKEN-havens", "pg3": "PAGETOKEN-bandeen-postiz"}
-BUSINESS = {"on": False}   # turn on to simulate a business portfolio with owned + client Pages / ad accounts
+BUSINESS = {"on": False}
+INSIGHTS_DENIED = set()     # post ids whose stats Meta refuses (e.g. brand-new posts)   # turn on to simulate a business portfolio with owned + client Pages / ad accounts
 RETIRED_METRICS = {"post_impressions", "post_impressions_unique"}   # rejected like Meta does since Nov 2025
 FB_POSTS = {
     "pg1": [
@@ -83,6 +84,7 @@ def reset():
     STATE.update(_fresh_state())
     READ_ONLY.update(google=False, meta=False)
     BUSINESS["on"] = False
+    INSIGHTS_DENIED.clear()
 
 
 _DENIED = [{"error": {"code": 403, "message": "The caller does not have permission", "details": [{"errors": [{
@@ -206,6 +208,8 @@ class H(BaseHTTPRequestHandler):
                     {"account_id": "555003", "name": "Bandeen Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555003"}]})
             if obj == "biz1/client_ad_accounts":
                 return self._json(200, {"data": []})
+        if obj.endswith("/published_posts") and obj.split("/")[0] in FB_POSTS:
+            obj = obj.replace("/published_posts", "/posts")
         if obj.endswith("/posts") and obj.split("/")[0] in FB_POSTS:
             page = obj.split("/")[0]
             if q.get("access_token") != PAGE_TOKENS[page]:
@@ -218,6 +222,8 @@ class H(BaseHTTPRequestHandler):
             item = next((r for rows in (*FB_POSTS.values(), *IG_MEDIA.values()) for r in rows if r["id"] == oid), None)
             if item is None:
                 return None
+            if oid in INSIGHTS_DENIED:
+                return self._json(400, {"error": {"message": "(#10) Not enough viewers for the media to show insights", "code": 10}})
             metrics = q.get("metric", "").split(",")
             if any(m in RETIRED_METRICS for m in metrics):
                 return self._json(400, {"error": {"message": "(#100) The value must be a valid insights metric", "code": 100}})

@@ -330,19 +330,39 @@ def _ts(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00").replace("+0000", "+00:00"))
 
 
+FB_FIELDS_FULL = ("id,message,created_time,permalink_url,full_picture,status_type,shares,"
+                  "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)")
+FB_FIELDS_BASIC = "id,message,created_time,permalink_url,full_picture,status_type"
+
+
+def _page_post_rows(page_id, page_token, since_ts):
+    """The Page's own posts. Tries the published_posts edge first (includes posts scheduled from
+    tools like Postiz), then posts; drops the like/comment counts only if the token can't read them."""
+    last = None
+    for edge, fields in (("published_posts", FB_FIELDS_FULL), ("posts", FB_FIELDS_FULL), ("posts", FB_FIELDS_BASIC)):
+        try:
+            return _meta_paged(f"{page_id}/{edge}", {"fields": fields, "since": since_ts, "limit": 100},
+                               limit_pages=10, token=page_token), fields == FB_FIELDS_BASIC
+        except ConnectorError as e:
+            last = e
+    raise last
+
+
 def facebook_posts(page_id, page_token, since: date):
+    """Returns (posts, note). A post whose stats Meta won't give yet (common for very new posts)
+    is still kept, with its numbers left blank, instead of failing the whole Page."""
     from datetime import datetime, timezone
     since_ts = int(datetime(since.year, since.month, since.day, tzinfo=timezone.utc).timestamp())
-    rows = _meta_paged(f"{page_id}/posts", {
-        "fields": "id,message,created_time,permalink_url,full_picture,status_type,shares,"
-                  "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)",
-        "since": since_ts, "limit": 100}, limit_pages=10, token=page_token)
-    out = []
+    rows, basic = _page_post_rows(page_id, page_token, since_ts)
+    out, failed, last_err = [], 0, ""
     for r in rows:
         created = _ts(r["created_time"])
         if created.date() < since:
             continue
-        m = _insights(r["id"], FB_POST_METRICS, page_token, {"period": "lifetime"})
+        try:
+            m = _insights(r["id"], FB_POST_METRICS, page_token, {"period": "lifetime"})
+        except ConnectorError as e:
+            m, failed, last_err = {}, failed + 1, str(e)
         likes = int((r.get("reactions") or {}).get("summary", {}).get("total_count") or 0)
         comments = int((r.get("comments") or {}).get("summary", {}).get("total_count") or 0)
         shares = int((r.get("shares") or {}).get("count") or 0)
@@ -357,7 +377,12 @@ def facebook_posts(page_id, page_token, since: date):
                     "likes": likes, "comments": comments, "shares": shares, "saves": None,
                     "clicks": int(m["post_clicks"]) if "post_clicks" in m else None,
                     "interactions": likes + comments + shares})
-    return out
+    notes = []
+    if basic:
+        notes.append("likes/comments/shares not readable with this access (needs pages_read_engagement)")
+    if failed:
+        notes.append(f"views not available yet for {failed} post{'s' if failed != 1 else ''} ({last_err[:160]})")
+    return out, "; ".join(notes)
 
 
 def instagram_posts(ig_id, token, since: date):
@@ -365,12 +390,15 @@ def instagram_posts(ig_id, token, since: date):
         "fields": "id,caption,media_type,media_product_type,timestamp,permalink,like_count,comments_count,"
                   "thumbnail_url,media_url", "limit": 50}, limit_pages=10, token=token,
         stop=lambda r: _ts(r["timestamp"]).date() < since)
-    out = []
+    out, failed, last_err = [], 0, ""
     for r in rows:
         created = _ts(r["timestamp"])
         if created.date() < since:
             continue
-        m = _insights(r["id"], IG_MEDIA_METRICS, token)
+        try:
+            m = _insights(r["id"], IG_MEDIA_METRICS, token)
+        except ConnectorError as e:
+            m, failed, last_err = {}, failed + 1, str(e)
         likes, comments = int(r.get("like_count") or 0), int(r.get("comments_count") or 0)
         shares = int(m["shares"]) if "shares" in m else 0
         saves = int(m["saved"]) if "saved" in m else None
@@ -384,7 +412,8 @@ def instagram_posts(ig_id, token, since: date):
                     "reach": int(m["reach"]) if "reach" in m else None,
                     "likes": likes, "comments": comments, "shares": shares, "saves": saves, "clicks": None,
                     "interactions": inter})
-    return out
+    note = f"stats not available yet for {failed} post{'s' if failed != 1 else ''} ({last_err[:160]})" if failed else ""
+    return out, note
 
 
 # ------------------------------------------------------------------ Google
