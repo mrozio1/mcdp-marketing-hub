@@ -19,6 +19,7 @@ SECTIONS = [  # (key, label) in email order
     ("summary", "Spend, results and pacing"),
     ("practices", "By practice (master record)"),
     ("organic", "Organic Facebook and Instagram posts"),
+    ("postrank", "Post performance ranking"),
     ("attention", "What needs attention"),
     ("search", "Search terms"),
     ("campaigns", "Campaign table"),

@@ -112,6 +112,13 @@ Needs on the Meta system user: the practices' Pages and Instagram accounts assig
 token with `pages_show_list`, `pages_read_engagement`, `read_insights`, `instagram_basic`,
 `instagram_manage_insights` (plus `ads_read`/`ads_management`).
 
+**Post performance report** (practice page → Organic posts → *Post performance report*):
+every organic post for the practice ranked by engagement (likes + comments + shares + saves),
+views, engagement rate or date, with title (first line of the post), link, views, likes,
+comments, shares, saves, engagement rate, "vs. average post", top/bottom 25% tags and
+computed takeaways. Periods: this month, last month, last 90 days. Print/PDF, spreadsheet
+(CSV) download, or **Email to leadership** (Outlook-safe). Post history is kept for 90 days.
+
 ### Emailing results (Outlook)
 
 **Email this page** on a practice page (or **Email this report** on the report) opens a

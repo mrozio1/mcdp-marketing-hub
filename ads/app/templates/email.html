@@ -11,7 +11,7 @@
       <div class="stack">
         <button class="btn" type="button" id="copy-email">Copy for Outlook</button>
         <p class="muted small">Then open a new email in Outlook and paste (Ctrl+V). Works in Outlook for Windows, Mac and on the web.</p>
-        <a class="btn btn-quiet" href="/p/{{ p.id }}/email.eml?inc={{ inc_param }}">Download Outlook draft (.eml)</a>
+        <a class="btn btn-quiet" href="/p/{{ p.id }}/email.eml?inc={{ inc_param }}{% if period %}&period={{ period }}{% endif %}">Download Outlook draft (.eml)</a>
         <p class="muted small">Opens in Outlook for Windows as a new message, ready to address and send.</p>
       </div>
       <p class="copy-status small" id="copy-status" role="status" aria-live="polite"></p>
@@ -24,6 +24,7 @@
       <form method="get" action="/p/{{ p.id }}/email" id="sections-form" class="sections">
         <input type="hidden" name="picked" value="1">
         <input type="hidden" name="inc" id="inc-field" value="{{ inc_param }}">
+        {% if period %}<input type="hidden" name="period" value="{{ period }}">{% endif %}
         {% for key, label in sections if available[key] %}
           <label class="check"><input type="checkbox" value="{{ key }}" {% if key in inc %}checked{% endif %}> {{ label }}</label>
         {% else %}

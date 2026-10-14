@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Post performance · {{ p.name }}{% endblock %}
+{% block bodyclass %}report-page{% endblock %}
+{% block content %}
+{% set q = '?period=' ~ rep.period ~ '&sort=' ~ rep.sort %}
+<div class="report-tools no-print">
+  <a href="/p/{{ p.id }}?show=organic">Back to {{ p.name }}</a>
+  <span class="tool-buttons">
+    <a class="btn btn-quiet" href="/p/{{ p.id }}/email?inc=postrank&period={{ rep.period }}">Email to leadership</a>
+    <a class="btn btn-quiet" href="/p/{{ p.id }}/posts.csv{{ q }}">Download spreadsheet</a>
+    <button class="btn" type="button" onclick="window.print()">Print or save as PDF</button>
+  </span>
+</div>
+
+<article class="report posts-report">
+  <header>
+    <p class="muted">Social post performance</p>
+    <h1>{{ p.name }}</h1>
+    <p class="muted small">Organic (unpaid) Facebook and Instagram posts published {{ rep.since.strftime('%B %-d') }} – {{ rep.until.strftime('%B %-d, %Y') }}{% if rep.practice_of %} · all practices{% endif %}</p>
+  </header>
+
+  <form method="get" class="report-filters no-print">
+    <label>Period
+      <select name="period" onchange="this.form.submit()">
+        {% for k, label in periods.items() %}<option value="{{ k }}" {% if k == rep.period %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Rank by
+      <select name="sort" onchange="this.form.submit()">
+        {% for k, label in sorts.items() %}<option value="{{ k }}" {% if k == rep.sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button class="btn btn-quiet" type="submit">Show</button></noscript>
+  </form>
+
+  {% if not rep.linked %}
+    <p class="empty">Link this practice’s Facebook Page or Instagram account (under Linked accounts on its page) to see its posts.</p>
+  {% elif not rep.rows %}
+    <p class="empty">No posts were published in this period{% if rep.period == 'month' %}. Try “Last month” or “Last 90 days”{% endif %}.</p>
+  {% else %}
+  {% set t = rep.totals %}
+  <dl class="stats report-stats">
+    <div><dt>Posts</dt><dd>{{ t.count }}</dd></div>
+    <div><dt>Views</dt><dd>{{ '{:,}'.format(t.views) if t.views is not none else '—' }}</dd>{% if t.reach is not none %}<p class="muted small">{{ '{:,}'.format(t.reach) }} people reached</p>{% endif %}</div>
+    <div><dt>Engagements</dt><dd>{{ '{:,}'.format(t.engagement) }}</dd><p class="muted small">{{ '{:,}'.format(t.likes) }} likes · {{ '{:,}'.format(t.comments) }} comments · {{ '{:,}'.format(t.shares) }} shares{% if t.saves %} · {{ '{:,}'.format(t.saves) }} saves{% endif %}</p></div>
+    <div><dt>Engagement rate</dt><dd>{{ t.rate|pct }}</dd><p class="muted small">{{ '{:,.0f}'.format(t.avg_engagement) }} engagements per post</p></div>
+  </dl>
+
+  {% if rep.takeaways %}
+  <section class="takeaways">
+    <h2>Takeaways</h2>
+    <ul>{% for line in rep.takeaways %}<li>{{ line }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+
+  <h2>Every post, ranked</h2>
+  <p class="muted small">Ranked by {{ sorts[rep.sort]|lower }} within {{ 'all practices' if rep.practice_of else p.name }}. Engagement = likes + comments + shares + saves. Engagement rate = engagement ÷ views. “Vs. average” compares each post with this {{ 'group' if rep.practice_of else 'practice' }}’s average post.</p>
+  <div class="table-scroll"><table class="data rank-table">
+    <thead><tr>
+      <th class="num">#</th><th>Post</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th>
+      <th class="num">Shares</th><th class="num">Saves</th><th class="num">Engagement</th><th class="num">Rate</th><th class="num">Vs. average</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rep.rows %}
+      <tr class="tier-{{ r.tier }}">
+        <td class="num rank-cell">{{ r.rank }}</td>
+        <td class="post-cell">
+          {% if r.permalink %}<a href="{{ r.permalink }}" target="_blank" rel="noopener">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}
+          <span class="post-meta small"><span class="tag tag-{{ r.network }}">{{ 'Facebook' if r.network == 'facebook' else 'Instagram' }}</span>
+            {{ r.created[:10] }}{% if rep.practice_of %} · {{ rep.practice_of.get(r.account_id, '') }}{% endif %}
+            {% if r.tier == 'top' %}<span class="tier-tag tier-tag-top">Top 25%</span>{% elif r.tier == 'low' %}<span class="tier-tag tier-tag-low">Bottom 25%</span>{% endif %}</span>
+        </td>
+        <td class="num">{{ '{:,}'.format(r.views) if r.views is not none else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(r.likes or 0) }}</td>
+        <td class="num">{{ '{:,}'.format(r.comments or 0) }}</td>
+        <td class="num">{{ '{:,}'.format(r.shares or 0) }}</td>
+        <td class="num">{{ '{:,}'.format(r.saves) if r.saves is not none else '—' }}</td>
+        <td class="num"><strong>{{ '{:,}'.format(r.engagement) }}</strong></td>
+        <td class="num">{{ r.rate|pct }}</td>
+        <td class="num vs-cell">{% if r.vs_avg is not none %}<span class="vs {{ 'vs-up' if r.vs_avg >= 1.2 else ('vs-down' if r.vs_avg < 0.8 else '') }}">{{ '%.1f'|format(r.vs_avg) }}×</span>{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted small">Views and saves aren’t reported by Meta for every post type (“—”). Numbers keep growing for a few days after a post goes out; they refresh nightly.</p>
+  {% endif %}
+</article>
+{% endblock %}

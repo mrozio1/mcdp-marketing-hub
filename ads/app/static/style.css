@@ -321,3 +321,34 @@ tr.muted td { color: var(--ink-soft); }
 .tag-facebook { color: #1F5FA8; background: #E6EEF8; }
 .tag-instagram { color: #9A3168; background: #F8E8F1; }
 .posts-table td:first-child { min-width: 14rem; }
+
+/* ---- post performance report ---- */
+.tool-buttons { display: inline-flex; flex-wrap: wrap; gap: 0.6rem; }
+.report-filters { display: flex; flex-wrap: wrap; gap: 0.8rem 1.2rem; margin: 1rem 0 1.4rem; }
+.report-filters label { min-width: 12rem; }
+.report-stats { margin-bottom: 1.4rem; }
+.takeaways { background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--teal); border-radius: var(--radius-m); padding: 0.9rem 1.2rem; margin: 0 0 1.6rem; }
+.takeaways h2 { font-size: 1rem; margin: 0 0 0.4rem; }
+.takeaways ul { margin: 0; padding-left: 1.2rem; }
+.takeaways li { margin: 0.25rem 0; }
+.rank-table th, .rank-table td { white-space: nowrap; }
+.rank-table .post-cell { white-space: normal; min-width: 16rem; max-width: 30rem; }
+.rank-table .post-cell a { font-weight: 600; }
+.post-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.25rem; color: var(--ink-soft); }
+.rank-cell { font-weight: 700; color: var(--ink-soft); }
+.tier-top .rank-cell { color: var(--teal); }
+.tier-tag { font-size: 0.72rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: var(--radius-s); }
+.tier-tag-top { background: #E3F1F0; color: var(--teal-deep, #0B5654); }
+.tier-tag-low { background: #F3ECE2; color: #7A4F0F; }
+.vs { font-weight: 600; }
+.vs-up { color: var(--green); }
+.vs-down { color: var(--rose); }
+@media print {
+  .rank-table th, .rank-table td { font-size: 9pt; padding: 3pt 4pt; }
+  .rank-table .post-cell { max-width: none; }
+  .table-scroll { overflow: visible; }
+  .tag { border: 1px solid currentColor; }
+}
+.section-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.section-head h2 { margin: 0; }
+.report.posts-report { max-width: 1120px; }

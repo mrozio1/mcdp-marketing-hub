@@ -505,8 +505,53 @@ def ai_delete(request: Request, pid: int, kind: str, back: str = Form("")):
     return RedirectResponse(f"/p/{pid}" + ("#ai" if back != "report" else ""), status_code=303)
 
 
+# ---------- organic post performance report (for leadership) ----------
+def _post_report(p, period, sort):
+    allp = db.practices()
+    period = period if period in organic.PERIODS else organic.default_period()
+    sort = sort if sort in organic.SORTS else "engagement"
+    return organic.report(p, allp, is_master(p, allp), period, sort)
+
+
+@app.get("/p/{pid}/posts", response_class=HTMLResponse)
+def post_report(request: Request, pid: int, period: str = "", sort: str = "engagement"):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/", status_code=303)
+    rep = _post_report(p, period, sort)
+    return page(request, "posts.html", p=p, rep=rep, periods=organic.PERIODS, sorts=organic.SORTS)
+
+
+@app.get("/p/{pid}/posts.csv")
+def post_report_csv(request: Request, pid: int, period: str = "", sort: str = "engagement"):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/", status_code=303)
+    import csv
+    import io
+    rep = _post_report(p, period, sort)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Rank", "Practice", "Date", "Network", "Post", "Link", "Views", "Reach", "Likes", "Comments",
+                "Shares", "Saves", "Engagement", "Engagement rate", "Vs. average post"])
+    for row in rep["rows"]:
+        w.writerow([row["rank"], rep["practice_of"].get(row["account_id"], p["name"]), row["created"][:10],
+                    row["network"].title(), row["title"], row["permalink"],
+                    "" if row["views"] is None else row["views"], "" if row["reach"] is None else row["reach"],
+                    row["likes"], row["comments"], row["shares"], "" if row["saves"] is None else row["saves"],
+                    row["engagement"], "" if row["rate"] is None else f"{row['rate'] * 100:.1f}%",
+                    "" if row["vs_avg"] is None else f"{row['vs_avg']:.1f}x"])
+    fname = re.sub(r"[^A-Za-z0-9]+", "-", f"{p['name']} posts {rep['since']} to {rep['until']}").strip("-")
+    return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
+
+
 # ---------- email export (Outlook-friendly) ----------
-def _email_parts(p, inc_param):
+def _email_parts(p, inc_param, period=""):
     from datetime import date as _date
     allp = db.practices()
     views = practice_views(p, with_breakdown=True)
@@ -520,7 +565,9 @@ def _email_parts(p, inc_param):
     master = is_master(p, allp)
     org = organic_for(p, views, allp)
     combo = organic.combined(views, org)
+    rep = _post_report(p, period, "engagement")
     available = {"summary": any(v["totals"] for v in views),
+                 "postrank": bool(rep["rows"]),
                  "organic": bool((org.get("totals") or {}).get("count")),
                  "practices": any(v["breakdown"] and v["breakdown"]["by_practice"] for v in views),
                  "attention": any(v["findings"] for v in views),
@@ -533,33 +580,38 @@ def _email_parts(p, inc_param):
     else:
         inc = {k for k in inc_param.split(",") if available.get(k)}
     subject = emailfmt.subject_for(p, views)
+    if inc and inc <= {"postrank", "organic"}:
+        subject = (f"{p['name']} — social post performance, {organic.PERIODS[rep['period']].lower()} "
+                   f"({rep['since'].strftime('%b %-d')}–{rep['until'].strftime('%b %-d, %Y')})")
     doc = templates.env.get_template("email_body.html").render(
         p=p, views=views, master=master, inc=inc, writeups=writeups, changes=changes, em=emailfmt, org=org, combo=combo,
+        rep=rep,
         subject=subject, today=_date.today().strftime("%B %-d, %Y"))
     return {"doc": doc, "subject": subject, "inc": inc, "available": available}
 
 
 @app.get("/p/{pid}/email", response_class=HTMLResponse)
-def email_preview(request: Request, pid: int, inc: str | None = None, picked: str = ""):
+def email_preview(request: Request, pid: int, inc: str | None = None, picked: str = "", period: str = ""):
     if (r := guard(request)):
         return r
     p = db.practice(pid)
     if not p:
         return RedirectResponse("/", status_code=303)
-    parts = _email_parts(p, inc if (inc is not None or picked) else None)
+    parts = _email_parts(p, inc if (inc is not None or picked) else None, period)
     body = parts["doc"].split("<body", 1)[1].split(">", 1)[1].rsplit("</body>", 1)[0]
     return page(request, "email.html", p=p, body=body, subject=parts["subject"], inc=parts["inc"],
-                available=parts["available"], sections=emailfmt.SECTIONS, inc_param=",".join(sorted(parts["inc"])))
+                available=parts["available"], sections=emailfmt.SECTIONS, inc_param=",".join(sorted(parts["inc"])),
+                period=period)
 
 
 @app.get("/p/{pid}/email.eml")
-def email_download(request: Request, pid: int, inc: str | None = None):
+def email_download(request: Request, pid: int, inc: str | None = None, period: str = ""):
     if (r := guard(request)):
         return r
     p = db.practice(pid)
     if not p:
         return RedirectResponse("/", status_code=303)
-    parts = _email_parts(p, inc)
+    parts = _email_parts(p, inc, period)
     fname = re.sub(r"[^A-Za-z0-9 _-]+", "", parts["subject"]).strip().replace(" ", "-")[:80] or "ad-results"
     return Response(emailfmt.eml(parts["subject"], parts["doc"]), media_type="message/rfc822",
                     headers={"Content-Disposition": f'attachment; filename="{fname}.eml"'})

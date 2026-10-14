@@ -136,11 +136,11 @@ def sync_practice(p, since, until, google=None, cache=None):
 
 
 def social_window(today=None):
-    """Posts published since the start of last month: keeps this month's and last month's
-    numbers fresh (post views keep growing for a while after publishing)."""
+    """Posts published in the last 90 days (and at least since the start of last month), so the
+    post reports' "Last 90 days" view is complete; post numbers keep growing after publishing."""
     today = today or date.today()
     first = today.replace(day=1)
-    return (first - timedelta(days=1)).replace(day=1), today
+    return min((first - timedelta(days=1)).replace(day=1), today - timedelta(days=89)), today
 
 
 def sync_social(practices, today=None):

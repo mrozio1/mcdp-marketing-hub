@@ -28,7 +28,7 @@ FB_POSTS = {
          "permalink_url": "https://facebook.com/heights/posts/2", "status_type": "added_video",
          "reactions": {"summary": {"total_count": 12}}, "comments": {"summary": {"total_count": 1}},
          "_m": {"post_media_view": 900, "post_total_media_view_unique": 700, "post_clicks": 9}},
-        {"id": "pg1_old", "message": "Summer hours", "created_time": "2026-08-20T13:00:00+0000",
+        {"id": "pg1_old", "message": "Summer hours", "created_time": "2026-06-20T13:00:00+0000",
          "permalink_url": "https://facebook.com/heights/posts/0", "status_type": "mobile_status_update",
          "reactions": {"summary": {"total_count": 3}}, "comments": {"summary": {"total_count": 0}},
          "_m": {"post_media_view": 100}},

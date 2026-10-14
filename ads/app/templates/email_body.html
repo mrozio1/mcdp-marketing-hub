@@ -145,6 +145,45 @@
 </td></tr>
 {% endif %}
 
+{% if 'postrank' in inc and rep.rows %}
+{% set t = rep.totals %}
+<tr><td style="padding:20px 0 4px;">
+  <p style="{{ h2 }}">Social post performance</p>
+  <p style="{{ small }}">Organic Facebook and Instagram posts published {{ rep.since.strftime('%B %-d') }} – {{ rep.until.strftime('%B %-d, %Y') }}, ranked by engagement (likes + comments + shares + saves).</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:4px 0 8px;">
+    <tr>
+    {% for label, val in [('Posts', t.count), ('Views', '{:,}'.format(t.views) if t.views is not none else '—'), ('Engagements', '{:,}'.format(t.engagement)), ('Engagement rate', t.rate|pct)] %}
+      <td width="25%" valign="top" style="padding:8px 8px 8px 0;border-top:2px solid {{ em.LINE }};">
+        <p style="font-family:{{ F }};font-size:11px;color:{{ em.SOFT }};margin:0 0 2px;">{{ label }}</p>
+        <p style="font-family:{{ F }};font-size:18px;font-weight:700;color:{{ em.INK }};margin:0;">{{ val }}</p>
+      </td>
+    {% endfor %}
+    </tr>
+  </table>
+  {% if rep.takeaways %}
+  <ul style="margin:6px 0 10px 0;padding-left:22px;">
+    {% for line in rep.takeaways %}<li style="font-family:{{ F }};font-size:14px;line-height:1.5;color:{{ em.INK }};margin:0 0 4px;">{{ line }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr><td style="{{ th }}">#</td><td style="{{ th }}">Post</td><td align="right" style="{{ th }}text-align:right;">Views</td><td align="right" style="{{ th }}text-align:right;">Likes</td><td align="right" style="{{ th }}text-align:right;">Comm.</td><td align="right" style="{{ th }}text-align:right;">Shares</td><td align="right" style="{{ th }}text-align:right;">Eng.</td><td align="right" style="{{ th }}text-align:right;">vs avg</td></tr>
+    {% for r in rep.rows[:15] %}
+    <tr>
+      <td style="{{ td }}font-weight:700;color:{{ em.TEAL if r.tier == 'top' else em.SOFT }};">{{ r.rank }}</td>
+      <td style="{{ td }}">{% if r.permalink %}<a href="{{ r.permalink }}" style="color:{{ em.TEAL }};font-weight:600;">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}<br><span style="font-size:11px;color:{{ em.SOFT }};">{{ 'Facebook' if r.network == 'facebook' else 'Instagram' }} · {{ r.created[:10] }}{% if rep.practice_of %} · {{ rep.practice_of.get(r.account_id, '') }}{% endif %}</span></td>
+      <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.views) if r.views is not none else '—' }}</td>
+      <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.likes or 0) }}</td>
+      <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.comments or 0) }}</td>
+      <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.shares or 0) }}</td>
+      <td align="right" style="{{ td }}text-align:right;font-weight:700;">{{ '{:,}'.format(r.engagement) }}</td>
+      <td align="right" style="{{ td }}text-align:right;color:{{ em.GREEN if r.vs_avg and r.vs_avg >= 1.2 else (em.ROSE if r.vs_avg is not none and r.vs_avg < 0.8 else em.INK) }};">{{ '%.1f'|format(r.vs_avg) ~ '×' if r.vs_avg is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if rep.rows|length > 15 %}<p style="{{ small }}margin-top:4px;">…and {{ rep.rows|length - 15 }} more posts.</p>{% endif %}
+</td></tr>
+{% endif %}
+
 {% for kind, title in [('report', 'Monthly report'), ('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
 {% if kind in inc and writeups.get(kind) %}
 <tr><td style="padding:22px 0 4px;border-top:1px solid {{ em.LINE }};">

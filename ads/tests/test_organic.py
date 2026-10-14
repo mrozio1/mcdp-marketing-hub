@@ -174,3 +174,49 @@ def test_postiz_channels_reads_integration_table(monkeypatch):
     assert ch["instagram"]["ig9"]["token"] == "PAGETOKEN9"            # page token, not the user token
     monkeypatch.delenv("POSTIZ_DATABASE_URL")
     assert postiz.channels() == {"facebook": {}, "instagram": {}}
+
+
+def test_post_performance_report_ranks_within_practice(hub):
+    c, db, sync, cx, _ = hub
+    from app import organic
+    heights, havens, master, _ = _setup(c, db, sync)
+    html = c.get(f"/p/{heights}/posts?period=90d").text
+    assert "Social post performance" in html and "Every post, ranked" in html
+    body = html.split("Every post, ranked")[1]
+    # Heights' 4 posts only (Havens' post is another practice), ranked by engagement
+    order = [t for t in ("Before your first adjustment", "Team photo", "Free smile consults", "Meet Dr. Lee") if t in body]
+    assert order == ["Before your first adjustment", "Team photo", "Free smile consults", "Meet Dr. Lee"]
+    assert "Havens is hiring" not in body
+    assert 'href="https://instagram.com/p/1"' in body and "Top 25%" in body and "Bottom 25%" in body
+    assert "Best post: “Before your first adjustment: what to expect” with 210 engagements" in html
+    # Engagement = likes + comments + shares + saves: 150 + 12 + 18 + 30 = 210
+    by_views = c.get(f"/p/{heights}/posts?period=90d&sort=views").text.split("Every post, ranked")[1]
+    assert by_views.index("Free smile consults") < by_views.index("Team photo")     # 2,400 vs 1,300 views
+    csv = c.get(f"/p/{heights}/posts.csv?period=90d").text
+    lines = csv.strip().splitlines()
+    assert lines[0].lstrip("\ufeff").startswith("Rank,Practice,Date,Network,Post,Link,Views")
+    assert lines[1].startswith("1,Heights Orthodontics,2026-10-10,Instagram,Before your first adjustment")
+    assert len(lines) == 5
+    # Titles come from the first sentence/line; empty posts get a type label
+    assert organic.post_title({"text": "Free smile consults all October! Book online."}) == "Free smile consults all October!"
+    assert organic.post_title({"text": "", "media_type": "REELS"}) == "Reel"
+
+
+def test_post_report_email_for_leadership(hub):
+    c, db, sync, cx, _ = hub
+    heights, *_ = _setup(c, db, sync)
+    r = c.get(f"/p/{heights}/email?inc=postrank&period=90d")
+    assert "Social post performance" in r.text and "Every post" not in r.text
+    assert "Heights Orthodontics — social post performance, last 90 days" in r.text
+    import email, email.policy
+    msg = email.message_from_bytes(c.get(f"/p/{heights}/email.eml?inc=postrank&period=90d").content,
+                                   policy=email.policy.default)
+    html = msg.get_body(("html",)).get_content()
+    assert "Before your first adjustment" in html and "class=" not in html and "<style" not in html
+
+
+def test_master_post_report_shows_practice_names(hub):
+    c, db, sync, cx, _ = hub
+    heights, havens, master, _ = _setup(c, db, sync)
+    html = c.get(f"/p/{master}/posts?period=90d").text
+    assert "all practices" in html and "Havens is hiring" in html and "Havens Orthodontics" in html
