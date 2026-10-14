@@ -348,18 +348,19 @@
         <label>Facebook Page <span class="muted small">(organic posts)</span>
           <select name="fb_page_id">
             <option value="">Not linked</option>
-            {% for a in fb_pages %}<option value="{{ a.id }}" {% if a.id == p.fb_page_id or a.id == fb_suggest %}selected{% endif %}>{{ a.name }}{% if a.id == fb_suggest %} (suggested){% endif %}</option>{% endfor %}
+            {% for a in fb_pages %}<option value="{{ a.id }}" {% if a.id == p.fb_page_id or a.id == fb_suggest %}selected{% endif %}>{{ a.name }}{% if a.id == fb_suggest %} (suggested){% endif %}{% if a.access is defined and not a.access %} — no access yet{% endif %}</option>{% endfor %}
             {% if p.fb_page_id and not (fb_pages|selectattr('id', 'equalto', p.fb_page_id)|list) %}<option value="{{ p.fb_page_id }}" selected>{{ p.fb_page_id }}</option>{% endif %}
           </select>
         </label>
         <label>Instagram account <span class="muted small">(organic posts)</span>
           <select name="ig_account_id">
             <option value="">Not linked</option>
-            {% for a in ig_accounts %}<option value="{{ a.id }}" {% if a.id == p.ig_account_id or a.id == ig_suggest %}selected{% endif %}>{{ a.name }}{% if a.id == ig_suggest %} (suggested){% endif %}</option>{% endfor %}
+            {% for a in ig_accounts %}<option value="{{ a.id }}" {% if a.id == p.ig_account_id or a.id == ig_suggest %}selected{% endif %}>{{ a.name }}{% if a.id == ig_suggest %} (suggested){% endif %}{% if a.access is defined and not a.access %} — no access yet{% endif %}</option>{% endfor %}
             {% if p.ig_account_id and not (ig_accounts|selectattr('id', 'equalto', p.ig_account_id)|list) %}<option value="{{ p.ig_account_id }}" selected>{{ p.ig_account_id }}</option>{% endif %}
           </select>
         </label>
-        {% if not fb_pages %}<p class="muted small">No Facebook Pages are visible yet. Assign the practices’ Pages to the Meta system user (see Connections), then Refresh account lists.</p>{% endif %}
+        {% if not fb_pages %}<p class="muted small">No Facebook Pages are visible yet. Connect them in Postiz, or assign them to the Meta system user (see Connections), then Refresh account lists.</p>
+        {% else %}<p class="muted small">Pages come from the MCDP business portfolios and from Postiz. “No access yet” ones need connecting in Postiz (or assigning to the system user) before their posts can be read.</p>{% endif %}
         {% endif %}
         <button type="submit" class="btn btn-quiet">Save links</button>
       </form>

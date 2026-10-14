@@ -52,8 +52,9 @@ def _setup(c, db, sync):
 def test_pages_listed_and_suggested(hub):
     c, db, sync, cx, _ = hub
     res = sync.refresh_account_lists()
-    assert res["social"] == {"ok": True, "count": 2, "ig": 1}
-    assert sync.cached_list("ig_accounts") == [{"id": "ig1", "name": "@heightsortho", "page_id": "pg1"}]
+    assert res["social"] == {"ok": True, "count": 2, "ig": 1, "no_access": 0}
+    assert sync.cached_list("ig_accounts") == [{"id": "ig1", "name": "@heightsortho", "page_id": "pg1",
+                                                "via": "system user", "access": True}]
     assert all("token" not in pg for pg in sync.cached_list("fb_pages"))      # page tokens never stored
     pid = db.add_practice("Heights Orthodontics", 0, 0)
     html = c.get(f"/p/{pid}").text
@@ -123,4 +124,53 @@ def test_page_permission_problem_is_reported(hub, monkeypatch):
     monkeypatch.setattr(cx, "meta_pages", lambda: ([], []))
     status = sync.sync_all(today=date(2026, 10, 12))
     fb = status["results"][str(heights)]["facebook"]
-    assert not fb["ok"] and "isn't visible to the Meta token" in fb["error"]
+    assert not fb["ok"] and "isn't visible any more" in fb["error"] and "Postiz" in fb["error"]
+
+
+def test_portfolio_pages_and_postiz_fallback(hub, monkeypatch):
+    """Like Postiz: find Pages across the business portfolio; read ones the system user can't via Postiz."""
+    c, db, sync, cx, _ = hub
+    from app import postiz
+    mp.BUSINESS["on"] = True
+    monkeypatch.setattr(postiz, "channels", lambda: {
+        "facebook": {"pg3": {"name": "Bandeen Orthodontics", "token": mp.PAGE_TOKENS["pg3"]}}, "instagram": {}})
+    res = sync.refresh_account_lists()
+    assert res["meta"] == {"ok": True, "count": 4}                    # 3 assigned + Bandeen from the portfolio
+    pages = {p["id"]: p for p in sync.cached_list("fb_pages")}
+    assert set(pages) == {"pg1", "pg2", "pg3", "pg4"}
+    assert pages["pg3"]["via"] == "Postiz" and pages["pg3"]["access"]
+    assert pages["pg4"]["access"] is False                           # client Page nobody can read yet
+    assert res["social"]["no_access"] == 2                           # pg4 and Bandeen's Instagram
+    bandeen = db.add_practice("Bandeen Orthodontics", 0, 0, "Bandeen")
+    pinnacle = db.add_practice("Pinnacle Ortho", 0, 0, "Pinnacle")
+    html = c.get(f"/p/{bandeen}").text
+    assert '<option value="pg3" selected>Bandeen Orthodontics (suggested)</option>' in html
+    assert "Pinnacle Ortho — no access yet" in html
+    db.set_practice_social(bandeen, "pg3", "ig3")
+    db.set_practice_social(pinnacle, "pg4", "")
+    status = sync.sync_all(today=date(2026, 10, 12))
+    assert status["results"][str(bandeen)]["facebook"] == {"ok": True, "posts": 1}     # read with Postiz's token
+    assert "connect it in Postiz" in status["results"][str(bandeen)]["instagram"]["error"]
+    assert "connect it in Postiz" in status["results"][str(pinnacle)]["facebook"]["error"]
+    assert "Bandeen open house" in c.get(f"/p/{bandeen}?show=organic").text
+    assert all("token" not in x for x in sync.cached_list("fb_pages") + sync.cached_list("ig_accounts"))
+
+
+def test_postiz_channels_reads_integration_table(monkeypatch):
+    import sys, types
+    from app import postiz
+    rows = [("facebook", "pg9", "Havens Orthodontics", "PAGETOKEN9"),
+            ("instagram", "ig9", "havensortho", "PAGETOKEN9___USERTOKEN9")]
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql):
+            assert '"deletedAt" IS NULL' in sql and '"disabled" = false' in sql
+            return types.SimpleNamespace(fetchall=lambda: rows)
+    monkeypatch.setitem(sys.modules, "psycopg", types.SimpleNamespace(connect=lambda url, connect_timeout: Conn()))
+    monkeypatch.setenv("POSTIZ_DATABASE_URL", "postgresql://x")
+    ch = postiz.channels()
+    assert ch["facebook"]["pg9"] == {"name": "Havens Orthodontics", "token": "PAGETOKEN9"}
+    assert ch["instagram"]["ig9"]["token"] == "PAGETOKEN9"            # page token, not the user token
+    monkeypatch.delenv("POSTIZ_DATABASE_URL")
+    assert postiz.channels() == {"facebook": {}, "instagram": {}}

@@ -164,11 +164,23 @@ def _write_hint(msg, platform):
 
 
 def meta_accounts():
-    """Ad accounts the token can read: [{'id': '1234', 'name': ..., 'currency': ...}]"""
-    rows = _meta_paged("me/adaccounts", {"fields": "name,account_id,currency,account_status", "limit": 200})
-    return sorted(({"id": r["account_id"], "name": r.get("name") or r["account_id"],
-                    "currency": r.get("currency", ""), "active": r.get("account_status") == 1} for r in rows),
-                  key=lambda a: a["name"].lower())
+    """Ad accounts: those assigned to the token, plus every ad account the business portfolios own
+    or manage for clients. [{'id': '1234', 'name': ..., 'currency': ..., 'active': bool}]"""
+    fields = {"fields": "name,account_id,currency,account_status", "limit": 200}
+    rows = list(_meta_paged("me/adaccounts", fields))
+    for b in _businesses():
+        for edge in ("owned_ad_accounts", "client_ad_accounts"):
+            try:
+                rows += _meta_paged(f"{b['id']}/{edge}", fields)
+            except ConnectorError:
+                continue
+    out = {}
+    for r in rows:
+        aid = r.get("account_id") or str(r.get("id", "")).removeprefix("act_")
+        if aid and aid not in out:
+            out[aid] = {"id": aid, "name": r.get("name") or aid, "currency": r.get("currency", ""),
+                        "active": r.get("account_status") == 1}
+    return sorted(out.values(), key=lambda a: a["name"].lower())
 
 
 def _meta_results(actions):
@@ -250,18 +262,64 @@ def _insights(obj_id, metrics, token, extra=None):
     return out
 
 
+PAGE_FIELDS = "id,name,access_token,instagram_business_account{id,username,name}"
+
+
+def _businesses():
+    """Business portfolios the token can see (needs business_management); [] if none."""
+    try:
+        return _meta_paged("me/businesses", {"fields": "id,name", "limit": 100})
+    except ConnectorError:
+        return []
+
+
 def meta_pages():
-    """Facebook Pages the token can see, with their linked Instagram accounts.
-    Returns (pages, instagram): pages = [{'id','name','token'}], instagram = [{'id','name','page_id'}]."""
-    rows = _meta_paged("me/accounts", {"fields": "id,name,access_token,instagram_business_account{id,username,name}",
-                                       "limit": 100})
-    pages, igs = [], []
-    for r in rows:
-        pages.append({"id": r["id"], "name": r.get("name") or r["id"], "token": r.get("access_token")})
-        ig = r.get("instagram_business_account")
+    """Every Facebook Page and Instagram account reachable for organic stats, like Postiz finds them:
+    Pages assigned to the system user, Pages each business portfolio owns or manages for clients,
+    and channels connected in Postiz. Returns (pages, instagram):
+      pages = [{'id','name','token','via'}]  (token None = listed but no access yet)
+      instagram = [{'id','name','page_id','token','via'}]"""
+    from . import postiz
+    seen = {}
+
+    def add(rows, via):
+        for r in rows:
+            pg = seen.setdefault(r["id"], {"id": r["id"], "name": r.get("name") or r["id"], "token": None,
+                                           "via": via, "ig": None})
+            if r.get("access_token") and not pg["token"]:
+                pg["token"], pg["via"] = r["access_token"], via
+            if r.get("instagram_business_account") and not pg["ig"]:
+                pg["ig"] = r["instagram_business_account"]
+
+    add(_meta_paged("me/accounts", {"fields": PAGE_FIELDS, "limit": 100}), "system user")
+    for b in _businesses():
+        for edge in ("owned_pages", "client_pages"):
+            try:
+                add(_meta_paged(f"{b['id']}/{edge}", {"fields": PAGE_FIELDS, "limit": 100}), b.get("name") or "portfolio")
+            except ConnectorError:
+                continue
+    pz = postiz.channels()
+    for pid, ch in pz["facebook"].items():
+        pg = seen.setdefault(pid, {"id": pid, "name": ch["name"], "token": None, "via": "Postiz", "ig": None})
+        if not pg["token"]:
+            pg["token"], pg["via"] = ch["token"], "Postiz"
+    pages, igs, ig_seen = [], [], set()
+    for pg in seen.values():
+        pages.append({"id": pg["id"], "name": pg["name"], "token": pg["token"], "via": pg["via"]})
+        ig = pg["ig"]
         if ig and ig.get("id"):
+            # Postiz's *Facebook* connection has no Instagram permissions, so for Instagram use the
+            # system user's Page token, else Postiz's own Instagram connection.
+            own = pg["token"] if pg["via"] != "Postiz" else None
+            pz_ig = (pz["instagram"].get(ig["id"]) or {}).get("token")
+            tok = own or pz_ig
             igs.append({"id": ig["id"], "name": "@" + ig["username"] if ig.get("username") else ig.get("name") or ig["id"],
-                        "page_id": r["id"]})
+                        "page_id": pg["id"], "token": tok,
+                        "via": pg["via"] if own else ("Postiz" if pz_ig else pg["via"])})
+            ig_seen.add(ig["id"])
+    for iid, ch in pz["instagram"].items():
+        if iid not in ig_seen:
+            igs.append({"id": iid, "name": ch["name"], "page_id": None, "token": ch["token"], "via": "Postiz"})
     pages.sort(key=lambda x: x["name"].lower())
     igs.sort(key=lambda x: x["name"].lower())
     return pages, igs

@@ -15,7 +15,8 @@ CLIENTS = {"4445556666": "Heights Orthodontics", "4445557777": "Havens Orthodont
 ACCESSIBLE = {MCC}   # accounts the signed-in user/robot was added to; tests may change this
 LOG = []
 READ_ONLY = {"google": False, "meta": False}   # simulate read-only access levels
-PAGE_TOKENS = {"pg1": "PAGETOKEN-heights", "pg2": "PAGETOKEN-havens"}
+PAGE_TOKENS = {"pg1": "PAGETOKEN-heights", "pg2": "PAGETOKEN-havens", "pg3": "PAGETOKEN-bandeen-postiz"}
+BUSINESS = {"on": False}   # turn on to simulate a business portfolio with owned + client Pages / ad accounts
 RETIRED_METRICS = {"post_impressions", "post_impressions_unique"}   # rejected like Meta does since Nov 2025
 FB_POSTS = {
     "pg1": [
@@ -31,6 +32,12 @@ FB_POSTS = {
          "permalink_url": "https://facebook.com/heights/posts/0", "status_type": "mobile_status_update",
          "reactions": {"summary": {"total_count": 3}}, "comments": {"summary": {"total_count": 0}},
          "_m": {"post_media_view": 100}},
+    ],
+    "pg3": [
+        {"id": "pg3_1", "message": "Bandeen open house Saturday", "created_time": "2026-10-09T13:00:00+0000",
+         "permalink_url": "https://facebook.com/bandeen/posts/1", "status_type": "added_photos",
+         "reactions": {"summary": {"total_count": 33}}, "comments": {"summary": {"total_count": 5}}, "shares": {"count": 2},
+         "_m": {"post_media_view": 1500, "post_total_media_view_unique": 1100, "post_clicks": 12}},
     ],
     "pg2": [
         {"id": "pg2_1", "message": "Havens is hiring!", "created_time": "2026-10-05T13:00:00+0000",
@@ -75,6 +82,7 @@ def reset():
     STATE.clear()
     STATE.update(_fresh_state())
     READ_ONLY.update(google=False, meta=False)
+    BUSINESS["on"] = False
 
 
 _DENIED = [{"error": {"code": 403, "message": "The caller does not have permission", "details": [{"errors": [{
@@ -182,6 +190,22 @@ class H(BaseHTTPRequestHandler):
                 {"id": "pg1", "name": "Heights Orthodontics", "access_token": PAGE_TOKENS["pg1"],
                  "instagram_business_account": {"id": "ig1", "username": "heightsortho"}},
                 {"id": "pg2", "name": "Havens Orthodontics", "access_token": PAGE_TOKENS["pg2"]}]})
+        if BUSINESS["on"]:
+            if obj == "me/businesses":
+                return self._json(200, {"data": [{"id": "biz1", "name": "Motor City Dental Partners"}]})
+            if obj == "biz1/owned_pages":
+                return self._json(200, {"data": [
+                    {"id": "pg1", "name": "Heights Orthodontics", "access_token": PAGE_TOKENS["pg1"]},
+                    {"id": "pg3", "name": "Bandeen Orthodontics",
+                     "instagram_business_account": {"id": "ig3", "username": "bandeenortho"}}]})
+            if obj == "biz1/client_pages":
+                return self._json(200, {"data": [{"id": "pg4", "name": "Pinnacle Ortho"}]})
+            if obj == "biz1/owned_ad_accounts":
+                return self._json(200, {"data": [
+                    {"account_id": "555001", "name": "Heights Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555001"},
+                    {"account_id": "555003", "name": "Bandeen Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555003"}]})
+            if obj == "biz1/client_ad_accounts":
+                return self._json(200, {"data": []})
         if obj.endswith("/posts") and obj.split("/")[0] in FB_POSTS:
             page = obj.split("/")[0]
             if q.get("access_token") != PAGE_TOKENS[page]:

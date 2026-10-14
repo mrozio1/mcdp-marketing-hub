@@ -14,7 +14,7 @@
       <p class="state state-good">Connected</p>
       <p>{{ meta_accounts|length }} ad account{{ '' if meta_accounts|length == 1 else 's' }} visible.
         {% set sc = checked.get('social') %}
-        {% if sc and sc.ok %}{{ sc.count }} Facebook Page{{ '' if sc.count == 1 else 's' }} and {{ sc.ig }} Instagram account{{ '' if sc.ig == 1 else 's' }} visible for organic posts.{% endif %}</p>
+        {% if sc and sc.ok %}{{ sc.count }} Facebook Page{{ '' if sc.count == 1 else 's' }} and {{ sc.ig }} Instagram account{{ '' if sc.ig == 1 else 's' }} found for organic posts (from the business portfolios and Postiz){% if sc.no_access %}; {{ sc.no_access }} still need access (connect them in Postiz){% endif %}.{% endif %}</p>
       {% if sc and not sc.ok %}<p class="small danger">Facebook Pages: {{ sc.error }}</p>{% endif %}
     {% else %}
       <p class="state">Not connected</p>

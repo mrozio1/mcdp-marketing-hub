@@ -54,9 +54,12 @@ def refresh_account_lists():
     if cx.meta_configured():
         try:
             pages, igs = cx.meta_pages()
-            db.set_setting("fb_pages", json.dumps([{k: v for k, v in pg.items() if k != "token"} for pg in pages]))
-            db.set_setting("ig_accounts", json.dumps(igs))
-            result["social"] = {"ok": True, "count": len(pages), "ig": len(igs)}
+            strip = lambda items: [{**{k: v for k, v in it.items() if k != "token"}, "access": bool(it.get("token"))}
+                                   for it in items]                     # tokens are never stored
+            db.set_setting("fb_pages", json.dumps(strip(pages)))
+            db.set_setting("ig_accounts", json.dumps(strip(igs)))
+            result["social"] = {"ok": True, "count": len(pages), "ig": len(igs),
+                                "no_access": sum(1 for x in pages + igs if not x.get("token"))}
         except cx.ConnectorError as e:
             result["social"] = {"ok": False, "error": str(e)}
     if cx.google_service_account() or (cx.google_oauth_configured() and db.get_setting("google_refresh_token")):
@@ -154,11 +157,16 @@ def sync_social(practices, today=None):
     except cx.ConnectorError as e:
         return {a: {"ok": False, "error": str(e)} for a in fb_ids + ig_ids}
     tokens = {pg["id"]: pg["token"] for pg in pages}
-    ig_page = {ig["id"]: ig["page_id"] for ig in igs}
+    ig_tokens = {ig["id"]: ig["token"] for ig in igs}
+    no_access = ("can't be read yet. Either connect it in Postiz, or in Meta Business Settings assign it to "
+                 "the MCDP_Ads_Reader system user (View Page performance).")
     for pid in fb_ids:
         if pid not in tokens:
-            out[pid] = {"ok": False, "error": "This Facebook Page isn't visible to the Meta token any more. "
-                                              "Assign it to the system user in Business Settings."}
+            out[pid] = {"ok": False, "error": "This Facebook Page isn't visible any more: it isn't assigned to the "
+                                              "system user, in an MCDP portfolio, or connected in Postiz."}
+            continue
+        if not tokens[pid]:
+            out[pid] = {"ok": False, "error": "This Facebook Page " + no_access}
             continue
         try:
             posts = cx.facebook_posts(pid, tokens[pid], since)
@@ -167,7 +175,10 @@ def sync_social(practices, today=None):
         except cx.ConnectorError as e:
             out[pid] = {"ok": False, "error": str(e)}
     for iid in ig_ids:
-        token = tokens.get(ig_page.get(iid)) or None
+        token = ig_tokens.get(iid)
+        if not token:
+            out[iid] = {"ok": False, "error": "This Instagram account " + no_access.replace("it to", "its Facebook Page to")}
+            continue
         try:
             posts = cx.instagram_posts(iid, token, since)
             db.upsert_posts(posts)
