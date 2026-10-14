@@ -82,6 +82,16 @@ def _explain(code, j, raw):
                         break
             if j.get("error_description"):
                 msg = j["error_description"]
+            if "api access blocked" in msg.lower():
+                codes = ", ".join(f"{k} {err[k]}" for k in ("code", "error_subcode") if err.get(k) is not None)
+                return ("Meta is blocking the MCDP Social app (API access blocked"
+                        + (f"; {codes}" if codes else "") + "). The token itself can be fine: check developers."
+                        "facebook.com → MCDP Social → Alerts and Required actions (restriction, Data Use Checkup "
+                        "or Business Verification), and generate the token with only the permissions listed under "
+                        f"“Where do I get this?”. (HTTP {code})")
+            if isinstance(err.get("code"), int) and msg and "graph" not in msg.lower() and err.get("type") == "OAuthException":
+                extra = f"code {err['code']}" + (f", subcode {err['error_subcode']}" if err.get("error_subcode") else "")
+                msg = f"{msg} [{extra}]"
             if "not associated with any Ads accounts" in msg:
                 return ("The key works, but this account hasn't been added in Google Ads yet. In Google Ads "
                         "(the manager account, or each practice account): Admin → Access and security → Users → +, "
