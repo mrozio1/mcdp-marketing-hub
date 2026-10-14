@@ -57,6 +57,20 @@ CREATE TABLE IF NOT EXISTS changes (
   undone_at TEXT
 );
 CREATE INDEX IF NOT EXISTS changes_practice ON changes(practice_id, status);
+CREATE TABLE IF NOT EXISTS posts (
+  post_id TEXT PRIMARY KEY,
+  network TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  created TEXT NOT NULL,
+  text TEXT DEFAULT '',
+  permalink TEXT DEFAULT '',
+  media_type TEXT DEFAULT '',
+  thumbnail TEXT DEFAULT '',
+  views INTEGER, reach INTEGER, likes INTEGER, comments INTEGER, shares INTEGER, saves INTEGER,
+  clicks INTEGER, interactions INTEGER,
+  synced_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS posts_account ON posts(account_id, created);
 CREATE TABLE IF NOT EXISTS ai_outputs (
   id INTEGER PRIMARY KEY,
   practice_id INTEGER NOT NULL REFERENCES practices(id) ON DELETE CASCADE,
@@ -82,7 +96,8 @@ def conn():
 
 MIGRATIONS = {
     "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''",
-                  "campaign_filter": "TEXT DEFAULT ''", "campaign_list": "TEXT DEFAULT '[]'"},
+                  "campaign_filter": "TEXT DEFAULT ''", "campaign_list": "TEXT DEFAULT '[]'",
+                  "fb_page_id": "TEXT DEFAULT ''", "ig_account_id": "TEXT DEFAULT ''"},
     "uploads": {"source": "TEXT DEFAULT 'upload'"},
 }
 
@@ -344,3 +359,35 @@ def remove_campaign(pid, name):
         key = " ".join((name or "").split()).lower()
         have = [n for n in json.loads(r["campaign_list"] or "[]") if " ".join(n.split()).lower() != key]
         c.execute("UPDATE practices SET campaign_list=? WHERE id=?", (json.dumps(have), pid))
+
+
+# ---- organic posts (Facebook Pages, Instagram) ----
+POST_COLS = ("post_id", "network", "account_id", "created", "text", "permalink", "media_type", "thumbnail",
+             "views", "reach", "likes", "comments", "shares", "saves", "clicks", "interactions")
+
+
+def set_practice_social(pid, fb_page_id, ig_account_id):
+    with conn() as c:
+        c.execute("UPDATE practices SET fb_page_id=?, ig_account_id=? WHERE id=?",
+                  (fb_page_id or "", ig_account_id or "", pid))
+
+
+def upsert_posts(posts):
+    stamp = now()
+    with conn() as c:
+        c.executemany(
+            f"INSERT INTO posts({', '.join(POST_COLS)}, synced_at) VALUES ({', '.join('?' * len(POST_COLS))}, ?) "
+            "ON CONFLICT(post_id) DO UPDATE SET " + ", ".join(f"{k}=excluded.{k}" for k in POST_COLS[1:]) +
+            ", synced_at=excluded.synced_at",
+            [tuple(p.get(k) for k in POST_COLS) + (stamp,) for p in posts])
+
+
+def posts_for(account_ids, since, until):
+    ids = [a for a in account_ids if a]
+    if not ids:
+        return []
+    q = ",".join("?" * len(ids))
+    with conn() as c:
+        return [dict(r) for r in c.execute(
+            f"SELECT * FROM posts WHERE account_id IN ({q}) AND substr(created, 1, 10) BETWEEN ? AND ? "
+            "ORDER BY created DESC", (*ids, since.isoformat(), until.isoformat()))]

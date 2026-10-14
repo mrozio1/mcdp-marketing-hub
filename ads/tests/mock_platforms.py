@@ -15,6 +15,42 @@ CLIENTS = {"4445556666": "Heights Orthodontics", "4445557777": "Havens Orthodont
 ACCESSIBLE = {MCC}   # accounts the signed-in user/robot was added to; tests may change this
 LOG = []
 READ_ONLY = {"google": False, "meta": False}   # simulate read-only access levels
+PAGE_TOKENS = {"pg1": "PAGETOKEN-heights", "pg2": "PAGETOKEN-havens"}
+RETIRED_METRICS = {"post_impressions", "post_impressions_unique"}   # rejected like Meta does since Nov 2025
+FB_POSTS = {
+    "pg1": [
+        {"id": "pg1_1", "message": "Free smile consults all October! Book online.", "created_time": "2026-10-08T15:00:00+0000",
+         "permalink_url": "https://facebook.com/heights/posts/1", "status_type": "added_photos",
+         "reactions": {"summary": {"total_count": 40}}, "comments": {"summary": {"total_count": 6}}, "shares": {"count": 4},
+         "_m": {"post_media_view": 2400, "post_total_media_view_unique": 1800, "post_clicks": 55}},
+        {"id": "pg1_2", "message": "Meet Dr. Lee", "created_time": "2026-10-03T13:00:00+0000",
+         "permalink_url": "https://facebook.com/heights/posts/2", "status_type": "added_video",
+         "reactions": {"summary": {"total_count": 12}}, "comments": {"summary": {"total_count": 1}},
+         "_m": {"post_media_view": 900, "post_total_media_view_unique": 700, "post_clicks": 9}},
+        {"id": "pg1_old", "message": "Summer hours", "created_time": "2026-08-20T13:00:00+0000",
+         "permalink_url": "https://facebook.com/heights/posts/0", "status_type": "mobile_status_update",
+         "reactions": {"summary": {"total_count": 3}}, "comments": {"summary": {"total_count": 0}},
+         "_m": {"post_media_view": 100}},
+    ],
+    "pg2": [
+        {"id": "pg2_1", "message": "Havens is hiring!", "created_time": "2026-10-05T13:00:00+0000",
+         "permalink_url": "https://facebook.com/havens/posts/1", "status_type": "added_photos",
+         "reactions": {"summary": {"total_count": 20}}, "comments": {"summary": {"total_count": 2}}, "shares": {"count": 1},
+         "_m": {"post_media_view": 1000, "post_total_media_view_unique": 800, "post_clicks": 4}},
+    ],
+}
+IG_MEDIA = {
+    "ig1": [
+        {"id": "ig1_1", "caption": "Before your first adjustment: what to expect", "media_type": "VIDEO",
+         "media_product_type": "REELS", "timestamp": "2026-10-10T16:00:00+0000", "permalink": "https://instagram.com/p/1",
+         "like_count": 150, "comments_count": 12, "thumbnail_url": "https://cdn.example/1.jpg",
+         "_m": {"views": 5200, "reach": 4100, "saved": 30, "shares": 18, "total_interactions": 210}},
+        {"id": "ig1_2", "caption": "Team photo", "media_type": "IMAGE", "media_product_type": "FEED",
+         "timestamp": "2026-10-02T16:00:00+0000", "permalink": "https://instagram.com/p/2", "like_count": 60,
+         "comments_count": 3, "media_url": "https://cdn.example/2.jpg",
+         "_m": {"views": 1300, "reach": 1000, "saved": 2, "shares": 1, "total_interactions": 66}},
+    ],
+}
 
 
 def _fresh_state():
@@ -74,9 +110,12 @@ class H(BaseHTTPRequestHandler):
         q = dict(urllib.parse.parse_qsl(u.query))
         LOG.append(("GET", u.path, dict(self.headers)))
         if u.path.startswith("/v25.0/"):
-            if q.get("access_token") != META_TOKEN:
+            if q.get("access_token") not in (META_TOKEN, *PAGE_TOKENS.values()):
                 return self._json(400, {"error": {"message": "Invalid OAuth access token - Cannot parse access token",
                                                   "type": "OAuthException", "code": 190}})
+            org = self._organic(u.path[len("/v25.0/"):], q)
+            if org is not None:
+                return org
             if u.path == "/v25.0/me/adaccounts":
                 return self._json(200, {"data": [
                     {"account_id": "555001", "name": "Heights Orthodontics", "currency": "USD", "account_status": 1, "id": "act_555001"},
@@ -137,6 +176,31 @@ class H(BaseHTTPRequestHandler):
         self._json(404, {"error": {"message": "not found"}})
 
     # ---------------- POST ----------------
+    def _organic(self, obj, q):
+        if obj == "me/accounts":
+            return self._json(200, {"data": [
+                {"id": "pg1", "name": "Heights Orthodontics", "access_token": PAGE_TOKENS["pg1"],
+                 "instagram_business_account": {"id": "ig1", "username": "heightsortho"}},
+                {"id": "pg2", "name": "Havens Orthodontics", "access_token": PAGE_TOKENS["pg2"]}]})
+        if obj.endswith("/posts") and obj.split("/")[0] in FB_POSTS:
+            page = obj.split("/")[0]
+            if q.get("access_token") != PAGE_TOKENS[page]:
+                return self._json(403, {"error": {"message": "(#10) This endpoint requires the 'pages_read_engagement' permission", "code": 10}})
+            return self._json(200, {"data": [{k: v for k, v in r.items() if k != "_m"} for r in FB_POSTS[page]]})
+        if obj.endswith("/media") and obj.split("/")[0] in IG_MEDIA:
+            return self._json(200, {"data": [{k: v for k, v in r.items() if k != "_m"} for r in IG_MEDIA[obj.split("/")[0]]]})
+        if obj.endswith("/insights"):
+            oid = obj.split("/")[0]
+            item = next((r for rows in (*FB_POSTS.values(), *IG_MEDIA.values()) for r in rows if r["id"] == oid), None)
+            if item is None:
+                return None
+            metrics = q.get("metric", "").split(",")
+            if any(m in RETIRED_METRICS for m in metrics):
+                return self._json(400, {"error": {"message": "(#100) The value must be a valid insights metric", "code": 100}})
+            return self._json(200, {"data": [{"name": m, "period": "lifetime", "values": [{"value": item["_m"][m]}]}
+                                             for m in metrics if m in item["_m"]]})
+        return None
+
     def do_DELETE(self):
         u = urllib.parse.urlparse(self.path)
         q = dict(urllib.parse.parse_qsl(u.query))

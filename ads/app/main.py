@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, scope, sync
+from . import actions, ai, db, emailfmt, organic, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -126,6 +126,31 @@ def practice_views(p, with_breakdown=False):
     return [platform_view(p, k, l, allp) for k, l in PLATFORMS]
 
 
+def period_for(views):
+    """The ad data's date range (so paid and organic cover the same days), else the sync window."""
+    from datetime import date as _date
+    ups = [v["upload"] for v in views if v.get("upload") and v["upload"].get("date_start")]
+    if ups:
+        return (min(_date.fromisoformat(u["date_start"]) for u in ups),
+                max(_date.fromisoformat(u["date_end"] or u["date_start"]) for u in ups))
+    return sync.sync_window()
+
+
+def organic_for(p, views, allp):
+    since, until = period_for(views)
+    return organic.organic_view(p, allp, is_master(p, allp), since, until)
+
+
+def suggest_social(p, items):
+    """Pre-pick the Page / Instagram account whose name looks like the practice (only when unlinked)."""
+    words = [w for w in re.findall(r"[a-z0-9]+", (p.get("campaign_filter") or p["name"]).lower()) if len(w) > 2]
+    for it in items:
+        name = it["name"].lower()
+        if words and words[0] in name:
+            return it["id"]
+    return ""
+
+
 def is_master(p, practices):
     """No campaign filter while other practices have one: this record shows everything."""
     return not scope.has_filter(p) and any(scope.has_filter(q) for q in practices if q["id"] != p["id"])
@@ -200,7 +225,7 @@ def get_practice_or_404(pid):
 
 
 @app.get("/p/{pid}", response_class=HTMLResponse)
-def practice_page(request: Request, pid: int):
+def practice_page(request: Request, pid: int, show: str = "all"):
     if (r := guard(request)):
         return r
     p = get_practice_or_404(pid)
@@ -208,10 +233,18 @@ def practice_page(request: Request, pid: int):
         return RedirectResponse("/", status_code=303)
     allp = db.practices()
     views = practice_views(p, with_breakdown=True)
+    show = show if show in ("all", "paid", "organic") else "all"
+    org = organic_for(p, views, allp)
+    fb_pages = sync.cached_list("fb_pages")
+    ig_accounts = sync.cached_list("ig_accounts")
     included = {c["name"] for v in views for c in v["campaigns"]}
     add_options = sorted({n for v in views for n in v["all_names"]} - included, key=str.lower)
     return page(request, "practice.html", p=p, views=views, uploads=db.uploads(pid),
                 master=is_master(p, allp), add_options=add_options,
+                show=show, org=org, combo=organic.combined(views, org),
+                fb_pages=fb_pages, ig_accounts=ig_accounts,
+                fb_suggest="" if p.get("fb_page_id") else suggest_social(p, fb_pages),
+                ig_suggest="" if p.get("ig_account_id") else suggest_social(p, ig_accounts),
                 ai_out={k: db.latest_ai(pid, k) for k in ai.TASKS},
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 meta_on=cx.meta_configured(), google_on=google_ready(),
@@ -362,12 +395,13 @@ async def ai_generate(request: Request, pid: int, kind: str):
     if not p or kind not in ai.TASKS:
         return RedirectResponse("/", status_code=303)
     views = practice_views(p, with_breakdown=True)
-    if not any(v["totals"] for v in views):
+    org = organic_for(p, views, db.practices())
+    if not any(v["totals"] for v in views) and not (org.get("totals") or {}).get("count"):
         flash(request, "No numbers for this practice yet: upload an export or sync, and check its campaign filter.",
               "error")
         return RedirectResponse(f"/p/{pid}", status_code=303)
     try:
-        text = await asyncio.to_thread(ai.generate, kind, ai.build_context(p, views))
+        text = await asyncio.to_thread(ai.generate, kind, ai.build_context(p, views, org))
     except ai.AIError as e:
         flash(request, str(e), "error")
         return RedirectResponse(f"/p/{pid}#ai-{kind}", status_code=303)
@@ -484,7 +518,10 @@ def _email_parts(p, inc_param):
     month = _date.today().isoformat()[:7]
     changes = [c for c in db.changes(p["id"], ["applied"]) if (c.get("applied_at") or "").startswith(month)]
     master = is_master(p, allp)
+    org = organic_for(p, views, allp)
+    combo = organic.combined(views, org)
     available = {"summary": any(v["totals"] for v in views),
+                 "organic": bool((org.get("totals") or {}).get("count")),
                  "practices": any(v["breakdown"] and v["breakdown"]["by_practice"] for v in views),
                  "attention": any(v["findings"] for v in views),
                  "search": any(v["search_terms"] for v in views),
@@ -497,7 +534,7 @@ def _email_parts(p, inc_param):
         inc = {k for k in inc_param.split(",") if available.get(k)}
     subject = emailfmt.subject_for(p, views)
     doc = templates.env.get_template("email_body.html").render(
-        p=p, views=views, master=master, inc=inc, writeups=writeups, changes=changes, em=emailfmt,
+        p=p, views=views, master=master, inc=inc, writeups=writeups, changes=changes, em=emailfmt, org=org, combo=combo,
         subject=subject, today=_date.today().strftime("%B %-d, %Y"))
     return {"doc": doc, "subject": subject, "inc": inc, "available": available}
 
@@ -553,14 +590,14 @@ def summarize_sync(status):
         return "A sync is already running. Refresh in a minute.", "error"
     res = status.get("results", {})
     if not res:
-        return "Nothing to sync yet: link a Meta or Google Ads account to a practice first.", "error"
-    ok = sum(1 for r in res.values() for k in ("meta", "google") if r.get(k, {}).get("ok"))
-    bad = [(r["name"], k, r[k]["error"]) for r in res.values() for k in ("meta", "google")
-           if k in r and not r[k].get("ok")]
+        return "Nothing to sync yet: link an ad account, Facebook Page or Instagram account to a practice first.", "error"
+    kinds = {"meta": "Meta Ads", "google": "Google Ads", "facebook": "Facebook posts", "instagram": "Instagram posts"}
+    ok = sum(1 for r in res.values() for k in kinds if r.get(k, {}).get("ok"))
+    bad = [(r["name"], k, r[k]["error"]) for r in res.values() for k in kinds if k in r and not r[k].get("ok")]
     msg = f"Synced {ok} account{'s' if ok != 1 else ''} ({status['since']} to {status['until']})."
     if bad:
         name, k, err = bad[0]
-        msg += f" {len(bad)} failed — {name} ({'Meta' if k == 'meta' else 'Google'}): {err}"
+        msg += f" {len(bad)} failed — {name} ({kinds[k]}): {err}"
     return msg, ("error" if bad else "ok")
 
 
@@ -658,10 +695,15 @@ def google_disconnect(request: Request):
 
 @app.post("/p/{pid}/accounts")
 def practice_accounts(request: Request, pid: int, meta_account_id: str = Form(""),
-                      google_customer_id: str = Form("")):
+                      google_customer_id: str = Form(""), fb_page_id: str | None = Form(None),
+                      ig_account_id: str | None = Form(None)):
     if (r := guard(request)):
         return r
     db.set_practice_accounts(pid, meta_account_id.strip(), google_customer_id.strip())
+    if fb_page_id is not None or ig_account_id is not None:
+        cur = db.practice(pid) or {}
+        db.set_practice_social(pid, (fb_page_id if fb_page_id is not None else cur.get("fb_page_id", "")).strip(),
+                               (ig_account_id if ig_account_id is not None else cur.get("ig_account_id", "")).strip())
     flash(request, "Linked accounts saved. Use “Sync now” to pull their numbers.")
     return RedirectResponse(f"/p/{pid}", status_code=303)
 

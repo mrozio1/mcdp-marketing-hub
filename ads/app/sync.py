@@ -51,6 +51,14 @@ def refresh_account_lists():
             result["meta"] = {"ok": True, "count": len(accts)}
         except cx.ConnectorError as e:
             result["meta"] = {"ok": False, "error": str(e)}
+    if cx.meta_configured():
+        try:
+            pages, igs = cx.meta_pages()
+            db.set_setting("fb_pages", json.dumps([{k: v for k, v in pg.items() if k != "token"} for pg in pages]))
+            db.set_setting("ig_accounts", json.dumps(igs))
+            result["social"] = {"ok": True, "count": len(pages), "ig": len(igs)}
+        except cx.ConnectorError as e:
+            result["social"] = {"ok": False, "error": str(e)}
     if cx.google_service_account() or (cx.google_oauth_configured() and db.get_setting("google_refresh_token")):
         try:
             accts = cx.GoogleClient(db.get_setting("google_refresh_token")).accounts()
@@ -60,6 +68,13 @@ def refresh_account_lists():
             result["google"] = {"ok": False, "error": str(e)}
     db.set_setting("accounts_checked", json.dumps({"at": db.now(), **result}))
     return result
+
+
+def cached_list(key):
+    try:
+        return json.loads(db.get_setting(key) or "[]")
+    except ValueError:
+        return []
 
 
 def cached_accounts(platform):
@@ -117,6 +132,51 @@ def sync_practice(p, since, until, google=None, cache=None):
     return out
 
 
+def social_window(today=None):
+    """Posts published since the start of last month: keeps this month's and last month's
+    numbers fresh (post views keep growing for a while after publishing)."""
+    today = today or date.today()
+    first = today.replace(day=1)
+    return (first - timedelta(days=1)).replace(day=1), today
+
+
+def sync_social(practices, today=None):
+    """Pull organic posts for every Page / Instagram account linked to a practice (each once).
+    Returns {account_id: {'ok': bool, 'posts'|'error'}}."""
+    fb_ids = sorted({p.get("fb_page_id") for p in practices if p.get("fb_page_id")})
+    ig_ids = sorted({p.get("ig_account_id") for p in practices if p.get("ig_account_id")})
+    if not (fb_ids or ig_ids) or not cx.meta_configured():
+        return {}
+    since, _ = social_window(today)
+    out = {}
+    try:
+        pages, igs = cx.meta_pages()
+    except cx.ConnectorError as e:
+        return {a: {"ok": False, "error": str(e)} for a in fb_ids + ig_ids}
+    tokens = {pg["id"]: pg["token"] for pg in pages}
+    ig_page = {ig["id"]: ig["page_id"] for ig in igs}
+    for pid in fb_ids:
+        if pid not in tokens:
+            out[pid] = {"ok": False, "error": "This Facebook Page isn't visible to the Meta token any more. "
+                                              "Assign it to the system user in Business Settings."}
+            continue
+        try:
+            posts = cx.facebook_posts(pid, tokens[pid], since)
+            db.upsert_posts(posts)
+            out[pid] = {"ok": True, "posts": len(posts)}
+        except cx.ConnectorError as e:
+            out[pid] = {"ok": False, "error": str(e)}
+    for iid in ig_ids:
+        token = tokens.get(ig_page.get(iid)) or None
+        try:
+            posts = cx.instagram_posts(iid, token, since)
+            db.upsert_posts(posts)
+            out[iid] = {"ok": True, "posts": len(posts)}
+        except cx.ConnectorError as e:
+            out[iid] = {"ok": False, "error": str(e)}
+    return out
+
+
 def sync_all(today=None):
     if not _lock.acquire(blocking=False):
         return {"busy": True}
@@ -136,6 +196,11 @@ def sync_all(today=None):
                 r["google"] = {"ok": False, "error": google_error}
             if r:
                 results[str(p["id"])] = {"name": p["name"], **r}
+        social = sync_social(practices, today)
+        for p in practices:
+            for key, acct in (("facebook", p.get("fb_page_id")), ("instagram", p.get("ig_account_id"))):
+                if acct and acct in social:
+                    results.setdefault(str(p["id"]), {"name": p["name"]})[key] = social[acct]
         status = {"at": db.now(), "since": since.isoformat(), "until": until.isoformat(), "results": results}
         db.set_setting("last_sync", json.dumps(status))
         return status

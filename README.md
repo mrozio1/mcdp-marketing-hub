@@ -96,6 +96,22 @@ All numbers are calculated exactly; the AI only explains them, following rules
 condensed from [claude-ads](https://github.com/AgriciDaniel/claude-ads) (see
 `ads/NOTICE.md`).
 
+### Organic posts (Facebook + Instagram) and the combined view
+
+Link each practice's **Facebook Page** and **Instagram account** under *Linked accounts*
+(the practice's own Page is pre-selected when the name matches). Each night the page pulls
+posts published since the start of last month with their views, reach, likes, comments,
+shares, saves and clicks. On a practice page, switch between **All** (paid + organic,
+with combined "times seen" and "clicks and interactions"), **Paid ads** and **Organic
+posts** (per-network totals, engagement rate, top posts). The master record rolls up every
+linked Page and Instagram account. Organic numbers also feed the AI write-ups and the
+Outlook email. Meta renamed post metrics in Nov 2025 ("impressions" → "views"); the sync
+asks for current names first and skips any Meta rejects.
+
+Needs on the Meta system user: the practices' Pages and Instagram accounts assigned, and a
+token with `pages_show_list`, `pages_read_engagement`, `read_insights`, `instagram_basic`,
+`instagram_manage_insights` (plus `ads_read`/`ads_management`).
+
 ### Emailing results (Outlook)
 
 **Email this page** on a practice page (or **Email this report** on the report) opens a

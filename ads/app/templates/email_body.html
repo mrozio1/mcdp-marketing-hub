@@ -121,6 +121,30 @@
 </td></tr>
 {% endfor %}
 
+{% if 'organic' in inc and org.totals and org.totals.count %}
+<tr><td style="padding:20px 0 4px;">
+  <p style="{{ h2 }}">Organic posts</p>
+  <p style="{{ small }}">Unpaid Facebook and Instagram posts published {{ org.since }} to {{ org.until }}.</p>
+  {% if combo.has_paid and combo.seen %}
+  <p style="{{ ptxt }}">Together with ads, the practice was seen <b>{{ '{:,}'.format(combo.seen) }}</b> times: {{ '{:,}'.format(combo.paid_seen) }} from ads and {{ '{:,}'.format(combo.org_seen) }} from posts, with {{ '{:,}'.format(combo.engaged) }} clicks and interactions.</p>
+  {% endif %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr><td style="{{ th }}">Network</td><td align="right" style="{{ th }}text-align:right;">Posts</td><td align="right" style="{{ th }}text-align:right;">Views</td><td align="right" style="{{ th }}text-align:right;">Interactions</td><td align="right" style="{{ th }}text-align:right;">Rate</td></tr>
+    {% for n in org.networks if n.count %}
+    <tr><td style="{{ td }}">{{ n.label }}</td><td align="right" style="{{ td }}text-align:right;">{{ n.count }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(n.views) if n.views is not none else '—' }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(n.interactions) }}</td><td align="right" style="{{ td }}text-align:right;">{{ n.rate|pct }}</td></tr>
+    {% endfor %}
+  </table>
+  <p style="{{ h3 }}">Top posts</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+    <tr><td style="{{ th }}">Post</td><td align="right" style="{{ th }}text-align:right;">Views</td><td align="right" style="{{ th }}text-align:right;">Interactions</td></tr>
+    {% for post in org.top[:5] %}
+    <tr><td style="{{ td }}"><span style="color:{{ em.SOFT }};font-size:12px;">{{ post.created[:10] }} · {{ 'Facebook' if post.network == 'facebook' else 'Instagram' }}</span><br>{% if post.permalink %}<a href="{{ post.permalink }}" style="color:{{ em.TEAL }};">{{ (post.text or '(no text)')|truncate(80) }}</a>{% else %}{{ (post.text or '(no text)')|truncate(80) }}{% endif %}</td>
+        <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(post.views) if post.views is not none else '—' }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(post.interactions or 0) }}</td></tr>
+    {% endfor %}
+  </table>
+</td></tr>
+{% endif %}
+
 {% for kind, title in [('report', 'Monthly report'), ('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
 {% if kind in inc and writeups.get(kind) %}
 <tr><td style="padding:22px 0 4px;border-top:1px solid {{ em.LINE }};">

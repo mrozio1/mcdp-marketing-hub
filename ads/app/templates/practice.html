@@ -6,12 +6,44 @@
 <h1>{{ p.name }}</h1>
 {% if master %}<p class="scope-note"><span class="tag tag-master">Master record</span> Every campaign in the linked accounts, with a breakdown by practice.</p>
 {% elif p.campaign_filter %}<p class="scope-note">Campaigns containing <strong>{{ p.campaign_filter }}</strong> <a class="small" href="#settings">change</a></p>{% endif %}
-<div class="page-actions"><a class="btn btn-quiet" href="/p/{{ p.id }}/email">Email this page</a></div>
+<div class="page-actions">
+  {% if org.linked %}
+  <nav class="view-switch" aria-label="Show">
+    {% for key, label in [('all', 'All'), ('paid', 'Paid ads'), ('organic', 'Organic posts')] %}
+      <a href="/p/{{ p.id }}?show={{ key }}" {% if show == key %}class="on" aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+  <a class="btn btn-quiet" href="/p/{{ p.id }}/email">Email this page</a>
+</div>
 
 <div class="layout">
   <div class="main-col">
 
     {% set has_data = views|selectattr('upload')|list or views|selectattr('search_upload')|list %}
+    {% if show == 'all' and org.linked and (combo.has_paid or combo.has_organic) %}
+    <section class="platform combined" id="combined">
+      <h2>Paid and organic together</h2>
+      <p class="muted small">{{ org.since }} to {{ org.until }} · ads plus unpaid Facebook and Instagram posts</p>
+      <dl class="stats">
+        <div><dt>Times seen</dt><dd>{{ '{:,}'.format(combo.seen) }}</dd>
+          <p class="muted small">{{ '{:,}'.format(combo.paid_seen) }} from ads · {{ '{:,}'.format(combo.org_seen) }} from posts</p></div>
+        <div><dt>Clicks and interactions</dt><dd>{{ '{:,}'.format(combo.engaged) }}</dd>
+          <p class="muted small">{{ '{:,}'.format(combo.paid_clicks) }} ad clicks · {{ '{:,}'.format(combo.org_interactions) }} post interactions</p></div>
+        <div><dt>Ad spend</dt><dd>{{ combo.spend|money }}</dd><p class="muted small">Organic posts cost nothing to run</p></div>
+        <div><dt>Conversions (ads)</dt><dd>{{ '%g'|format(combo.conversions) }}</dd><p class="muted small">{{ combo.cpa|money }} each · {{ combo.posts }} post{{ '' if combo.posts == 1 else 's' }} published</p></div>
+      </dl>
+      {% if combo.seen %}
+      <div class="split-bar" role="img" aria-label="{{ (combo.paid_share * 100)|round|int }}% of views came from ads, {{ 100 - (combo.paid_share * 100)|round|int }}% from organic posts">
+        <span class="split-paid" style="width: {{ '%.1f'|format(combo.paid_share * 100) }}%"></span><span class="split-org"></span>
+      </div>
+      <p class="split-legend small"><span class="key key-paid"></span>Ads {{ (combo.paid_share * 100)|round|int }}% <span class="key key-org"></span>Organic {{ 100 - (combo.paid_share * 100)|round|int }}% <span class="muted">of times seen</span></p>
+      {% endif %}
+      {% if combo.views_missing %}<p class="muted small">Meta isn’t reporting views for these posts yet, so “times seen” counts ads only.</p>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if show != 'organic' %}
     {% if not has_data %}
       <section class="empty">
         <p>{% if p.meta_account_id or p.google_customer_id %}This practice’s accounts are linked. Use “Sync now” to pull its numbers, or wait for tonight’s sync.{% else %}Upload this practice’s first export to see results, or link its ad accounts on the right.{% endif %}</p>
@@ -240,7 +272,13 @@
     </section>
     {% endif %}
 
-    {% if has_data %}
+    {% endif %}{# end paid-only #}
+
+    {% if show != 'paid' and org.linked %}
+    {% include "_organic.html" %}
+    {% endif %}
+
+    {% if has_data or (org.totals and org.totals.count) %}
     <section class="ai" id="ai">
       <h2>Write-ups</h2>
       {% if not ai_on %}<p class="flash flash-error">AI isn’t switched on for this page yet. Run <code>sh enable-ads.sh</code> on the server.</p>{% endif %}
@@ -286,7 +324,7 @@
 
     {% if meta_on or google_on %}
     <section class="panel">
-      <h2>Linked ad accounts</h2>
+      <h2>Linked accounts</h2>
       <form method="post" action="/p/{{ p.id }}/accounts" class="stack">
         {% if meta_on %}
         <label>Meta ad account
@@ -306,9 +344,26 @@
           </select>
         </label>
         {% else %}<input type="hidden" name="google_customer_id" value="{{ p.google_customer_id or '' }}">{% endif %}
+        {% if meta_on %}
+        <label>Facebook Page <span class="muted small">(organic posts)</span>
+          <select name="fb_page_id">
+            <option value="">Not linked</option>
+            {% for a in fb_pages %}<option value="{{ a.id }}" {% if a.id == p.fb_page_id or a.id == fb_suggest %}selected{% endif %}>{{ a.name }}{% if a.id == fb_suggest %} (suggested){% endif %}</option>{% endfor %}
+            {% if p.fb_page_id and not (fb_pages|selectattr('id', 'equalto', p.fb_page_id)|list) %}<option value="{{ p.fb_page_id }}" selected>{{ p.fb_page_id }}</option>{% endif %}
+          </select>
+        </label>
+        <label>Instagram account <span class="muted small">(organic posts)</span>
+          <select name="ig_account_id">
+            <option value="">Not linked</option>
+            {% for a in ig_accounts %}<option value="{{ a.id }}" {% if a.id == p.ig_account_id or a.id == ig_suggest %}selected{% endif %}>{{ a.name }}{% if a.id == ig_suggest %} (suggested){% endif %}</option>{% endfor %}
+            {% if p.ig_account_id and not (ig_accounts|selectattr('id', 'equalto', p.ig_account_id)|list) %}<option value="{{ p.ig_account_id }}" selected>{{ p.ig_account_id }}</option>{% endif %}
+          </select>
+        </label>
+        {% if not fb_pages %}<p class="muted small">No Facebook Pages are visible yet. Assign the practices’ Pages to the Meta system user (see Connections), then Refresh account lists.</p>{% endif %}
+        {% endif %}
         <button type="submit" class="btn btn-quiet">Save links</button>
       </form>
-      {% if p.meta_account_id or p.google_customer_id %}
+      {% if p.meta_account_id or p.google_customer_id or p.fb_page_id or p.ig_account_id %}
       <form method="post" action="/sync" data-busy="Syncing…" class="inline-sync">
         <input type="hidden" name="back" value="/p/{{ p.id }}"><button class="linklike" type="submit">Sync now</button>
       </form>

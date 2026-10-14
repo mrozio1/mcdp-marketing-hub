@@ -105,19 +105,22 @@ def meta_configured():
     return bool(setting("META_ACCESS_TOKEN"))
 
 
-def _meta_get(path, params):
-    token = setting("META_ACCESS_TOKEN")
+def _meta_get(path, params, token=None):
+    token = token or setting("META_ACCESS_TOKEN")
     if not token:
         raise ConnectorError("No Meta token saved yet.")
     q = urllib.parse.urlencode({**params, "access_token": token})
     return _http(f"{META_BASE}/{META_VERSION}/{path}?{q}")
 
 
-def _meta_paged(path, params, limit_pages=50):
-    data = _meta_get(path, params)
+def _meta_paged(path, params, limit_pages=50, token=None, stop=None):
+    """stop(row) -> True ends paging early (e.g. posts older than the window)."""
+    data = _meta_get(path, params, token)
     out = list(data.get("data", []))
     pages = 1
     while data.get("paging", {}).get("next") and pages < limit_pages:
+        if stop and out and stop(out[-1]):
+            break
         data = _http(data["paging"]["next"])
         out.extend(data.get("data", []))
         pages += 1
@@ -187,6 +190,133 @@ def meta_campaign_rows(account_id, since: date, until: date):
                    conversions=round(_meta_results(r.get("actions")), 2))
         rows.append(row)
     return rows
+
+
+# ------------------------------------------------------------------ Meta organic (Pages + Instagram)
+# Meta retired post "impressions" in Nov 2025 in favour of "views" and keeps renaming metrics, so
+# insights are requested newest-name-first and any metric Meta rejects is skipped (and remembered).
+FB_POST_METRICS = ["post_media_view", "post_total_media_view_unique", "post_clicks",
+                   "post_impressions", "post_impressions_unique"]
+IG_MEDIA_METRICS = ["views", "reach", "saved", "shares", "total_interactions"]
+_REJECTED_METRICS = set()
+
+
+def _is_metric_error(msg):
+    low = msg.lower()
+    return "metric" in low and ("(#100)" in low or "valid" in low or "not supported" in low or "deprecated" in low)
+
+
+def _insight_values(data):
+    out = {}
+    for item in data.get("data", []):
+        vals = item.get("values") or []
+        v = vals[-1].get("value") if vals else item.get("total_value", {}).get("value")
+        if isinstance(v, dict):
+            v = sum(x for x in v.values() if isinstance(x, (int, float)))
+        if isinstance(v, (int, float)):
+            out[item.get("name")] = v
+    return out
+
+
+def _insights(obj_id, metrics, token, extra=None):
+    want = [m for m in metrics if m not in _REJECTED_METRICS]
+    if not want:
+        return {}
+    params = {"metric": ",".join(want), **(extra or {})}
+    try:
+        return _insight_values(_meta_get(f"{obj_id}/insights", params, token))
+    except ConnectorError as e:
+        if not _is_metric_error(str(e)):
+            raise
+    out = {}
+    for m in want:  # one bad name fails the whole request: retry one by one
+        try:
+            out.update(_insight_values(_meta_get(f"{obj_id}/insights", {**params, "metric": m}, token)))
+        except ConnectorError as e:
+            if _is_metric_error(str(e)):
+                _REJECTED_METRICS.add(m)
+            else:
+                raise
+    return out
+
+
+def meta_pages():
+    """Facebook Pages the token can see, with their linked Instagram accounts.
+    Returns (pages, instagram): pages = [{'id','name','token'}], instagram = [{'id','name','page_id'}]."""
+    rows = _meta_paged("me/accounts", {"fields": "id,name,access_token,instagram_business_account{id,username,name}",
+                                       "limit": 100})
+    pages, igs = [], []
+    for r in rows:
+        pages.append({"id": r["id"], "name": r.get("name") or r["id"], "token": r.get("access_token")})
+        ig = r.get("instagram_business_account")
+        if ig and ig.get("id"):
+            igs.append({"id": ig["id"], "name": "@" + ig["username"] if ig.get("username") else ig.get("name") or ig["id"],
+                        "page_id": r["id"]})
+    pages.sort(key=lambda x: x["name"].lower())
+    igs.sort(key=lambda x: x["name"].lower())
+    return pages, igs
+
+
+def _ts(s):
+    from datetime import datetime
+    return datetime.fromisoformat(s.replace("Z", "+00:00").replace("+0000", "+00:00"))
+
+
+def facebook_posts(page_id, page_token, since: date):
+    from datetime import datetime, timezone
+    since_ts = int(datetime(since.year, since.month, since.day, tzinfo=timezone.utc).timestamp())
+    rows = _meta_paged(f"{page_id}/posts", {
+        "fields": "id,message,created_time,permalink_url,full_picture,status_type,shares,"
+                  "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)",
+        "since": since_ts, "limit": 100}, limit_pages=10, token=page_token)
+    out = []
+    for r in rows:
+        created = _ts(r["created_time"])
+        if created.date() < since:
+            continue
+        m = _insights(r["id"], FB_POST_METRICS, page_token, {"period": "lifetime"})
+        likes = int((r.get("reactions") or {}).get("summary", {}).get("total_count") or 0)
+        comments = int((r.get("comments") or {}).get("summary", {}).get("total_count") or 0)
+        shares = int((r.get("shares") or {}).get("count") or 0)
+        views = m.get("post_media_view", m.get("post_impressions"))
+        reach = m.get("post_total_media_view_unique", m.get("post_impressions_unique"))
+        out.append({"network": "facebook", "account_id": page_id, "post_id": r["id"],
+                    "created": created.isoformat(timespec="seconds"), "text": (r.get("message") or "")[:500],
+                    "permalink": r.get("permalink_url") or "", "media_type": r.get("status_type") or "",
+                    "thumbnail": r.get("full_picture") or "",
+                    "views": int(views) if views is not None else None,
+                    "reach": int(reach) if reach is not None else None,
+                    "likes": likes, "comments": comments, "shares": shares, "saves": None,
+                    "clicks": int(m["post_clicks"]) if "post_clicks" in m else None,
+                    "interactions": likes + comments + shares})
+    return out
+
+
+def instagram_posts(ig_id, token, since: date):
+    rows = _meta_paged(f"{ig_id}/media", {
+        "fields": "id,caption,media_type,media_product_type,timestamp,permalink,like_count,comments_count,"
+                  "thumbnail_url,media_url", "limit": 50}, limit_pages=10, token=token,
+        stop=lambda r: _ts(r["timestamp"]).date() < since)
+    out = []
+    for r in rows:
+        created = _ts(r["timestamp"])
+        if created.date() < since:
+            continue
+        m = _insights(r["id"], IG_MEDIA_METRICS, token)
+        likes, comments = int(r.get("like_count") or 0), int(r.get("comments_count") or 0)
+        shares = int(m["shares"]) if "shares" in m else 0
+        saves = int(m["saved"]) if "saved" in m else None
+        inter = int(m["total_interactions"]) if "total_interactions" in m else likes + comments + shares + (saves or 0)
+        kind = r.get("media_product_type") or r.get("media_type") or ""
+        out.append({"network": "instagram", "account_id": ig_id, "post_id": r["id"],
+                    "created": created.isoformat(timespec="seconds"), "text": (r.get("caption") or "")[:500],
+                    "permalink": r.get("permalink") or "", "media_type": kind,
+                    "thumbnail": r.get("thumbnail_url") or (r.get("media_url") if r.get("media_type") == "IMAGE" else "") or "",
+                    "views": int(m["views"]) if "views" in m else None,
+                    "reach": int(m["reach"]) if "reach" in m else None,
+                    "likes": likes, "comments": comments, "shares": shares, "saves": saves, "clicks": None,
+                    "interactions": inter})
+    return out
 
 
 # ------------------------------------------------------------------ Google

@@ -1,0 +1,37 @@
+{# Organic (unpaid) Facebook + Instagram posts for this practice. Needs: org, p #}
+<section class="platform organic" id="organic">
+  <h2>Organic posts</h2>
+  <p class="muted small">Unpaid Facebook and Instagram posts published {{ org.since }} to {{ org.until }}{% if not (p.fb_page_id or p.ig_account_id) %} · every Page and Instagram account linked to a practice{% endif %}</p>
+  {% if not org.totals or not org.totals.count %}
+    <p class="muted">No posts published in this period yet{% if not last_sync.at %}, or the accounts haven’t synced: use “Sync now”{% endif %}.</p>
+  {% else %}
+  {% for n in org.networks %}
+    <h3>{{ n.label }}</h3>
+    {% if n.count %}
+    <dl class="stats">
+      <div><dt>Posts</dt><dd>{{ n.count }}</dd></div>
+      <div><dt>Views</dt><dd>{{ '{:,}'.format(n.views) if n.views is not none else '—' }}</dd>{% if n.reach is not none %}<p class="muted small">{{ '{:,}'.format(n.reach) }} people reached</p>{% endif %}</div>
+      <div><dt>Interactions</dt><dd>{{ '{:,}'.format(n.interactions) }}</dd><p class="muted small">{{ '{:,}'.format(n.likes) }} likes · {{ '{:,}'.format(n.comments) }} comments · {{ '{:,}'.format(n.shares) }} shares{% if n.saves is not none %} · {{ '{:,}'.format(n.saves) }} saves{% endif %}</p></div>
+      <div><dt>Engagement rate</dt><dd>{{ n.rate|pct }}</dd><p class="muted small">interactions per view</p></div>
+    </dl>
+    {% else %}<p class="muted small">No {{ n.label }} posts in this period.</p>{% endif %}
+  {% endfor %}
+
+  <h3>Top posts</h3>
+  <div class="table-scroll"><table class="data posts-table">
+    <thead><tr><th>Post</th><th>Where</th><th class="num">Views</th><th class="num">Interactions</th><th class="num">Rate</th></tr></thead>
+    <tbody>
+    {% for post in org.top %}
+      <tr>
+        <td><span class="muted small">{{ post.created[:10] }}</span><br>
+          {% if post.permalink %}<a href="{{ post.permalink }}" target="_blank" rel="noopener">{{ (post.text or '(no text)')|truncate(90) }}</a>{% else %}{{ (post.text or '(no text)')|truncate(90) }}{% endif %}</td>
+        <td><span class="tag tag-{{ post.network }}">{{ 'Facebook' if post.network == 'facebook' else 'Instagram' }}</span>{% if post.media_type %}<br><span class="muted small">{{ post.media_type|replace('_', ' ')|lower }}</span>{% endif %}</td>
+        <td class="num">{{ '{:,}'.format(post.views) if post.views is not none else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(post.interactions or 0) }}</td>
+        <td class="num">{{ ((post.interactions or 0) / post.views)|pct if post.views else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>

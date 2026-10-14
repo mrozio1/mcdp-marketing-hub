@@ -12,7 +12,10 @@
       <p class="state state-bad">Token problem</p><p class="small">{{ mc.error }}</p>
     {% elif meta_on %}
       <p class="state state-good">Connected</p>
-      <p>{{ meta_accounts|length }} ad account{{ '' if meta_accounts|length == 1 else 's' }} visible.</p>
+      <p>{{ meta_accounts|length }} ad account{{ '' if meta_accounts|length == 1 else 's' }} visible.
+        {% set sc = checked.get('social') %}
+        {% if sc and sc.ok %}{{ sc.count }} Facebook Page{{ '' if sc.count == 1 else 's' }} and {{ sc.ig }} Instagram account{{ '' if sc.ig == 1 else 's' }} visible for organic posts.{% endif %}</p>
+      {% if sc and not sc.ok %}<p class="small danger">Facebook Pages: {{ sc.error }}</p>{% endif %}
     {% else %}
       <p class="state">Not connected</p>
     {% endif %}
@@ -24,9 +27,9 @@
     </form>
     <details class="how">
       <summary>Where do I get this?</summary>
-      <p>In <strong>Meta Business Settings → Users → System users</strong>: add a system user and use <strong>Assign assets</strong> to give it the practices’ ad accounts with <strong>Manage campaigns</strong> (View performance is enough for reports only). To write new ads, also assign the practices’ Facebook Pages with <strong>Create ads</strong>.</p>
+      <p>In <strong>Meta Business Settings → Users → System users</strong>: add a system user and use <strong>Assign assets</strong> to give it the practices’ ad accounts with <strong>Manage campaigns</strong> (View performance is enough for reports only). Also assign the practices’ <strong>Facebook Pages</strong> (with <strong>Create ads</strong> and <strong>View Page performance</strong>) and their <strong>Instagram accounts</strong>, for new ads and organic post stats.</p>
       <p>Then <strong>Accounts → Apps → MCDP Social → Assign people</strong>: add the system user with full control. Without this, Generate token says “No permissions available”.</p>
-      <p>Finally <strong>Generate token</strong> for MCDP Social with no expiry and the <code>ads_read</code> and <code>ads_management</code> permissions (<code>ads_read</code> alone is read-only). If <code>ads_read</code> isn’t offered, add the “Measure ad performance data with Marketing API” use case to the app in developers.facebook.com.</p>
+      <p>Finally <strong>Generate token</strong> for MCDP Social with no expiry and these permissions: <code>ads_read</code>, <code>ads_management</code> (to apply fixes), and for organic posts <code>pages_show_list</code>, <code>pages_read_engagement</code>, <code>read_insights</code>, <code>instagram_basic</code>, <code>instagram_manage_insights</code>. If <code>ads_read</code> isn’t offered, add the “Measure ad performance data with Marketing API” use case to the app in developers.facebook.com.</p>
     </details>
     {% if meta_from_page %}<form method="post" action="/connections/meta/remove" data-confirm="Remove the Meta token?"><button class="linklike danger" type="submit">Remove token</button></form>{% endif %}
   </section>
