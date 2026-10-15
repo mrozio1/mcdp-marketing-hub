@@ -22,7 +22,7 @@
   <p class="small muted">Last refresh: {{ status.new }} new, {{ status.gone }} no longer listed. Used {{ status.searches }} free searches, {{ status.pro }} new-place lookups and {{ status.essentials }} location renewals.</p>
 {% endif %}
 
-{% if browser_key and offices %}
+{% if browser_key %}
 <section class="panel map-panel">
   <div class="map-controls">
     <fieldset class="map-layers">
@@ -43,7 +43,7 @@
     </label>
   </div>
   <div id="map" class="map-canvas" role="region" aria-label="Map of offices, dental practices and orthodontists"></div>
-  <p class="small muted map-foot">{% if last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Not built yet: click <strong>Build the map</strong>.{% endif %}
+  <p class="small muted map-foot">{% if not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>
 </section>
 {% endif %}
@@ -208,7 +208,7 @@
   const canvas = document.getElementById("map");
   if (!canvas) return;
   const data = await (await fetch("/map/data.json", { credentials: "same-origin" })).json();
-  const map = new Map(canvas, { mapId: MAP_ID, center: { lat: 41.4, lng: -84.55 }, zoom: 8,
+  const map = new Map(canvas, { mapId: MAP_ID, center: { lat: 42.7, lng: -84.4 }, zoom: 7,
                                  mapTypeControl: false, streetViewControl: false, clickableIcons: false });
   const info = new InfoWindow();
   const offName = Object.fromEntries(data.offices.map(o => [o.id, o.label]));
