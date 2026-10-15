@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, organic, scope, sync
+from . import actions, ai, db, emailfmt, organic, places, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -66,8 +66,11 @@ PUBLIC_URL = os.environ.get("ADS_PUBLIC_URL", "").rstrip("/")
 @app.on_event("startup")
 def _startup():
     db.init()
+    places.init()
+    places.purge_old()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
+        places.start_scheduler()
 
 
 def authed(request: Request):
@@ -822,3 +825,100 @@ def remove_google(request: Request):
         db.set_setting(k, None)
     flash(request, "Google connection removed. Synced numbers already pulled are kept.")
     return RedirectResponse("/connections", status_code=303)
+
+
+# ---------- market map: our offices, nearby dentists (referrers) and other orthodontists ----------
+@app.get("/map", response_class=HTMLResponse)
+def market_map(request: Request):
+    if (r := guard(request)):
+        return r
+    places.purge_old()
+    offs = places.offices()
+    return page(request, "map.html", offices=offs, counts=places.counts(), status=places.status(),
+                browser_key=places.browser_key(), server_key_set=bool(places.server_key()),
+                map_id=places.map_id(), map_id_custom=bool(cx.setting("MAPS_MAP_ID")),
+                radius=places.radius(), brands=db.get_setting("map_brand_terms") or "",
+                max_requests=places.max_requests(), layers=places.LAYERS,
+                last=db.get_setting("map_last_refresh"))
+
+
+@app.get("/map/data.json")
+def market_map_data(request: Request):
+    if not authed(request):
+        return Response(status_code=401)
+    places.purge_old()
+    return places.map_data()
+
+
+def _map_back(anchor=""):
+    return RedirectResponse("/map" + anchor, status_code=303)
+
+
+@app.post("/map/setup")
+def market_map_setup(request: Request, browser_key: str = Form(""), server_key: str = Form(""),
+                     map_id: str = Form(""), radius: str = Form(""), brands: str = Form(""),
+                     max_requests: str = Form("")):
+    if (r := guard(request)):
+        return r
+    def clean(v):
+        return re.sub(r"[^A-Za-z0-9_-]", "", v)[:120]
+    if browser_key.strip():
+        db.set_setting("maps_browser_key", clean(browser_key))
+    if server_key.strip():
+        db.set_setting("maps_server_key", clean(server_key))
+    db.set_setting("maps_map_id", clean(map_id) or None)
+    try:
+        db.set_setting("map_radius_miles", str(min(max(float(radius), 1), 50)) if radius.strip() else None)
+        db.set_setting("map_max_requests", str(max(int(max_requests), 10)) if max_requests.strip() else None)
+    except ValueError:
+        flash(request, "Radius and request limit must be numbers.", "error")
+        return _map_back("#setup")
+    db.set_setting("map_brand_terms", brands.strip()[:1000] or None)
+    flash(request, "Map setup saved. Refresh the map to apply a new radius or brand names.")
+    return _map_back("#setup")
+
+
+@app.post("/map/offices")
+def market_map_add_office(request: Request, label: str = Form(""), place_id: str = Form(""),
+                          lat: str = Form(""), lng: str = Form("")):
+    if (r := guard(request)):
+        return r
+    try:
+        places.add_office(label, place_id, lat, lng)
+        flash(request, f"Added {label.strip()}. Click Refresh map to find the practices around it.")
+    except places.MapError as e:
+        flash(request, str(e), "error")
+    return _map_back("#offices")
+
+
+@app.post("/map/offices/{oid}/rename")
+def market_map_rename_office(request: Request, oid: int, label: str = Form("")):
+    if (r := guard(request)):
+        return r
+    places.rename_office(oid, label)
+    return _map_back("#offices")
+
+
+@app.post("/map/offices/{oid}/delete")
+def market_map_delete_office(request: Request, oid: int):
+    if (r := guard(request)):
+        return r
+    places.remove_office(oid)
+    flash(request, "Office removed from the map.")
+    return _map_back("#offices")
+
+
+@app.post("/map/refresh")
+def market_map_refresh(request: Request):
+    if (r := guard(request)):
+        return r
+    if not places.server_key() or not places.offices():
+        flash(request, "Add the server API key and at least one office first.", "error")
+        return _map_back("#setup")
+    if places.status().get("busy"):
+        flash(request, "A refresh is already running. Reload this page in a minute or two.", "error")
+        return _map_back()
+    places.refresh_in_background()
+    flash(request, "Refreshing: searching Google around each office. This takes a minute or two per office; "
+                   "reload the page to see progress.")
+    return _map_back()

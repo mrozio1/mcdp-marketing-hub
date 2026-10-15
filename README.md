@@ -160,6 +160,27 @@ sh enable-ads.sh off
 Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 `ads.<mcdp-domain>` → `http://ads:8000`.
 
+### Market map (our offices, referrers, competitors)
+
+The **Map** page shows our offices, every general dental practice within a set radius
+(default 15 miles; potential referrers) and every orthodontist that isn't ours (competitors),
+on a Google map with layer switches and a per-office filter. Dentists that also come up for
+"orthodontist" searches are ringed (they likely offer braces or aligners). Click a pin for its
+name, address, phone, website and rating, loaded live from Google.
+
+It uses the official Google Places API (New) and Maps JavaScript API, never scraping, and
+follows Google's storage rules: only place IDs and coordinates are stored, coordinates are
+deleted after 30 days, and the map refreshes itself about once a month. Names and addresses
+are never stored or exported. Typical use stays within Google's monthly free allowance
+(Text Search: 5,000 free requests; each refresh is capped, default 2,000).
+
+Setup (Google Cloud project `mcdp-ads`): link a billing account, enable **Places API (New)**
+and **Maps JavaScript API**, create a **browser key** (restricted to `https://ads.mcdp.com/*`,
+APIs: Maps JavaScript API + Places API (New)) and a **server key** (Places API (New) only),
+paste both under **Map → Map setup**, add our brand names, add each office with the search
+box, then **Build the map**. Optional: a Map ID (Map management) for production styling; a
+billing budget alert is recommended.
+
 ### Automatic nightly pulls (phase 2)
 
 Read-only connections; nothing is changed in either platform. Each night
