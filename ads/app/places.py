@@ -38,7 +38,10 @@ PLACES_BASE = os.environ.get("PLACES_BASE", "https://places.googleapis.com").rst
 KEEP_DAYS = 30            # Google: lat/lng may be cached for up to 30 consecutive days
 REFRESH_DAYS = 27         # refresh before the 30-day limit
 RENEW_AFTER_DAYS = 20     # a manual refresh doesn't re-pay for locations fetched recently
-DEFAULT_RADIUS = 15       # miles around each office
+DEFAULT_RADIUS = 15       # miles around each office (the most we'll look)
+DEFAULT_PER_OFFICE = 100  # closest dental practices kept per office; 0 = every one within the radius
+START_MILES = 2.0         # the dental-practice search starts this far out and widens until it has enough
+GROW = 1.6
 DEFAULT_MAX_REQUESTS = 3000   # paid Place Details calls per refresh (5,000 Pro / 10,000 Essentials free a month)
 MAX_SEARCHES = 20000      # free ID-only searches per refresh; just a runaway guard
 MAX_DEPTH = 3             # a busy box is split into 4, up to 3 times
@@ -75,7 +78,8 @@ CREATE TABLE IF NOT EXISTS map_places (
 """
 MIGRATIONS = {
     "map_offices": {"address": "TEXT DEFAULT ''", "match_note": "TEXT DEFAULT ''"},
-    "map_places": {"brands_key": "TEXT DEFAULT ''", "first_seen": "TEXT", "last_seen": "TEXT", "gone_at": "TEXT"},
+    "map_places": {"brands_key": "TEXT DEFAULT ''", "first_seen": "TEXT", "last_seen": "TEXT", "gone_at": "TEXT",
+                   "ranked": "INTEGER DEFAULT 1"},
 }
 
 _lock = threading.Lock()
@@ -121,6 +125,13 @@ def radius():
         return min(max(float(db.get_setting("map_radius_miles") or DEFAULT_RADIUS), 1), 50)
     except ValueError:
         return DEFAULT_RADIUS
+
+
+def per_office():
+    try:
+        return max(int(db.get_setting("map_per_office") or DEFAULT_PER_OFFICE), 0)
+    except ValueError:
+        return DEFAULT_PER_OFFICE
 
 
 def max_requests():
@@ -555,7 +566,7 @@ def _is_new(p, offs_by_id, prev):
 
 def visible(p, miles=None):
     return (p["layer"] in LAYERS and p["lat"] is not None and p["office_id"] is not None
-            and p["miles"] is not None and p["miles"] <= (miles or radius()))
+            and p["miles"] is not None and p["miles"] <= (miles or radius()) and p.get("ranked", 1) != 0)
 
 
 def counts():
@@ -656,38 +667,33 @@ def refresh(now=None):
 
         s = Searcher(key, progress=lambda n: _set_status(
             busy=True, started=began, step=f"Searching around our offices ({n:,} searches so far)"))
-        found = {}   # place_id -> set of queries that found it
-        for o in offs:
-            for q in QUERIES:
-                for pid in s.sweep(q, o["lat"], o["lng"], miles):
-                    found.setdefault(pid, set()).add(q)
         office_ids = {o["place_id"] for o in offs}
         known = {p["place_id"]: p for p in places()}
-        new_rows, updates, skipped = pending["new"], pending["upd"], 0
-        todo = len(found)
-        _set_status(busy=True, started=began, step=f"Found {todo:,} places; looking up the new ones")
+        new_rows, updates = pending["new"], pending["upd"]
+        found, handled, counter = {}, set(), {"skipped": 0}
+        limit = per_office()
 
         def nearest(lat, lng):
             o = min(offs, key=lambda o: miles_between(o["lat"], o["lng"], lat, lng))
             return o["id"], miles_between(o["lat"], o["lng"], lat, lng)
 
-        for pid, queries in found.items():
+        def handle(pid, queries):
             if pid in office_ids:
-                continue
+                return
             k = known.get(pid)
             if k and k["layer"] == "skip" and k["brands_key"] == bkey:
                 updates.append((k["layer"], 0, k["office_id"], k["miles"], k["lat"], k["lng"], k["coords_at"],
                                 bkey, stamp, pid))
-                continue
+                return
             relabel = not k or k["brands_key"] != bkey
             if not relabel and k["lat"] is not None and k["coords_at"] and k["coords_at"] >= renew_before:
                 lat, lng, coords_at, layer = k["lat"], k["lng"], k["coords_at"], k["layer"]
             elif not budget.take():
-                skipped += 1
+                counter["skipped"] += 1
                 if k:   # keep what we have; it's still listed
                     updates.append((k["layer"], k["offers_ortho"], k["office_id"], k["miles"], k["lat"], k["lng"],
                                     k["coords_at"], k["brands_key"], stamp, pid))
-                continue
+                return
             elif relabel:   # never seen, or our brand names changed: label it (Pro)
                 j = _details(pid, key, NEW_FIELDS)
                 budget.pro += 1
@@ -705,23 +711,71 @@ def refresh(now=None):
                     layer = "skip"   # one of our own offices under another listing
             ortho = int(layer == "referrer" and "orthodontist" in queries)
             row = (layer, ortho, office_id, d, lat, lng, coords_at, bkey, stamp, pid)
-            if k:
-                updates.append(row)
-            else:
-                new_rows.append(row)
-            if len(new_rows) + len(updates) >= 200:   # save as we go, so an interruption loses little
-                flush()
-                done = budget.pro + budget.essentials
-                _set_status(busy=True, started=began,
-                            step=f"Looked up {done:,} places of up to {min(todo, budget.limit):,}")
+            (updates if k else new_rows).append(row)
+            known[pid] = dict(place_id=pid, layer=layer, offers_ortho=ortho, office_id=office_id, miles=d, lat=lat,
+                              lng=lng, coords_at=coords_at, brands_key=bkey, gone_at=None, last_seen=stamp)
+
+        def process():
+            todo = [pid for pid in found if pid not in handled]
+            _set_status(busy=True, started=began, step=f"Found {len(found):,} places; looking up {len(todo):,} of them")
+            for pid in todo:
+                handled.add(pid)
+                handle(pid, found[pid])
+                if len(new_rows) + len(updates) >= 200:   # save as we go, so an interruption loses little
+                    flush()
+                    _set_status(busy=True, started=began, step=f"Looked up {budget.pro + budget.essentials:,} places "
+                                f"(limit {budget.limit:,}); {len(found):,} found so far")
+            flush()
+
+        def add(ids, q):
+            for pid in ids:
+                found.setdefault(pid, set()).add(q)
+
+        # 1. Orthodontists: everything within the radius (this search also turns up dentists offering braces).
+        for o in offs:
+            add(s.sweep("orthodontist", o["lat"], o["lng"], miles), "orthodontist")
+        process()
+        # 2. Dental practices: everything within the radius, or widen around each office until it has the closest `limit`.
+        extent = {}
+        size = {o["id"]: (miles if not limit else min(START_MILES, miles)) for o in offs}
+        waiting = list(offs)
+        while waiting and not (s.capped or budget.capped):
+            for o in waiting:
+                add(s.sweep("dentist", o["lat"], o["lng"], size[o["id"]]), "dentist")
+            process()
+            refs = [p for p in known.values() if p["layer"] == "referrer" and p["lat"] is not None and not p["gone_at"]]
+            still = []
+            for o in waiting:
+                n = sum(1 for p in refs if miles_between(o["lat"], o["lng"], p["lat"], p["lng"]) <= size[o["id"]])
+                if limit and n < limit and size[o["id"]] < miles:
+                    size[o["id"]] = min(miles, size[o["id"]] * GROW)
+                    still.append(o)
+                else:
+                    extent[o["id"]] = size[o["id"]]
+            waiting = still
+        for o in waiting:
+            extent[o["id"]] = 0   # stopped early: we can't say anything around this office is gone
 
         complete = not (s.capped or budget.capped)
-        flush()
-        with db.conn() as c:
-            gone = 0
-            if complete:   # only a full sweep can say a place is no longer listed
-                gone = c.execute("UPDATE map_places SET gone_at=? WHERE gone_at IS NULL AND last_seen < ? "
-                                 "AND layer != 'skip' AND office_id IS NOT NULL", (stamp, stamp)).rowcount
+        skipped = counter["skipped"]
+        gone = 0
+        if complete:   # only a finished sweep can say a place is no longer listed, and only where we looked
+            gone_ids = []
+            for p in places():
+                if (p["gone_at"] or p["layer"] not in LAYERS or p["lat"] is None or not p["last_seen"]
+                        or p["last_seen"] >= stamp):
+                    continue
+                if p["layer"] == "competitor":
+                    looked = any(miles_between(o["lat"], o["lng"], p["lat"], p["lng"]) <= miles for o in offs)
+                else:
+                    looked = any(miles_between(o["lat"], o["lng"], p["lat"], p["lng"]) <= extent.get(o["id"], 0)
+                                 for o in offs)
+                if looked:
+                    gone_ids.append(p["place_id"])
+            with db.conn() as c:
+                c.executemany("UPDATE map_places SET gone_at=? WHERE place_id=?", [(stamp, i) for i in gone_ids])
+            gone = len(gone_ids)
+        _rank(offs, limit, miles)
         last = db.get_setting("map_last_refresh")
         if last:
             db.set_setting("map_prev_refresh", last)
@@ -744,6 +798,27 @@ def refresh(now=None):
         raise MapError(str(e))
     finally:
         _lock.release()
+
+
+def _rank(offs, limit, miles):
+    """Mark which dental practices show: the closest `limit` to each office (within the radius), or all of them."""
+    rows = [p for p in places() if p["layer"] == "referrer" and p["lat"] is not None]
+    keep = set()
+    if not limit:
+        keep = {p["place_id"] for p in rows}
+    else:
+        live = [p for p in rows if not p["gone_at"]]
+        for o in offs:
+            if o.get("lat") is None:
+                continue
+            near = sorted((miles_between(o["lat"], o["lng"], p["lat"], p["lng"]), p["place_id"]) for p in live)
+            keep.update(pid for d, pid in near[:limit] if d <= miles)
+        keep.update(p["place_id"] for p in rows if p["gone_at"] and p["office_id"] is not None
+                    and p["miles"] is not None and p["miles"] <= miles and p.get("ranked", 1))
+    with db.conn() as c:
+        c.execute("UPDATE map_places SET ranked=1 WHERE layer != 'referrer'")
+        c.executemany("UPDATE map_places SET ranked=? WHERE place_id=?",
+                      [(int(p["place_id"] in keep), p["place_id"]) for p in rows])
 
 
 def run_in_background(fn, *args):

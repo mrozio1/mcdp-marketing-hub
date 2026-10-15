@@ -175,7 +175,9 @@ def test_first_refresh_labels_everything_once(env):
     # every search asked for IDs only (the free tier); the busy dentist box was paged 3 times then split
     dent = [b for _, m, b in calls("search") if b["textQuery"] == "dentist"]
     assert {m for _, m, _ in calls("search")} == {"places.id,nextPageToken"}
-    assert [b.get("pageToken") for b in dent[:3]] == [None, "1", "2"] and len(dent) > 3
+    first_busy = next(i for i, b in enumerate(dent) if b.get("pageToken") == "2")
+    assert [b.get("pageToken") for b in dent[first_busy - 2:first_busy + 1]] == [None, "1", "2"]
+    assert len(dent) > first_busy + 1                                 # ...then split into smaller boxes
     # one Pro lookup per new place, one location renewal for the office
     pro = calls("details", places.NEW_FIELDS)
     assert len(pro) == len({pid for *_, pid in pro}) == len(got)
@@ -402,6 +404,7 @@ def test_slow_down_is_retried_and_progress_survives_a_failure(env):
         pid = f"ChIJ_dent_bulk_{i:05d}"
         PLACES[pid] = P(pid, f"Bulk Dental {i}", 41.20 + (i % 50) * 0.002, -84.40 + (i // 50) * 0.01)
     db.set_setting("map_brand_terms", "Heights Orthodontics")
+    db.set_setting("map_per_office", "0")                              # every practice in the radius
     THROTTLE.update(details=0, fail_after=230, served=0)
     with pytest.raises(places.MapError, match="deleted"):
         places.refresh(T0 + timedelta(days=91))
@@ -414,3 +417,36 @@ def test_slow_down_is_retried_and_progress_survives_a_failure(env):
     redone = {pid for *_, pid in calls("details", places.NEW_FIELDS)}
     assert len(redone) < 100                                          # only what wasn't saved is looked up again
     assert sum(1 for p in places.places() if p["place_id"].startswith("ChIJ_dent_bulk_")) == 250
+
+
+def test_closest_n_per_office(env):
+    """Only the closest N dental practices per office are looked up and shown; competitors stay complete."""
+    db, places = env
+    db.set_setting("map_per_office", "100")
+    db.set_setting("map_radius_miles", "25")
+    with db.conn() as c:   # start from a clean slate so every place is new
+        c.execute("DELETE FROM map_places")
+    for o in places.offices():   # one office, so only its own widening search counts
+        if o["place_id"] != OFFICE["id"]:
+            places.remove_office(o["id"])
+    for i in range(250):   # a dense ring of dentists: 0.5 to ~10 miles out from Defiance
+        pid = f"ChIJ_dent_ring_{i:05d}"
+        PLACES[pid] = P(pid, f"Ring Dental {i}", OFFICE["lat"] + 0.007 + i * 0.0006, OFFICE["lng"] - 0.004)
+    PLACES["ChIJ_ortho_far_comp001"] = P("ChIJ_ortho_far_comp001", "Far Orthodontics", OFFICE["lat"] - 0.25,
+                                         OFFICE["lng"] + 0.05, q=("orthodontist",))     # ~17 mi south
+    THROTTLE.update(details=0, fail_after=None, served=0)
+    LOG.clear()
+    res = places.refresh(T0 + timedelta(days=120))
+    assert res["ok"] and not res["capped"]
+    looked_up = {pid for *_, pid in calls("details", places.NEW_FIELDS)}
+    ring = [p for p in places.map_data()["places"] if p["id"].startswith("ChIJ_dent_ring_")]
+    defiance = places.offices()[[o["place_id"] for o in places.offices()].index(OFFICE["id"])]["id"]
+    shown_near_defiance = [p for p in places.map_data()["places"] if p["layer"] == "referrer"]
+    assert len([x for x in looked_up if x.startswith("ChIJ_dent_ring_")]) < 250     # didn't pay for all of them
+    assert ring and max(int(p["id"][-5:]) for p in ring) < 110      # the ones shown are the nearest
+    assert len(shown_near_defiance) == 100
+    assert any(p["id"] == "ChIJ_ortho_far_comp001" for p in places.map_data()["places"])   # competitors in full
+    # nothing outside where we looked is marked "no longer listed"
+    far = [p for p in places.places() if p["place_id"].startswith("ChIJ_dent_ring_") and p["gone_at"]]
+    assert far == []
+    assert defiance

@@ -162,8 +162,9 @@ Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 
 ### Market map (our offices, referrers, competitors)
 
-The **Map** page shows our offices, every general dental practice within a set radius
-(default 15 miles; potential referrers) and every orthodontist that isn't ours (competitors),
+The **Map** page shows our offices, the closest general dental practices to each office
+(default 100 per office, within a maximum radius of 15 miles; potential referrers) and every
+orthodontist within the radius that isn't ours (competitors),
 on a Google map with layer switches and a per-office filter. Dentists that also come up for
 "orthodontist" searches are ringed (they likely offer braces or aligners). Each refresh flags
 practices that are **new** since the last one and ones **no longer listed** on Google. Click a
@@ -178,7 +179,10 @@ our layer instead of as competitors.
 
 It uses the official Google Places API (New) and Maps JavaScript API, never scraping, and
 follows Google's storage rules: only place IDs (kept) and coordinates (deleted after 30 days)
-come from Google; our labels, dates and office list are ours. Each refresh, cheapest first:
+come from Google; our labels, dates and office list are ours. To keep only the closest N dental
+practices, the search starts 2 miles around each office and widens until it has N (set N to 0 for
+every practice in the radius); "no longer listed" is only decided where the map actually looked.
+Each refresh, cheapest first:
 an ID-only search sweep (free, unlimited), one lookup for each place never seen before, and a
 location renewal for known places (skipped if renewed in the last 20 days). Places that aren't
 dental practices are remembered and never looked up again. The map refreshes itself about once

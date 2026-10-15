@@ -838,7 +838,7 @@ def market_map(request: Request):
                 browser_key=places.browser_key(), server_key_set=bool(places.server_key()),
                 map_id=places.map_id(), map_id_custom=bool(cx.setting("MAPS_MAP_ID")),
                 radius=places.radius(), brands=db.get_setting("map_brand_terms") or "",
-                max_requests=places.max_requests(), layers=places.LAYERS,
+                max_requests=places.max_requests(), per_office=places.per_office(), layers=places.LAYERS,
                 last=db.get_setting("map_last_refresh"), prev=db.get_setting("map_prev_refresh"),
                 preview=_import_preview())
 
@@ -858,7 +858,7 @@ def _map_back(anchor=""):
 @app.post("/map/setup")
 def market_map_setup(request: Request, browser_key: str = Form(""), server_key: str = Form(""),
                      map_id: str = Form(""), radius: str = Form(""), brands: str = Form(""),
-                     max_requests: str = Form("")):
+                     max_requests: str = Form(""), per_office: str = Form("")):
     if (r := guard(request)):
         return r
     def clean(v):
@@ -871,6 +871,7 @@ def market_map_setup(request: Request, browser_key: str = Form(""), server_key: 
     try:
         db.set_setting("map_radius_miles", str(min(max(float(radius), 1), 50)) if radius.strip() else None)
         db.set_setting("map_max_requests", str(max(int(max_requests), 10)) if max_requests.strip() else None)
+        db.set_setting("map_per_office", str(max(int(per_office), 0)) if per_office.strip() else None)
     except ValueError:
         flash(request, "Radius and request limit must be numbers.", "error")
         return _map_back("#setup")

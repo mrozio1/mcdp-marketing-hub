@@ -10,7 +10,7 @@
   </form>
   {% endif %}
 </div>
-<p class="lede">Our offices, every general dental practice within {{ radius|round(0)|int }} miles (potential referrers) and every orthodontist that isn't ours (competitors), from Google. Click a pin for its name, address and link.</p>
+<p class="lede">Our offices, {% if per_office %}the {{ per_office }} closest general dental practices to each office{% else %}every general dental practice{% endif %} within {{ radius|round(0)|int }} miles (potential referrers), and every orthodontist within {{ radius|round(0)|int }} miles that isn't ours (competitors), from Google. Click a pin for its name, address and link.</p>
 
 {% if status.busy %}
   <p class="flash" role="status">Refresh running since {{ status.started[11:16] }}{% if status.step %}: {{ status.step }}{% endif %}. With many offices this takes a while; reload to see progress. You can leave the page.</p>
@@ -148,8 +148,11 @@
       <label>Map ID <span class="muted small">(optional)</span>
         <input name="map_id" value="{{ map_id if map_id_custom else '' }}" placeholder="DEMO_MAP_ID">
       </label>
-      <label>Search radius around each office (miles)
+      <label>Search radius around each office (miles) <span class="muted small">(the furthest the map looks)</span>
         <input name="radius" type="number" min="1" max="50" step="1" value="{{ radius|round(0)|int }}">
+      </label>
+      <label>Closest dental practices per office <span class="muted small">(0 = every one within the radius; competitors always show in full)</span>
+        <input name="per_office" type="number" min="0" step="10" value="{{ per_office }}">
       </label>
     </div>
     <label>Our brand names <span class="muted small">(comma-separated; any orthodontist whose name contains one is treated as ours, not a competitor)</span>
