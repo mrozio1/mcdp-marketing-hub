@@ -839,7 +839,8 @@ def market_map(request: Request):
                 map_id=places.map_id(), map_id_custom=bool(cx.setting("MAPS_MAP_ID")),
                 radius=places.radius(), brands=db.get_setting("map_brand_terms") or "",
                 max_requests=places.max_requests(), layers=places.LAYERS,
-                last=db.get_setting("map_last_refresh"))
+                last=db.get_setting("map_last_refresh"), prev=db.get_setting("map_prev_refresh"),
+                preview=_import_preview())
 
 
 @app.get("/map/data.json")
@@ -922,3 +923,78 @@ def market_map_refresh(request: Request):
     flash(request, "Refreshing: searching Google around each office. This takes a minute or two per office; "
                    "reload the page to see progress.")
     return _map_back()
+
+
+# ---------- importing our own office list (CSV / Excel / My Maps KML) ----------
+OFFICE_GROUP_HINT = re.compile(r"\b(our|office|offices|location|locations|practice|practices|mcdp)\b", re.I)
+
+
+def _import_preview():
+    import json as _json
+    try:
+        rows = _json.loads(db.get_setting("map_import_preview") or "[]")
+    except ValueError:
+        rows = []
+    if not rows:
+        return None
+    brands = places.brand_terms()
+    groups = sorted({r.get("group") or "" for r in rows})
+    hinted = {g for g in groups if g and (OFFICE_GROUP_HINT.search(g) or any(b in g.lower() for b in brands))}
+    for i, r in enumerate(rows):
+        r["idx"] = i
+        r["checked"] = (r.get("group") or "") in hinted if hinted else True
+    return {"rows": rows, "groups": groups}
+
+
+@app.post("/map/import")
+async def market_map_import(request: Request, file: UploadFile = File(...)):
+    if (r := guard(request)):
+        return r
+    import json as _json
+    data = await file.read(MAX_UPLOAD + 1)
+    if len(data) > MAX_UPLOAD:
+        flash(request, "That file is over 20 MB.", "error")
+        return _map_back("#offices")
+    try:
+        rows = places.parse_office_file(data, file.filename or "")
+    except places.MapError as e:
+        flash(request, str(e), "error")
+        return _map_back("#offices")
+    db.set_setting("map_import_preview", _json.dumps(rows))
+    flash(request, f"Read {len(rows)} place{'s' if len(rows) != 1 else ''}. Tick the ones that are our offices, "
+                   "then click Add.")
+    return _map_back("#import")
+
+
+@app.post("/map/import/confirm")
+async def market_map_import_confirm(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    pv = _import_preview()
+    if not pv:
+        return _map_back("#offices")
+    picked = [pv["rows"][int(i)] for i in form.getlist("row") if str(i).isdigit() and int(i) < len(pv["rows"])]
+    if not picked:
+        flash(request, "Tick at least one office to add.", "error")
+        return _map_back("#import")
+    if not places.server_key():
+        flash(request, "Add the server API key in Map setup first; it's used to find each office on Google.", "error")
+        return _map_back("#setup")
+    added, problems = await asyncio.to_thread(places.import_offices, picked)
+    db.set_setting("map_import_preview", None)
+    msg = f"Added {added} office{'s' if added != 1 else ''}."
+    if problems:
+        msg += f" {len(problems)} couldn't be matched: " + "; ".join(problems[:3]) + (" …" if len(problems) > 3 else "")
+    elif added:
+        msg += " Click Refresh map to find the practices around them."
+    flash(request, msg, "error" if problems and not added else "ok")
+    return _map_back("#offices")
+
+
+@app.post("/map/import/cancel")
+def market_map_import_cancel(request: Request):
+    if (r := guard(request)):
+        return r
+    db.set_setting("map_import_preview", None)
+    return _map_back("#offices")

@@ -165,21 +165,33 @@ Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 The **Map** page shows our offices, every general dental practice within a set radius
 (default 15 miles; potential referrers) and every orthodontist that isn't ours (competitors),
 on a Google map with layer switches and a per-office filter. Dentists that also come up for
-"orthodontist" searches are ringed (they likely offer braces or aligners). Click a pin for its
-name, address, phone, website and rating, loaded live from Google.
+"orthodontist" searches are ringed (they likely offer braces or aligners). Each refresh flags
+practices that are **new** since the last one and ones **no longer listed** on Google. Click a
+pin for its name, address, phone, website and rating, loaded live from Google.
+
+**Our offices** can be uploaded in one go: a CSV or Excel list (name + address, or
+latitude/longitude) or the KML/KMZ export of a Google My Maps map. The page shows what it read,
+grouped by map layer (layers that look like ours are pre-ticked), and matches each ticked office
+on Google, flagging any match that's far from the pin in the file. Single offices can also be
+added with a Google search box. Orthodontists whose names contain one of our brand names show on
+our layer instead of as competitors.
 
 It uses the official Google Places API (New) and Maps JavaScript API, never scraping, and
-follows Google's storage rules: only place IDs and coordinates are stored, coordinates are
-deleted after 30 days, and the map refreshes itself about once a month. Names and addresses
-are never stored or exported. Typical use stays within Google's monthly free allowance
-(Text Search: 5,000 free requests; each refresh is capped, default 2,000).
+follows Google's storage rules: only place IDs (kept) and coordinates (deleted after 30 days)
+come from Google; our labels, dates and office list are ours. Each refresh, cheapest first:
+an ID-only search sweep (free, unlimited), one lookup for each place never seen before, and a
+location renewal for known places (skipped if renewed in the last 20 days). Places that aren't
+dental practices are remembered and never looked up again. The map refreshes itself about once
+a month; a lookup limit per refresh (default 3,000) keeps it inside Google's monthly free
+allowance (5,000 new-place lookups, 10,000 location renewals). Names and addresses from Google
+are never stored or exported.
 
 Setup (Google Cloud project `mcdp-ads`): link a billing account, enable **Places API (New)**
 and **Maps JavaScript API**, create a **browser key** (restricted to `https://ads.mcdp.com/*`,
 APIs: Maps JavaScript API + Places API (New)) and a **server key** (Places API (New) only),
-paste both under **Map → Map setup**, add our brand names, add each office with the search
-box, then **Build the map**. Optional: a Map ID (Map management) for production styling; a
-billing budget alert is recommended.
+paste both under **Map → Map setup**, add our brand names, upload or add our offices, then
+**Build the map**. Optional: a Map ID (Map management) for production styling; a billing budget
+alert is recommended.
 
 ### Automatic nightly pulls (phase 2)
 

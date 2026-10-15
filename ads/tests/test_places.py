@@ -1,8 +1,11 @@
-"""Market map: Places API (New) searches, classification, 30-day storage rule, map page."""
+"""Market map: free ID sweep, labelling only new places, new/gone tracking, 30-day rule, office import, page."""
 import importlib
+import io
 import json
 import os
 import threading
+import urllib.parse
+import zipfile
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -11,28 +14,31 @@ import pytest
 PORT = 9961
 KEY = "AIzaServerKey123"
 OFFICE = {"id": "ChIJ_office_defiance01", "lat": 41.2845, "lng": -84.3558}
+BRYAN = {"id": "ChIJ_office_bryan00001", "lat": 41.4748, "lng": -84.5525}
 LOG = []
 
 
-def P(pid, name, lat, lng, types=("dentist", "health"), status="OPERATIONAL"):
+def P(pid, name, lat, lng, types=("dentist", "health"), status="OPERATIONAL", q=("dentist",)):
     return {"id": pid, "displayName": {"text": name}, "location": {"latitude": lat, "longitude": lng},
-            "types": list(types), "businessStatus": status}
+            "types": list(types), "businessStatus": status, "_q": set(q)}
 
 
-DENTIST = {
-    "ChIJ_dent_smile_family": P("ChIJ_dent_smile_family", "Smile Family Dentistry", 41.30, -84.36),
-    "ChIJ_dent_braces_too01": P("ChIJ_dent_braces_too01", "Main Street Dental", 41.27, -84.40),
-    "ChIJ_dent_closed_00001": P("ChIJ_dent_closed_00001", "Old Dental Office", 41.29, -84.33, status="CLOSED_PERMANENTLY"),
-    "ChIJ_dent_far_away_001": P("ChIJ_dent_far_away_001", "Far Dental", 41.70, -84.36),     # ~29 mi north
-    "ChIJ_pharmacy_0000001": P("ChIJ_pharmacy_0000001", "Dental Supply Pharmacy", 41.28, -84.37, ("pharmacy",)),
-    OFFICE["id"]: P(OFFICE["id"], "Heights Orthodontics", OFFICE["lat"], OFFICE["lng"], ("orthodontist", "dentist")),
-}
-ORTHO = {
-    "ChIJ_ortho_rival_00001": P("ChIJ_ortho_rival_00001", "Bright Orthodontics", 41.31, -84.30, ("dentist",)),
-    "ChIJ_ortho_ours_000001": P("ChIJ_ortho_ours_000001", "Heights Orthodontics - Bryan", 41.47, -84.55, ("dentist",)),
-    "ChIJ_dent_braces_too01": DENTIST["ChIJ_dent_braces_too01"],
-    OFFICE["id"]: DENTIST[OFFICE["id"]],
-}
+PLACES = {}
+
+
+def reset_places():
+    PLACES.clear()
+    for p in [
+        P("ChIJ_dent_smile_family", "Smile Family Dentistry", 41.30, -84.36),
+        P("ChIJ_dent_braces_too01", "Main Street Dental", 41.27, -84.40, q=("dentist", "orthodontist")),
+        P("ChIJ_dent_closed_00001", "Old Dental Office", 41.29, -84.33, status="CLOSED_PERMANENTLY"),
+        P("ChIJ_dent_far_away_001", "Far Dental", 41.70, -84.36),          # ~29 mi north
+        P("ChIJ_pharmacy_0000001", "Dental Supply Pharmacy", 41.28, -84.37, ("pharmacy",)),
+        P(OFFICE["id"], "Heights Orthodontics", OFFICE["lat"], OFFICE["lng"], ("dentist",), q=("dentist", "orthodontist")),
+        P(BRYAN["id"], "Heights Orthodontics Bryan", BRYAN["lat"], BRYAN["lng"], ("dentist",), q=("orthodontist",)),
+        P("ChIJ_ortho_rival_00001", "Bright Orthodontics", 41.31, -84.30, q=("orthodontist",)),
+    ]:
+        PLACES[p["id"]] = p
 
 
 class H(BaseHTTPRequestHandler):
@@ -46,28 +52,53 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
-        LOG.append(("GET", self.path, dict(self.headers), None))
+    def _denied(self):
         if self.headers.get("X-Goog-Api-Key") != KEY:
-            return self._send(403, {"error": {"code": 403, "message": "API key not valid.", "status": "PERMISSION_DENIED"}})
-        return self._send(200, {"location": {"latitude": OFFICE["lat"], "longitude": OFFICE["lng"]}})
+            self._send(403, {"error": {"code": 403, "message": "API key not valid.", "status": "PERMISSION_DENIED"}})
+            return True
+        return False
+
+    def do_GET(self):
+        mask = self.headers.get("X-Goog-FieldMask")
+        pid = urllib.parse.urlparse(self.path).path.rsplit("/", 1)[-1]
+        LOG.append(("details", mask, pid))
+        if self._denied():
+            return
+        p = PLACES.get(pid)
+        if not p:
+            return self._send(404, {"error": {"code": 404, "message": "Not found.", "status": "NOT_FOUND"}})
+        if mask == "location":
+            return self._send(200, {"location": p["location"]})
+        return self._send(200, {k: v for k, v in p.items() if not k.startswith("_")})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        LOG.append(("POST", self.path, dict(self.headers), body))
-        if self.headers.get("X-Goog-Api-Key") != KEY:
-            return self._send(403, {"error": {"code": 403, "message": "API key not valid.", "status": "PERMISSION_DENIED"}})
+        mask = self.headers.get("X-Goog-FieldMask")
+        LOG.append(("search", mask, body))
+        if self._denied():
+            return
+        if "locationRestriction" not in body:   # office import: name + address match
+            q = body["textQuery"].lower()
+            hits = [p for p in PLACES.values() if p["displayName"]["text"].lower() in q]
+            hit = max(hits, key=lambda p: len(p["displayName"]["text"])) if hits else None
+            return self._send(200, {"places": [{"id": hit["id"], "location": hit["location"]}] if hit else []})
         rect = body["locationRestriction"]["rectangle"]
         lo, hi = rect["low"], rect["high"]
-        pool = ORTHO if body["textQuery"] == "orthodontist" else DENTIST
-        inside = [p for p in pool.values() if lo["latitude"] <= p["location"]["latitude"] <= hi["latitude"]
+        inside = [p for p in PLACES.values() if body["textQuery"] in p["_q"]
+                  and lo["latitude"] <= p["location"]["latitude"] <= hi["latitude"]
                   and lo["longitude"] <= p["location"]["longitude"] <= hi["longitude"]]
-        # The full-size dentist box pretends to be busy: 3 full pages and still more, so it must be split.
-        busy = body["textQuery"] == "dentist" and hi["latitude"] - lo["latitude"] > 0.3
-        if busy:
+        out = [{"id": p["id"]} for p in inside]
+        if mask != "places.id,nextPageToken":
+            return self._send(400, {"error": {"code": 400, "message": "unexpected mask " + str(mask)}})
+        # A full-size dentist box pretends to be busy: 3 pages and still more, so it must be split.
+        if body["textQuery"] == "dentist" and hi["latitude"] - lo["latitude"] > 0.3:
             page = int(body.get("pageToken", "0"))
-            return self._send(200, {"places": inside[:1], "nextPageToken": str(page + 1)})
-        return self._send(200, {"places": inside})
+            return self._send(200, {"places": out[:1], "nextPageToken": str(page + 1)})
+        return self._send(200, {"places": out})
+
+
+def calls(kind, mask=None):
+    return [x for x in LOG if x[0] == kind and (mask is None or x[1] == mask)]
 
 
 @pytest.fixture(scope="module")
@@ -82,19 +113,28 @@ def env(tmp_path_factory):
         importlib.reload(m)
     db.init()
     places.init()
+    reset_places()
     yield db, places
     srv.shutdown()
+
+
+T0 = datetime(2026, 11, 1, 6, 0)
 
 
 def test_classify():
     from app.places import classify
     brands = ["heights orthodontics"]
-    assert classify(DENTIST["ChIJ_dent_smile_family"], "dentist", brands) == ("referrer", False)
-    assert classify(DENTIST["ChIJ_dent_braces_too01"], "orthodontist", brands) == ("referrer", True)
-    assert classify(ORTHO["ChIJ_ortho_rival_00001"], "orthodontist", brands) == ("competitor", False)
-    assert classify(ORTHO["ChIJ_ortho_ours_000001"], "orthodontist", brands) == ("ours", False)
-    assert classify(DENTIST["ChIJ_pharmacy_0000001"], "dentist", brands) == (None, False)
-    assert classify(DENTIST["ChIJ_dent_closed_00001"], "dentist", brands) == (None, False)
+    assert classify(PLACES_SAMPLE["smile"], brands) == "referrer"
+    assert classify(PLACES_SAMPLE["rival"], brands) == "competitor"
+    assert classify(PLACES_SAMPLE["ours"], brands) == "ours"
+    assert classify(PLACES_SAMPLE["pharmacy"], brands) == "skip"
+    assert classify(PLACES_SAMPLE["closed"], brands) == "skip"
+
+
+PLACES_SAMPLE = {
+    "smile": P("a", "Smile Family Dentistry", 0, 0), "rival": P("b", "Bright Orthodontics", 0, 0),
+    "ours": P("c", "Heights Orthodontics - Bryan", 0, 0), "pharmacy": P("d", "Dental Supply", 0, 0, ("pharmacy",)),
+    "closed": P("e", "Old Dental", 0, 0, status="CLOSED_PERMANENTLY")}
 
 
 def test_refresh_needs_setup(env):
@@ -103,46 +143,96 @@ def test_refresh_needs_setup(env):
         places.refresh()
 
 
-def test_refresh_builds_layers(env):
+def test_first_refresh_labels_everything_once(env):
     db, places = env
     db.set_setting("maps_server_key", KEY)
     db.set_setting("map_brand_terms", "Heights Orthodontics")
     db.set_setting("map_radius_miles", "25")
     places.add_office("Heights – Defiance", OFFICE["id"], OFFICE["lat"], OFFICE["lng"])
     LOG.clear()
-    res = places.refresh()
-    assert res["ok"] and not res["capped"]
+    res = places.refresh(T0)
+    assert res["ok"] and not res["capped"] and res["gone"] == 0
     got = {p["place_id"]: p for p in places.places()}
     assert got["ChIJ_dent_smile_family"]["layer"] == "referrer" and not got["ChIJ_dent_smile_family"]["offers_ortho"]
     assert got["ChIJ_dent_braces_too01"]["layer"] == "referrer" and got["ChIJ_dent_braces_too01"]["offers_ortho"]
     assert got["ChIJ_ortho_rival_00001"]["layer"] == "competitor"
-    assert got["ChIJ_ortho_ours_000001"]["layer"] == "ours"           # brand match, another of our locations
-    for gone in ("ChIJ_dent_closed_00001", "ChIJ_dent_far_away_001", "ChIJ_pharmacy_0000001", OFFICE["id"]):
-        assert gone not in got
+    assert got[BRYAN["id"]]["layer"] == "ours"                       # brand match, another of our locations
+    assert got["ChIJ_pharmacy_0000001"]["layer"] == "skip"           # remembered, so never paid for again
+    assert OFFICE["id"] not in got
     assert 1 < got["ChIJ_dent_smile_family"]["miles"] < 2
-    # the busy dentist box was paged 3 times then split into smaller boxes
-    dent = [b for m, _, _, b in LOG if m == "POST" and b["textQuery"] == "dentist"]
+    # every search asked for IDs only (the free tier); the busy dentist box was paged 3 times then split
+    dent = [b for _, m, b in calls("search") if b["textQuery"] == "dentist"]
+    assert {m for _, m, _ in calls("search")} == {"places.id,nextPageToken"}
     assert [b.get("pageToken") for b in dent[:3]] == [None, "1", "2"] and len(dent) > 3
-    # only the fields we need are asked for, with the server key
-    hdr = next(h for m, _, h, _ in LOG if m == "POST")
-    assert hdr["X-Goog-Fieldmask"] == places.FIELDS and hdr["X-Goog-Api-Key"] == KEY
+    # one Pro lookup per new place, one location renewal for the office
+    pro = calls("details", places.NEW_FIELDS)
+    assert len(pro) == len({pid for *_, pid in pro}) == len(got)
+    assert [pid for *_, pid in calls("details", "location")] == [OFFICE["id"]]
     c = places.counts()[places.offices()[0]["id"]]
-    assert c == {"referrer": 2, "competitor": 1, "offers_ortho": 1, "ours": 1}
+    assert (c["referrer"], c["competitor"], c["offers_ortho"], c["ours"], c["new"], c["gone"]) == (2, 1, 1, 1, 0, 0)
 
 
 def test_map_data_has_no_names(env):
     db, places = env
     blob = json.dumps(places.map_data())
     assert "Smile Family" not in blob and "Bright" not in blob and "ChIJ_ortho_rival_00001" in blob
+    assert "ChIJ_pharmacy_0000001" not in blob and "ChIJ_dent_far_away_001" not in blob
 
 
-def test_request_cap_is_partial_not_wipe(env):
+def test_second_refresh_only_pays_for_new_and_flags_new_and_gone(env):
     db, places = env
-    before = len(places.places())
+    PLACES["ChIJ_dent_new_opened01"] = P("ChIJ_dent_new_opened01", "Fresh Smiles Dental", 41.26, -84.34)
+    del PLACES["ChIJ_ortho_rival_00001"]                               # stopped coming up
+    LOG.clear()
+    res = places.refresh(T0 + timedelta(days=28))
+    assert res["new"] == 1 and res["gone"] == 1
+    assert [pid for *_, pid in calls("details", places.NEW_FIELDS)] == ["ChIJ_dent_new_opened01"]
+    renewed = {pid for *_, pid in calls("details", "location")}
+    assert "ChIJ_dent_smile_family" in renewed and "ChIJ_pharmacy_0000001" not in renewed   # non-dental never re-checked
+    data = {p["id"]: p for p in places.map_data()["places"]}
+    assert data["ChIJ_dent_new_opened01"]["new"] is True and data["ChIJ_dent_smile_family"]["new"] is False
+    assert data["ChIJ_ortho_rival_00001"]["gone"] == "2026-11-29"
+    c = places.counts()[places.offices()[0]["id"]]
+    assert (c["new"], c["gone"], c["competitor"]) == (1, 1, 0)
+
+
+def test_manual_refresh_soon_after_costs_nothing_extra(env):
+    db, places = env
+    PLACES["ChIJ_ortho_rival_00001"] = P("ChIJ_ortho_rival_00001", "Bright Orthodontics", 41.31, -84.30,
+                                         q=("orthodontist",))
+    LOG.clear()
+    places.refresh(T0 + timedelta(days=29))
+    assert calls("details", places.NEW_FIELDS) == []
+    # only the office and the competitor (its location is from day 0) are renewed; recent ones aren't re-paid
+    assert {pid for *_, pid in calls("details", "location")} == {OFFICE["id"], "ChIJ_ortho_rival_00001"}
+    rival = next(p for p in places.places() if p["place_id"] == "ChIJ_ortho_rival_00001")
+    assert rival["gone_at"] is None                                    # back on Google: no longer "gone"
+
+
+def test_brand_change_relabels(env):
+    db, places = env
+    db.set_setting("map_brand_terms", "Bright Orthodontics, Heights Orthodontics")
+    places.refresh(T0 + timedelta(days=30))
+    rival = next(p for p in places.places() if p["place_id"] == "ChIJ_ortho_rival_00001")
+    assert rival["layer"] == "ours"
+    db.set_setting("map_brand_terms", "Heights Orthodontics")
+    places.refresh(T0 + timedelta(days=30, hours=1))
+
+
+def test_lookup_cap_is_partial_and_marks_nothing_gone(env):
+    db, places = env
+    for i in range(8):
+        pid = f"ChIJ_dent_another_new{i}"
+        PLACES[pid] = P(pid, f"Another Dental {i}", 41.25 + i * 0.005, -84.35)
     db.set_setting("map_max_requests", "10")
-    res = places.refresh()
-    assert res["capped"] and len(places.places()) >= before - 1
+    db.set_setting("map_brand_terms", "Heights Orthodontics, Zed")    # forces relabel: more lookups than the cap
+    del PLACES["ChIJ_dent_smile_family"]
+    res = places.refresh(T0 + timedelta(days=31))
+    assert res["capped"] and res["gone"] == 0
+    assert all(p["gone_at"] is None for p in places.places() if p["place_id"] == "ChIJ_dent_smile_family")
     db.set_setting("map_max_requests", None)
+    db.set_setting("map_brand_terms", "Heights Orthodontics")
+    PLACES["ChIJ_dent_smile_family"] = P("ChIJ_dent_smile_family", "Smile Family Dentistry", 41.30, -84.36)
 
 
 def test_bad_key_reports_error(env):
@@ -155,14 +245,65 @@ def test_bad_key_reports_error(env):
     db.set_setting("maps_server_key", KEY)
 
 
-def test_purge_after_30_days(env):
+def test_purge_after_30_days_keeps_ids(env):
     db, places = env
-    places.refresh()
-    assert places.places()
-    assert places.purge_old(datetime.now() + timedelta(days=31)) > 0
-    assert places.places() == []
+    places.refresh(T0 + timedelta(days=32))
+    n = len(places.places())
+    assert places.purge_old(T0 + timedelta(days=70)) > 0
+    assert len(places.places()) == n                                   # IDs and our labels stay
+    assert all(p["lat"] is None for p in places.places())             # coordinates are gone
+    assert places.map_data()["places"] == []
     assert places.offices()[0]["lat"] is None
-    assert places.due(datetime.now() + timedelta(days=28))
+    assert places.due(T0 + timedelta(days=70))
+
+
+def test_parse_office_files():
+    from app.places import MapError, parse_office_file
+    rows = parse_office_file(b"Practice,Street,City,State,Zip\nHeights Orthodontics,1 Main St,Defiance,OH,43512\n"
+                             b"No Address Here,,,,\n", "offices.csv")
+    assert rows == [{"name": "Heights Orthodontics", "address": "1 Main St, Defiance, OH 43512", "lat": None,
+                     "lng": None, "group": ""}]
+    kml = b"""<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+      <name>MCDP map</name>
+      <Folder><name>Our Locations</name>
+        <Placemark><name>Heights Orthodontics</name><Point><coordinates>-84.3558,41.2845,0</coordinates></Point></Placemark>
+        <Placemark><name>Heights Orthodontics Bryan</name><address>2 Oak St, Bryan, OH</address></Placemark>
+      </Folder>
+      <Folder><name>Competitors</name>
+        <Placemark><name>Bright Orthodontics</name><Point><coordinates>-84.30,41.31,0</coordinates></Point></Placemark>
+      </Folder></Document></kml>"""
+    rows = parse_office_file(kml, "map.kml")
+    assert [(r["name"], r["group"]) for r in rows] == [("Heights Orthodontics", "Our Locations"),
+                                                       ("Heights Orthodontics Bryan", "Our Locations"),
+                                                       ("Bright Orthodontics", "Competitors")]
+    assert rows[0]["lat"] == 41.2845 and rows[1]["address"] == "2 Oak St, Bryan, OH"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("doc.kml", kml)
+    assert len(parse_office_file(buf.getvalue(), "map.kmz")) == 3
+    import openpyxl
+    wb = openpyxl.Workbook()
+    wb.active.append(["Office Name", "Address"])
+    wb.active.append(["Heights Orthodontics", "1 Main St, Defiance, OH"])
+    wb.active["A1"] = "Name"
+    xb = io.BytesIO()
+    wb.save(xb)
+    assert parse_office_file(xb.getvalue(), "offices.xlsx")[0]["address"] == "1 Main St, Defiance, OH"
+    with pytest.raises(MapError, match="No offices found"):
+        parse_office_file(b"foo,bar\n1,2\n", "x.csv")
+
+
+def test_import_matches_and_flags(env):
+    db, places = env
+    rows = [{"name": "Heights Orthodontics Bryan", "address": "2 Oak St, Bryan, OH", "lat": None, "lng": None},
+            {"name": "Heights Orthodontics", "address": "", "lat": 41.40, "lng": -84.36},   # pin ~8 mi off
+            {"name": "Nowhere Dental", "address": "1 Nope Rd", "lat": None, "lng": None}]
+    added, problems = places.import_offices(rows)
+    assert added == 2 and problems == ["Google found no match for Nowhere Dental."]
+    offs = {o["place_id"]: o for o in places.offices()}
+    assert offs[BRYAN["id"]]["address"] == "2 Oak St, Bryan, OH" and offs[BRYAN["id"]]["match_note"] == ""
+    assert "check it" in offs[OFFICE["id"]]["match_note"]
+    assert offs[OFFICE["id"]]["label"] == "Heights Orthodontics"
 
 
 def test_add_office_validation(env):
@@ -173,23 +314,53 @@ def test_add_office_validation(env):
         places.add_office("x", "ChIJ_valid_id_123", "abc", 2)
 
 
-def test_map_page_renders(env):
+def test_map_page_and_import_flow(env):
     db, places = env
     from fastapi.testclient import TestClient
     from app import main
     importlib.reload(main)
     db.set_setting("maps_browser_key", "AIzaBrowser1")
-    places.refresh()
+    places.refresh(T0 + timedelta(days=60))
     with TestClient(main.app) as cl:
         assert cl.get("/map", follow_redirects=False).status_code == 303
         assert cl.get("/map/data.json").status_code == 401
         cl.post("/login", data={"password": "pw"})
         html = cl.get("/map").text
         assert "Market map" in html and "AIzaBrowser1" in html and KEY not in html
-        assert "Heights – Defiance" in html
+        assert "2 Oak St, Bryan, OH" in html and "No longer listed" in html
         data = cl.get("/map/data.json").json()
-        assert data["radius"] == 25 and len(data["places"]) == 4
+        assert data["radius"] == 25 and len(data["offices"]) == 2
+        kml = (b'<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+               b'<Folder><name>Our Locations</name><Placemark><name>Heights Orthodontics Bryan</name>'
+               b'<address>2 Oak St, Bryan, OH</address></Placemark></Folder>'
+               b'<Folder><name>Competitors</name><Placemark><name>Bright Orthodontics</name>'
+               b'<address>9 Elm</address></Placemark></Folder></Document></kml>')
+        r = cl.post("/map/import", files={"file": ("export.kml", kml)}, follow_redirects=False)
+        assert r.status_code == 303
+        html = cl.get("/map").text
+        assert "Which of these are our offices?" in html
+        assert 'name="row" value="0" checked' in html and 'name="row" value="1" >' in html   # only "Our Locations" ticked
+        cl.post("/map/import/confirm", data={"row": ["0"]})
+        assert db.get_setting("map_import_preview") is None
         r = cl.post("/map/setup", data={"radius": "15", "brands": "Heights Orthodontics", "map_id": "abc123",
                                          "max_requests": "1500"}, follow_redirects=False)
         assert r.status_code == 303 and places.radius() == 15 and places.map_id() == "abc123"
         assert places.server_key() == KEY        # blank key field keeps the saved key
+
+
+def test_upgrade_from_first_version(tmp_path, monkeypatch):
+    import sqlite3
+    path = tmp_path / "old.db"
+    c = sqlite3.connect(path)
+    c.executescript("""CREATE TABLE map_places (place_id TEXT PRIMARY KEY, layer TEXT NOT NULL, offers_ortho INTEGER DEFAULT 0,
+        office_id INTEGER, miles REAL, lat REAL NOT NULL, lng REAL NOT NULL, fetched_at TEXT NOT NULL);
+        INSERT INTO map_places VALUES ('ChIJ_x_000000001','referrer',0,1,2.0,41.0,-84.0,'2026-10-20T06:00:00');""")
+    c.commit()
+    c.close()
+    from app import db, places
+    monkeypatch.setattr(db, "DB_PATH", str(path))
+    places.init()
+    p = places.places()[0]
+    assert p["coords_at"] == p["first_seen"] == "2026-10-20T06:00:00"
+    with db.conn() as c2:   # new rows insert fine (no leftover NOT NULL date column)
+        c2.execute("INSERT INTO map_places(place_id, layer) VALUES ('ChIJ_y_000000001', 'skip')")

@@ -17,7 +17,9 @@
 {% elif status and status.ok is false %}
   <p class="flash flash-error" role="status">Last refresh failed: {{ status.error }}</p>
 {% elif status.capped %}
-  <p class="flash flash-error" role="status">The last refresh stopped at the {{ max_requests }}-request limit, so some areas may be missing. Raise the limit in Map setup if your free allowance has room.</p>
+  <p class="flash flash-error" role="status">The last refresh stopped at the {{ max_requests }}-lookup limit, so {{ status.skipped or 'some' }} places are waiting for the next refresh, and nothing was marked “no longer listed”. Raise the limit in Map setup if your free allowance has room.</p>
+{% elif status.ok and status.at == last %}
+  <p class="small muted">Last refresh: {{ status.new }} new, {{ status.gone }} no longer listed. Used {{ status.searches }} free searches, {{ status.pro }} new-place lookups and {{ status.essentials }} location renewals.</p>
 {% endif %}
 
 {% if browser_key and offices %}
@@ -29,6 +31,8 @@
       <label><input type="checkbox" data-layer="referrer" checked><span class="dot dot-referrer"></span> {{ layers.referrer }} <span class="muted" data-count="referrer"></span></label>
       <label class="sub"><input type="checkbox" data-only-ortho><span class="dot dot-referrer dot-ortho"></span> Only those that also come up for “orthodontist” <span class="muted" data-count="ortho"></span></label>
       <label><input type="checkbox" data-layer="competitor" checked><span class="dot dot-competitor"></span> {{ layers.competitor }} <span class="muted" data-count="competitor"></span></label>
+      <label><input type="checkbox" data-gone><span class="dot dot-gone"></span> No longer listed on Google <span class="muted" data-count="gone"></span></label>
+      <label><input type="checkbox" data-only-new><span class="dot dot-new"></span> Only new since the last refresh <span class="muted" data-count="new"></span></label>
       <label><input type="checkbox" data-circles checked> {{ radius|round(0)|int }}-mile rings</label>
     </fieldset>
     <label class="map-office">Around
@@ -49,17 +53,20 @@
   {% if offices %}
   <div class="table-scroll">
   <table class="loc-table">
-    <thead><tr><th>Office</th><th class="num">Dental practices</th><th class="num">…also “orthodontist”</th><th class="num">Competitors</th><th></th></tr></thead>
+    <thead><tr><th>Office</th><th class="num">Dental practices</th><th class="num">…also “orthodontist”</th><th class="num">Competitors</th>{% if prev %}<th class="num">New</th><th class="num">No longer listed</th>{% endif %}<th></th></tr></thead>
     <tbody>
     {% for o in offices %}{% set c = counts.get(o.id, {}) %}
       <tr>
         <td><form method="post" action="/map/offices/{{ o.id }}/rename" class="rename-form">
           <input name="label" value="{{ o.label }}" aria-label="Office name" maxlength="120">
           <button class="btn btn-small btn-quiet" type="submit">Rename</button></form>
+          {% if o.address %}<span class="small muted">{{ o.address }}</span>{% endif %}
+          {% if o.match_note %}<span class="small danger">{{ o.match_note }} Rename it to clear this note.</span>{% endif %}
           {% if o.lat is none %}<span class="small danger">Location expired; refresh the map.</span>{% endif %}</td>
         <td class="num">{{ c.referrer or 0 }}</td>
         <td class="num">{{ c.offers_ortho or 0 }}</td>
         <td class="num">{{ c.competitor or 0 }}</td>
+        {% if prev %}<td class="num">{{ c.new or 0 }}</td><td class="num">{{ c.gone or 0 }}</td>{% endif %}
         <td><form method="post" action="/map/offices/{{ o.id }}/delete" data-confirm="Remove {{ o.label }} from the map?">
           <button class="linklike danger" type="submit">Remove</button></form></td>
       </tr>
@@ -67,14 +74,52 @@
     </tbody>
   </table>
   </div>
-  <p class="small muted">Each practice is counted once, under its nearest office.</p>
+  <p class="small muted">Each practice is counted once, under its nearest office.{% if prev %} “New” means it showed up at the last refresh ({{ last[:10] }}) and wasn't there at the one before ({{ prev[:10] }}).{% endif %}</p>
   {% else %}
   <p class="empty">No offices yet. Add each of our locations below; the map searches around them.</p>
   {% endif %}
 
+  {% if preview %}
+  <form method="post" action="/map/import/confirm" class="import-preview" id="import" data-busy="Finding them on Google…">
+    <h3>Which of these are our offices?</h3>
+    <p class="small muted">{% if preview.groups|length > 1 %}Your file has {{ preview.groups|length }} layers; layers that look like ours are ticked.{% endif %} Each ticked office is looked up on Google so the map can find what's around it.</p>
+    {% for g in preview.groups %}
+    <fieldset class="pick-list">
+      {% if g %}<legend><label class="check"><input type="checkbox" data-all="{{ loop.index }}"> <strong>{{ g }}</strong></label></legend>{% endif %}
+      {% for r in preview.rows if (r.group or '') == g %}
+      <label class="check"><input type="checkbox" name="row" value="{{ r.idx }}" {% if r.checked %}checked{% endif %}>
+        {{ r.name }} <span class="muted small">{{ r.address or ('%.4f, %.4f'|format(r.lat, r.lng)) }}</span></label>
+      {% endfor %}
+    </fieldset>
+    {% endfor %}
+    <div class="conn-actions">
+      <button class="btn" type="submit">Add ticked offices</button>
+    </div>
+  </form>
+  <script>
+    document.querySelectorAll("#import fieldset").forEach(fs => {
+      const all = fs.querySelector("[data-all]"), boxes = [...fs.querySelectorAll("input[name=row]")];
+      if (!all) return;
+      const sync = () => { all.checked = boxes.every(b => b.checked); };
+      all.addEventListener("change", () => boxes.forEach(b => { b.checked = all.checked; }));
+      boxes.forEach(b => b.addEventListener("change", sync)); sync();
+    });
+  </script>
+  <form method="post" action="/map/import/cancel"><button class="linklike" type="submit">Cancel import</button></form>
+  {% endif %}
+
+  {% if browser_key or server_key_set %}
+  <form method="post" action="/map/import" enctype="multipart/form-data" class="stack add-office" data-busy="Reading…">
+    <h3>Upload our office list</h3>
+    <p class="small muted">A spreadsheet (CSV or Excel) with a name and address per office, or the KML/KMZ export of your Google My Maps map (⋮ next to the map title → Export to KML/KMZ). You'll tick which ones to add.</p>
+    <input type="file" name="file" accept=".csv,.xlsx,.kml,.kmz,text/csv" required aria-label="Office list file">
+    <button class="btn btn-quiet" type="submit">Read file</button>
+  </form>
+  {% endif %}
+
   {% if browser_key %}
   <form method="post" action="/map/offices" class="stack add-office" id="add-office">
-    <h3>Add an office</h3>
+    <h3>Or add one office</h3>
     <div><span class="field-label">Find it on Google <span class="muted small">(start typing the practice name or address)</span></span>
       <div id="office-search" class="office-search"></div>
     </div>
@@ -110,7 +155,7 @@
     <label>Our brand names <span class="muted small">(comma-separated; any orthodontist whose name contains one is treated as ours, not a competitor)</span>
       <textarea name="brands" rows="2" placeholder="e.g. Heights Orthodontics, Havens Orthodontics">{{ brands }}</textarea>
     </label>
-    <label>Request limit per refresh <span class="muted small">(Google allows 5,000 free searches a month)</span>
+    <label>Lookup limit per refresh <span class="muted small">(searching is free; looking up new places and renewing locations uses Google's monthly free allowance of 5,000 and 10,000)</span>
       <input name="max_requests" type="number" min="10" step="10" value="{{ max_requests }}">
     </label>
     <button class="btn btn-quiet" type="submit">Save setup</button>
@@ -198,8 +243,8 @@
       .catch(() => wrap.replaceChildren(el("p", "small danger", "Google couldn't load this place right now.")));
   }
 
-  function dot(layer, ortho) {
-    const d = el("div", `pin pin-${layer}` + (ortho ? " pin-ortho" : ""));
+  function dot(layer, ortho, isNew, gone) {
+    const d = el("div", `pin pin-${layer}` + (ortho ? " pin-ortho" : "") + (isNew ? " pin-new" : "") + (gone ? " pin-gone" : ""));
     d.setAttribute("aria-hidden", "true");
     return d;
   }
@@ -211,12 +256,13 @@
     markers.push({ m, layer: "ours", office: o.id, ortho: false });
   }
   for (const p of data.places) {
-    const m = new AdvancedMarkerElement({ position: { lat: p.lat, lng: p.lng }, content: dot(p.layer, p.ortho),
+    const m = new AdvancedMarkerElement({ position: { lat: p.lat, lng: p.lng }, content: dot(p.layer, p.ortho, p.new, p.gone),
                                           zIndex: p.layer === "competitor" ? 500 : (p.layer === "ours" ? 900 : 100) });
     const extra = p.layer === "ours" ? null : `${p.mi} mi from ${offName[p.office] || "our nearest office"}` +
-                  (p.ortho ? " · also comes up when people search “orthodontist”" : "");
+                  (p.ortho ? " · also comes up when people search “orthodontist”" : "") +
+                  (p.gone ? ` · no longer listed on Google since ${p.gone}` : p.new ? " · new since the last refresh" : ` · on the map since ${p.since}`);
     m.addListener("gmp-click", () => { details(p.id, p.layer, extra); info.open({ map, anchor: m }); });
-    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho });
+    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, isNew: p.new, gone: !!p.gone });
   }
   const circles = data.offices.map(o => new Circle({ center: o, radius: data.radius * 1609.34, strokeColor: "#0F7471",
     strokeOpacity: 0.5, strokeWeight: 1, fillOpacity: 0.03, fillColor: "#0F7471", clickable: false, map, _office: o.id }));
@@ -224,19 +270,26 @@
   const ui = {
     layers: [...document.querySelectorAll("[data-layer]")],
     onlyOrtho: document.querySelector("[data-only-ortho]"),
+    onlyNew: document.querySelector("[data-only-new]"),
+    gone: document.querySelector("[data-gone]"),
     circles: document.querySelector("[data-circles]"),
     office: document.querySelector("[data-office]"),
   };
   function apply(fit) {
     const on = new Set(ui.layers.filter(i => i.checked).map(i => i.dataset.layer));
     const off = ui.office.value ? Number(ui.office.value) : null;
-    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0 };
+    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, new: 0, gone: 0 };
     const bounds = new google.maps.LatLngBounds();
     for (const x of markers) {
       const inOffice = off === null || x.office === off;
-      const show = inOffice && on.has(x.layer) && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho);
+      const show = inOffice && (x.gone ? ui.gone.checked : on.has(x.layer))
+        && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho)
+        && !(ui.onlyNew.checked && !x.isNew && x.layer !== "ours" || ui.onlyNew.checked && x.gone);
       x.m.map = show ? map : null;
-      if (inOffice) { counts[x.layer]++; if (x.ortho) counts.ortho++; }
+      if (inOffice) {
+        if (x.gone) counts.gone++;
+        else { counts[x.layer]++; if (x.ortho) counts.ortho++; if (x.isNew) counts.new++; }
+      }
       if (show) bounds.extend(x.m.position);
     }
     circles.forEach((c, i) => c.setMap(ui.circles.checked && (off === null || data.offices[i].id === off) ? map : null));
@@ -246,6 +299,8 @@
   ui.layers.forEach(i => i.addEventListener("change", () => apply(false)));
   ui.onlyOrtho.addEventListener("change", () => { if (ui.onlyOrtho.checked) ui.layers.find(i => i.dataset.layer === "referrer").checked = true; apply(false); });
   ui.circles.addEventListener("change", () => apply(false));
+  ui.onlyNew.addEventListener("change", () => apply(false));
+  ui.gone.addEventListener("change", () => apply(false));
   ui.office.addEventListener("change", () => apply(true));
   apply(true);
 })().catch(e => {

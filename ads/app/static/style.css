@@ -393,3 +393,12 @@ tr.muted td { color: var(--ink-soft); }
 .loc-table td:first-child { min-width: 22rem; }
 .rename-form input { flex: 1; min-width: 14rem; }
 .map-canvas > .empty { margin: 1rem; }
+.dot-gone, .pin-gone { background: #9AA7AC; opacity: 0.85; }
+.dot-new { background: #fff; box-shadow: 0 0 0 2px var(--green); }
+.pin-new { box-shadow: 0 0 0 3px var(--green); }
+.pin-new.pin-ortho { box-shadow: 0 0 0 2px var(--amber), 0 0 0 5px var(--green); }
+.loc-table td .small { display: block; }
+.import-preview { margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--enamel); }
+.import-preview fieldset { border: 0; padding: 0; margin: 0 0 0.75rem; display: grid; gap: 0.25rem; }
+.import-preview legend { margin-bottom: 0.3rem; }
+.import-preview input[type=checkbox] { width: 1rem; height: 1rem; min-height: 0; padding: 0; margin: 0 0.4rem 0 0; vertical-align: -2px; accent-color: var(--teal); }
