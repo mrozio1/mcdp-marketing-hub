@@ -292,25 +292,51 @@ def remove_office(oid):
 # ------------------------------------------------------------------ office import (our own list)
 NAME_COLS = ("name", "office", "practice", "location", "title", "clinic")
 ADDR_COLS = ("address", "full address", "street address", "street", "address 1", "address1")
-CITY_COLS, STATE_COLS, ZIP_COLS = ("city", "town"), ("state", "st", "province"), ("zip", "zip code", "postal code", "zipcode")
+CITY_COLS, STATE_COLS, ZIP_COLS = ("city", "town"), ("state", "st", "province"), ("zip", "zip code", "postal code", "zipcode", "postcode")
 LAT_COLS, LNG_COLS = ("lat", "latitude"), ("lng", "lon", "long", "longitude")
 MAX_IMPORT = 300
 
 
-def _pick(row, names):
+def _norm(h):
+    return " ".join(re.findall(r"[a-z0-9]+", str(h or "").lower()))
+
+
+NOT_NAME = re.compile(r"\b(dr|doctor|doctors|orthodontist|orthodontists|dentist|contact|owner|file|user|domain)\b")
+NOT_ADDR = re.compile(r"\b(email|e mail|web|ip)\b")
+
+
+def _pick(row, names, loose=None, avoid=None):
+    """A column's value by exact header name, else (if `loose`) by a header containing that word,
+    e.g. "Location Name" or "Practice name" for the name, "Street Address" for the address."""
+    cells = [(_norm(k), str(v or "").strip()) for k, v in row.items() if k is not None]
     for n in names:
-        for k, v in row.items():
-            if k and k.strip().lower() == n and str(v or "").strip():
-                return str(v).strip()
+        for k, v in cells:
+            if k == n and v:
+                return v
+    if loose:
+        for k, v in cells:
+            if v and loose in k.split() and not (avoid and avoid.search(k)):
+                return v
     return ""
+
+
+def _tidy(text):
+    """BANDEEN ORTHODONTICS -> Bandeen Orthodontics; single all-caps words (acronyms) are left alone."""
+    text = " ".join(text.split())
+    if text.isupper() and " " in text:
+        text = " ".join(w if len(w) <= 3 and w.isalpha() and w in ("DDS", "DMD", "MS", "PC", "LLC", "OMS")
+                        else w.capitalize() for w in text.split())
+    return text
 
 
 def _rows_to_offices(rows, group=""):
     out = []
     for r in rows:
-        name = _pick(r, NAME_COLS)
-        addr = _pick(r, ADDR_COLS)
-        tail = ", ".join(x for x in (_pick(r, CITY_COLS), " ".join(
+        name = _tidy(_pick(r, NAME_COLS, "name", NOT_NAME))
+        addr = _pick(r, ADDR_COLS, "address", NOT_ADDR)
+        city = _pick(r, CITY_COLS)
+        city = city.title() if city.isupper() else city
+        tail = ", ".join(x for x in (city, " ".join(
             x for x in (_pick(r, STATE_COLS), _pick(r, ZIP_COLS)) if x)) if x)
         if tail and tail.lower() not in addr.lower():
             addr = f"{addr}, {tail}" if addr else tail
@@ -319,7 +345,41 @@ def _rows_to_offices(rows, group=""):
         except ValueError:
             lat = lng = None
         if name and (addr or lat is not None):
-            out.append({"name": name[:120], "address": addr[:300], "lat": lat, "lng": lng, "group": group})
+            label = f"{name} – {city}" if city and city.lower() not in name.lower() else name
+            out.append({"name": label[:120], "address": addr[:300], "lat": lat, "lng": lng, "group": group})
+    return out
+
+
+def _csv_dicts(text, dialect):
+    """Rows as dicts. A row with more cells than headers usually has an unquoted comma inside one
+    cell (e.g. two doctors' names); join two neighbouring cells so the address and zip line up."""
+    rows = list(csv.reader(io.StringIO(text), dialect=dialect))
+    if not rows:
+        return []
+    head = rows[0]
+    keys = [_norm(h) for h in head]
+    addr_i = next((i for i, k in enumerate(keys) if k in ADDR_COLS or "address" in k.split()), None)
+    zip_i = next((i for i, k in enumerate(keys) if k in ZIP_COLS), None)
+
+    def lines_up(cells):
+        ok_addr = addr_i is None or bool(re.search(r"\d", cells[addr_i]))
+        ok_zip = zip_i is None or bool(re.fullmatch(r"\s*\d{5}(-\d{4})?\s*", cells[zip_i]))
+        return ok_addr and ok_zip
+
+    out = []
+    for cells in rows[1:]:
+        while len(cells) > len(head) and cells[-1].strip() == "":
+            cells = cells[:-1]
+        cells = cells + [""] * (len(head) - len(cells))
+        if not lines_up(cells):
+            for extra in (1, 2):
+                fixed = next((t for i in range(1, len(head))
+                              for t in [cells[:i] + [",".join(cells[i:i + extra + 1])] + cells[i + extra + 1:]]
+                              if len(t) >= max(addr_i or 0, zip_i or 0) + 1 and lines_up(t)), None)
+                if fixed:
+                    cells = fixed + [""] * (len(head) - len(fixed))
+                    break
+        out.append(dict(zip(head, cells)))
     return out
 
 
@@ -388,12 +448,15 @@ def parse_office_file(data, filename):
             keys = [str(h or "").strip() for h in head]
             rows += _rows_to_offices([dict(zip(keys, r)) for r in it], ws.title if len(wb.worksheets) > 1 else "")
     else:
-        text = data.decode("utf-8-sig", errors="replace")
+        try:
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:   # Excel's "CSV" on Windows saves in Windows-1252
+            text = data.decode("cp1252", errors="replace")
         try:
             dialect = csv.Sniffer().sniff(text[:2000], delimiters=",;\t")
         except csv.Error:
             dialect = csv.excel
-        rows = _rows_to_offices(list(csv.DictReader(io.StringIO(text), dialect=dialect)))
+        rows = _rows_to_offices(_csv_dicts(text, dialect))
     if not rows:
         raise MapError("No offices found. The file needs a name column plus an address (or latitude/longitude) "
                        "for each office; a My Maps export (KML/KMZ) works as-is.")

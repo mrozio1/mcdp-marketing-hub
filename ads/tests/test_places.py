@@ -261,8 +261,19 @@ def test_parse_office_files():
     from app.places import MapError, parse_office_file
     rows = parse_office_file(b"Practice,Street,City,State,Zip\nHeights Orthodontics,1 Main St,Defiance,OH,43512\n"
                              b"No Address Here,,,,\n", "offices.csv")
-    assert rows == [{"name": "Heights Orthodontics", "address": "1 Main St, Defiance, OH 43512", "lat": None,
-                     "lng": None, "group": ""}]
+    assert rows == [{"name": "Heights Orthodontics – Defiance", "address": "1 Main St, Defiance, OH 43512",
+                     "lat": None, "lng": None, "group": ""}]
+    # A real-world export: "Location Name" header, a doctors column, Windows-1252 bytes, all caps, and a row
+    # whose unquoted comma (two doctors) shifts the columns while its last empty cell is missing.
+    messy = ("Location Name,Orthodontists,Address,City,State,Zip,Phone#,Website,Booking Link\r\n"
+             "SAMPLE ORTHODONTICS,Dr\u2019s A & B Sample,214 WINSTON DR,MARSHALL,MI,49068,555-0100,example.com,\r\n"
+             "Lake Sample Ortho,Dr. One, Dr. Two,22006 Greater Mack Ave,St Clair Shores,MI,48080,,example.org\r\n"
+             "OSSX,Dr\u00a0Sample,841 S. Union St,Warsaw,IN,46580,555-0101,https://example.net/,\r\n").encode("cp1252")
+    rows = parse_office_file(messy, "Practice Map.csv")
+    assert [(r["name"], r["address"]) for r in rows] == [
+        ("Sample Orthodontics – Marshall", "214 WINSTON DR, Marshall, MI 49068"),
+        ("Lake Sample Ortho – St Clair Shores", "22006 Greater Mack Ave, St Clair Shores, MI 48080"),
+        ("OSSX – Warsaw", "841 S. Union St, Warsaw, IN 46580")]
     kml = b"""<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>
       <name>MCDP map</name>
       <Folder><name>Our Locations</name>
