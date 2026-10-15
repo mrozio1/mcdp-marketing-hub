@@ -6,16 +6,59 @@ from . import db
 NETWORKS = (("facebook", "Facebook"), ("instagram", "Instagram"))
 
 
+def own_accounts(practice):
+    return db.social_ids(practice, "fb") + db.social_ids(practice, "ig")
+
+
 def accounts_for(practice, practices, master):
-    """Page / Instagram ids whose posts belong on this practice's page. The master record
-    shows every account linked to any practice (unless it has its own links)."""
-    own = [practice.get("fb_page_id"), practice.get("ig_account_id")]
-    if any(own) or not master:
-        return [a for a in own if a]
-    ids = []
-    for q in practices:
-        ids += [q.get("fb_page_id"), q.get("ig_account_id")]
-    return sorted({a for a in ids if a})
+    """Page / Instagram ids whose posts belong on this practice's page (all of its locations).
+    The master record shows every account linked to any practice (unless it has its own links)."""
+    own = own_accounts(practice)
+    if own or not master:
+        return own
+    return sorted({a for q in practices for a in own_accounts(q)})
+
+
+def account_names():
+    """{account id: display name} from the cached Page / Instagram lists."""
+    import json
+    names = {}
+    for key in ("fb_pages", "ig_accounts"):
+        try:
+            for it in json.loads(db.get_setting(key) or "[]"):
+                names[it["id"]] = it.get("name") or it["id"]
+        except (ValueError, KeyError, TypeError):
+            continue
+    return names
+
+
+def label_posts(posts, practices=None, master=False):
+    """Attach the location (account name) to each post, plus the practice for the master record."""
+    names = account_names()
+    owner = {}
+    if master and practices:
+        for q in practices:
+            for a in own_accounts(q):
+                owner.setdefault(a, q["name"])
+    for p in posts:
+        p["account_name"] = names.get(p["account_id"], p["account_id"])
+        p["practice_name"] = owner.get(p["account_id"], "")
+    return posts
+
+
+def by_location(posts):
+    """One row per linked account: how each location's posts did."""
+    groups = {}
+    for p in posts:
+        groups.setdefault((p["network"], p["account_id"]), []).append(p)
+    rows = []
+    for (net, acct), items in groups.items():
+        eng = sum(engagement(x) for x in items)
+        views = _sum(items, "views")
+        rows.append({"network": net, "account_id": acct, "account_name": items[0].get("account_name", acct),
+                     "practice_name": items[0].get("practice_name", ""), "count": len(items), "views": views,
+                     "engagement": eng, "per_post": eng / len(items), "rate": (eng / views) if views else None})
+    return sorted(rows, key=lambda r: -r["engagement"])
 
 
 def _sum(posts, key):
@@ -33,16 +76,19 @@ def summarize(posts):
 
 def organic_view(practice, practices, master, since, until):
     ids = accounts_for(practice, practices, master)
-    view = {"linked": bool(ids), "since": since, "until": until, "networks": [], "top": [], "totals": None}
+    view = {"linked": bool(ids), "since": since, "until": until, "networks": [], "top": [], "totals": None,
+            "locations": [], "multi": False}
     if not ids:
         return view
-    posts = db.posts_for(ids, since, until)
+    posts = label_posts(db.posts_for(ids, since, until), practices, master and not own_accounts(practice))
     for key, label in NETWORKS:
         mine = [p for p in posts if p["network"] == key]
-        linked_here = practice.get("fb_page_id") if key == "facebook" else practice.get("ig_account_id")
+        linked_here = db.social_ids(practice, "fb" if key == "facebook" else "ig")
         if mine or linked_here:
             view["networks"].append({"key": key, "label": label, **summarize(mine)})
     view["totals"] = summarize(posts)
+    view["locations"] = by_location(posts)
+    view["multi"] = len({p["account_id"] for p in posts}) > 1 or len(ids) > 1
     view["top"] = sorted(posts, key=lambda p: (p["views"] if p["views"] is not None else -1, p["interactions"] or 0),
                          reverse=True)[:10]
     return view
@@ -136,11 +182,21 @@ def ranked(posts, sort="engagement"):
     return rows
 
 
-def takeaways(rows):
+def takeaways(rows, locations=None):
     """A few plain-language observations for leadership, computed (never guessed)."""
     out = []
     if not rows:
         return out
+    locs = [l for l in (locations or []) if l["count"] >= 2]
+    loc_line_networks = set()
+    if len(locs) >= 2:
+        best_l = max(locs, key=lambda l: l["per_post"])
+        worst_l = min(locs, key=lambda l: l["per_post"])
+        if worst_l["per_post"] and best_l["per_post"] / worst_l["per_post"] >= 1.3:
+            loc_line_networks = {best_l["network"], worst_l["network"]}
+            out.append(f"{best_l['account_name']} ({best_l['network'].title()}) averaged {best_l['per_post']:,.0f} "
+                       f"engagements per post, {best_l['per_post'] / worst_l['per_post']:.1f}× "
+                       f"{worst_l['account_name']} ({worst_l['network'].title()}, {worst_l['per_post']:,.0f}).")
     best = max(rows, key=lambda r: (r["engagement"], r["views"] or 0))
     avg = sum(r["engagement"] for r in rows) / len(rows)
     if avg and len(rows) > 1:
@@ -152,7 +208,7 @@ def takeaways(rows):
     if len(by_net) == 2:
         (n1, v1), (n2, v2) = sorted(by_net.items(), key=lambda kv: -sum(kv[1]) / len(kv[1]))
         a1, a2 = sum(v1) / len(v1), sum(v2) / len(v2)
-        if a2 and a1 / a2 >= 1.2:
+        if a2 and a1 / a2 >= 1.2 and len(loc_line_networks) < 2:   # skip if the location line already says it
             out.append(f"{n1.title()} posts averaged {a1:,.0f} engagements each, {a1 / a2:.1f}× {n2.title()} ({a2:,.0f}).")
     kinds = {}
     for r in rows:
@@ -174,17 +230,15 @@ def takeaways(rows):
 def report(practice, practices, master, period_key, sort):
     since, until = period_range(period_key)
     ids = accounts_for(practice, practices, master)
-    posts = db.posts_for(ids, since, until) if ids else []
+    whole_group = master and not own_accounts(practice)
+    posts = label_posts(db.posts_for(ids, since, until), practices, whole_group) if ids else []
     rows = ranked(posts, sort)
     tot = summarize(posts)
     tot["engagement"] = sum(r["engagement"] for r in rows)
     tot["rate"] = (tot["engagement"] / tot["views"]) if tot.get("views") else None
     tot["avg_engagement"] = (tot["engagement"] / len(rows)) if rows else None
-    names = {}
-    if master and not (practice.get("fb_page_id") or practice.get("ig_account_id")):
-        for q in practices:
-            for a in (q.get("fb_page_id"), q.get("ig_account_id")):
-                if a:
-                    names.setdefault(a, q["name"])
+    names = {p["account_id"]: p["practice_name"] for p in posts if p.get("practice_name")} if whole_group else {}
+    locations = by_location(posts)
     return {"linked": bool(ids), "since": since, "until": until, "period": period_key, "sort": sort,
-            "rows": rows, "totals": tot, "takeaways": takeaways(rows), "practice_of": names}
+            "rows": rows, "totals": tot, "takeaways": takeaways(rows, locations), "practice_of": names,
+            "locations": locations, "multi": len(locations) > 1 or len(ids) > 1}

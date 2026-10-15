@@ -138,7 +138,7 @@
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
     <tr><td style="{{ th }}">Post</td><td align="right" style="{{ th }}text-align:right;">Views</td><td align="right" style="{{ th }}text-align:right;">Interactions</td></tr>
     {% for post in org.top[:5] %}
-    <tr><td style="{{ td }}"><span style="color:{{ em.SOFT }};font-size:12px;">{{ post.created[:10] }} · {{ 'Facebook' if post.network == 'facebook' else 'Instagram' }}</span><br>{% if post.permalink %}<a href="{{ post.permalink }}" style="color:{{ em.TEAL }};">{{ (post.text or '(no text)')|truncate(80) }}</a>{% else %}{{ (post.text or '(no text)')|truncate(80) }}{% endif %}</td>
+    <tr><td style="{{ td }}"><span style="color:{{ em.SOFT }};font-size:12px;">{{ post.created[:10] }} · {{ 'Facebook' if post.network == 'facebook' else 'Instagram' }} · {{ post.account_name }}</span><br>{% if post.permalink %}<a href="{{ post.permalink }}" style="color:{{ em.TEAL }};">{{ (post.text or '(no text)')|truncate(80) }}</a>{% else %}{{ (post.text or '(no text)')|truncate(80) }}{% endif %}</td>
         <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(post.views) if post.views is not none else '—' }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(post.interactions or 0) }}</td></tr>
     {% endfor %}
   </table>
@@ -165,12 +165,21 @@
     {% for line in rep.takeaways %}<li style="font-family:{{ F }};font-size:14px;line-height:1.5;color:{{ em.INK }};margin:0 0 4px;">{{ line }}</li>{% endfor %}
   </ul>
   {% endif %}
+  {% if rep.multi and rep.locations %}
+  <p style="{{ h3 }}">By location</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin-bottom:12px;">
+    <tr><td style="{{ th }}">Location</td><td align="right" style="{{ th }}text-align:right;">Posts</td><td align="right" style="{{ th }}text-align:right;">Views</td><td align="right" style="{{ th }}text-align:right;">Engagement</td><td align="right" style="{{ th }}text-align:right;">Per post</td></tr>
+    {% for l in rep.locations %}
+    <tr><td style="{{ td }}">{{ l.account_name }} <span style="color:{{ em.SOFT }};font-size:11px;">{{ l.network|title }}{% if l.practice_name %} · {{ l.practice_name }}{% endif %}</span></td><td align="right" style="{{ td }}text-align:right;">{{ l.count }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(l.views) if l.views is not none else '—' }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(l.engagement) }}</td><td align="right" style="{{ td }}text-align:right;">{{ '{:,.0f}'.format(l.per_post) }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
     <tr><td style="{{ th }}">#</td><td style="{{ th }}">Post</td><td align="right" style="{{ th }}text-align:right;">Views</td><td align="right" style="{{ th }}text-align:right;">Likes</td><td align="right" style="{{ th }}text-align:right;">Comm.</td><td align="right" style="{{ th }}text-align:right;">Shares</td><td align="right" style="{{ th }}text-align:right;">Eng.</td><td align="right" style="{{ th }}text-align:right;">vs avg</td></tr>
     {% for r in rep.rows[:15] %}
     <tr>
       <td style="{{ td }}font-weight:700;color:{{ em.TEAL if r.tier == 'top' else em.SOFT }};">{{ r.rank }}</td>
-      <td style="{{ td }}">{% if r.permalink %}<a href="{{ r.permalink }}" style="color:{{ em.TEAL }};font-weight:600;">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}<br><span style="font-size:11px;color:{{ em.SOFT }};">{{ 'Facebook' if r.network == 'facebook' else 'Instagram' }} · {{ r.created[:10] }}{% if rep.practice_of %} · {{ rep.practice_of.get(r.account_id, '') }}{% endif %}</span></td>
+      <td style="{{ td }}">{% if r.permalink %}<a href="{{ r.permalink }}" style="color:{{ em.TEAL }};font-weight:600;">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}<br><span style="font-size:11px;color:{{ em.SOFT }};">{{ 'Facebook' if r.network == 'facebook' else 'Instagram' }} · {{ r.account_name }} · {{ r.created[:10] }}{% if rep.practice_of %} · {{ rep.practice_of.get(r.account_id, '') }}{% endif %}</span></td>
       <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.views) if r.views is not none else '—' }}</td>
       <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.likes or 0) }}</td>
       <td align="right" style="{{ td }}text-align:right;">{{ '{:,}'.format(r.comments or 0) }}</td>

@@ -366,10 +366,28 @@ POST_COLS = ("post_id", "network", "account_id", "created", "text", "permalink",
              "views", "reach", "likes", "comments", "shares", "saves", "clicks", "interactions")
 
 
-def set_practice_social(pid, fb_page_id, ig_account_id):
+def social_ids(practice, kind):
+    """A practice's linked Facebook Pages (kind='fb') or Instagram accounts (kind='ig').
+    Stored comma-separated, so one practice can have several locations."""
+    raw = (practice or {}).get("fb_page_id" if kind == "fb" else "ig_account_id") or ""
+    return [x for x in (i.strip() for i in raw.split(",")) if x]
+
+
+def _join_ids(v):
+    items = v if isinstance(v, (list, tuple)) else str(v or "").split(",")
+    out = []
+    for i in items:
+        i = str(i).strip()
+        if i and i not in out:
+            out.append(i)
+    return ",".join(out)
+
+
+def set_practice_social(pid, fb_page_ids, ig_account_ids):
+    """Accepts a single id, a comma-separated string or a list for each."""
     with conn() as c:
         c.execute("UPDATE practices SET fb_page_id=?, ig_account_id=? WHERE id=?",
-                  (fb_page_id or "", ig_account_id or "", pid))
+                  (_join_ids(fb_page_ids), _join_ids(ig_account_ids), pid))
 
 
 def upsert_posts(posts):

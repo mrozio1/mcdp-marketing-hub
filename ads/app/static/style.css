@@ -353,3 +353,13 @@ tr.muted td { color: var(--ink-soft); }
 .section-head h2 { margin: 0; }
 .report.posts-report { max-width: 1120px; }
 .sync-line { margin: 0.15rem 0; }
+
+/* ---- several locations per practice ---- */
+.social-pick { border: 1px solid var(--line); border-radius: var(--radius-m); padding: 0.5rem 0.75rem 0.6rem; margin: 0; min-width: 0; }
+.social-pick legend { font-weight: 500; font-size: 0.92rem; padding: 0 0.3rem; }
+.pick-filter { width: 100%; margin: 0.2rem 0 0.4rem; }
+.pick-list { display: grid; gap: 0.3rem; max-height: 14rem; overflow-y: auto; }
+.pick-list label.check { display: flex; flex-direction: row; gap: 0.5rem; align-items: flex-start; font-weight: 400; overflow-wrap: anywhere; }
+.pick-list input { margin-top: 0.25rem; flex: none; width: 1rem; height: 1rem; accent-color: var(--teal); }
+.loc { font-weight: 600; color: var(--ink); }
+.loc-table { margin-bottom: 1.8rem; }

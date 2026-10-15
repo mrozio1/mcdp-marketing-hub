@@ -144,13 +144,9 @@ def organic_for(p, views, allp):
 
 
 def suggest_social(p, items):
-    """Pre-pick the Page / Instagram account whose name looks like the practice (only when unlinked)."""
+    """Pre-tick the Pages / Instagram accounts whose names look like the practice (only when none are linked)."""
     words = [w for w in re.findall(r"[a-z0-9]+", (p.get("campaign_filter") or p["name"]).lower()) if len(w) > 2]
-    for it in items:
-        name = it["name"].lower()
-        if words and words[0] in name:
-            return it["id"]
-    return ""
+    return [it["id"] for it in items if words and words[0] in it["name"].lower()]
 
 
 def is_master(p, practices):
@@ -246,8 +242,9 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 show=show, org=org, combo=organic.combined(views, org),
                 social_status=sync.cached_list("social_status") or {},
                 fb_pages=fb_pages, ig_accounts=ig_accounts,
-                fb_suggest="" if p.get("fb_page_id") else suggest_social(p, fb_pages),
-                ig_suggest="" if p.get("ig_account_id") else suggest_social(p, ig_accounts),
+                fb_linked=db.social_ids(p, "fb"), ig_linked=db.social_ids(p, "ig"),
+                fb_suggest=[] if db.social_ids(p, "fb") else suggest_social(p, fb_pages),
+                ig_suggest=[] if db.social_ids(p, "ig") else suggest_social(p, ig_accounts),
                 ai_out={k: db.latest_ai(pid, k) for k in ai.TASKS},
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 meta_on=cx.meta_configured(), google_on=google_ready(),
@@ -539,11 +536,11 @@ def post_report_csv(request: Request, pid: int, period: str = "", sort: str = "e
     rep = _post_report(p, period, sort)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Rank", "Practice", "Date", "Network", "Post", "Link", "Views", "Reach", "Likes", "Comments",
-                "Shares", "Saves", "Engagement", "Engagement rate", "Vs. average post"])
+    w.writerow(["Rank", "Practice", "Location (account)", "Date", "Network", "Post", "Link", "Views", "Reach",
+                "Likes", "Comments", "Shares", "Saves", "Engagement", "Engagement rate", "Vs. average post"])
     for row in rep["rows"]:
-        w.writerow([row["rank"], rep["practice_of"].get(row["account_id"], p["name"]), row["created"][:10],
-                    row["network"].title(), row["title"], row["permalink"],
+        w.writerow([row["rank"], rep["practice_of"].get(row["account_id"], p["name"]), row.get("account_name", ""),
+                    row["created"][:10], row["network"].title(), row["title"], row["permalink"],
                     "" if row["views"] is None else row["views"], "" if row["reach"] is None else row["reach"],
                     row["likes"], row["comments"], row["shares"], "" if row["saves"] is None else row["saves"],
                     row["engagement"], "" if row["rate"] is None else f"{row['rate'] * 100:.1f}%",
@@ -749,16 +746,16 @@ def google_disconnect(request: Request):
 
 
 @app.post("/p/{pid}/accounts")
-def practice_accounts(request: Request, pid: int, meta_account_id: str = Form(""),
-                      google_customer_id: str = Form(""), fb_page_id: str | None = Form(None),
-                      ig_account_id: str | None = Form(None)):
+async def practice_accounts(request: Request, pid: int):
     if (r := guard(request)):
         return r
-    db.set_practice_accounts(pid, meta_account_id.strip(), google_customer_id.strip())
-    if fb_page_id is not None or ig_account_id is not None:
-        cur = db.practice(pid) or {}
-        db.set_practice_social(pid, (fb_page_id if fb_page_id is not None else cur.get("fb_page_id", "")).strip(),
-                               (ig_account_id if ig_account_id is not None else cur.get("ig_account_id", "")).strip())
+    form = await request.form()
+    db.set_practice_accounts(pid, str(form.get("meta_account_id", "")).strip(),
+                             str(form.get("google_customer_id", "")).strip())
+    # Several Pages / Instagram accounts (locations) per practice; "social" marks that the lists were on the form.
+    if form.get("social") == "1" or "fb_page_id" in form or "ig_account_id" in form:
+        db.set_practice_social(pid, [v for v in form.getlist("fb_page_id") if v],
+                               [v for v in form.getlist("ig_account_id") if v])
     flash(request, "Linked accounts saved. Use “Sync now” to pull their numbers.")
     return RedirectResponse(f"/p/{pid}", status_code=303)
 

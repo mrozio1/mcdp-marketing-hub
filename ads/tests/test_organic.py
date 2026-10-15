@@ -58,8 +58,9 @@ def test_pages_listed_and_suggested(hub):
     assert all("token" not in pg for pg in sync.cached_list("fb_pages"))      # page tokens never stored
     pid = db.add_practice("Heights Orthodontics", 0, 0)
     html = c.get(f"/p/{pid}").text
-    assert '<option value="pg1" selected>Heights Orthodontics (suggested)</option>' in html
-    assert '<option value="ig1" selected>@heightsortho (suggested)</option>' in html
+    assert 'name="fb_page_id" value="pg1" checked' in html and 'name="ig_account_id" value="ig1" checked' in html
+    assert 'name="fb_page_id" value="pg2" >' in html or 'name="fb_page_id" value="pg2">' in html   # Havens not pre-ticked
+    assert "(suggested)" in html
     assert "Connections" in html
 
 
@@ -67,7 +68,7 @@ def test_sync_skips_retired_metrics_and_old_posts(hub):
     c, db, sync, cx, _ = hub
     heights, havens, master, status = _setup(c, db, sync)
     r = status["results"][str(heights)]
-    assert r["facebook"] == {"ok": True, "posts": 2} and r["instagram"] == {"ok": True, "posts": 2}
+    assert r["facebook"] == {"ok": True, "posts": 2, "accounts": 1} and r["instagram"] == {"ok": True, "posts": 2, "accounts": 1}
     assert status["results"][str(havens)]["facebook"]["ok"]
     assert {"post_impressions", "post_impressions_unique"} <= cx._REJECTED_METRICS     # retired names dropped
     posts = {p["post_id"]: p for p in db.posts_for(["pg1", "ig1"], date(2026, 1, 1), date(2026, 12, 31))}
@@ -114,7 +115,7 @@ def test_organic_in_email_and_ai_context(hub, monkeypatch):
     monkeypatch.setattr(ai, "AI_API_KEY", "k")
     monkeypatch.setattr(ai, "generate", lambda kind, ctx: seen.setdefault("ctx", ctx) and "## Report\nok")
     c.post(f"/p/{heights}/ai/report")
-    assert "Organic (unpaid) social posts" in seen["ctx"] and "instagram | 5200 | 210" in seen["ctx"]
+    assert "Organic (unpaid) social posts" in seen["ctx"] and "instagram | @heightsortho | 5200 | 210" in seen["ctx"]
 
 
 def test_page_permission_problem_is_reported(hub, monkeypatch):
@@ -144,12 +145,12 @@ def test_portfolio_pages_and_postiz_fallback(hub, monkeypatch):
     bandeen = db.add_practice("Bandeen Orthodontics", 0, 0, "Bandeen")
     pinnacle = db.add_practice("Pinnacle Ortho", 0, 0, "Pinnacle")
     html = c.get(f"/p/{bandeen}").text
-    assert '<option value="pg3" selected>Bandeen Orthodontics (suggested)</option>' in html
-    assert "Pinnacle Ortho — no access yet" in html
+    assert 'name="fb_page_id" value="pg3" checked' in html
+    assert 'Pinnacle Ortho <span class="danger small">no access yet</span>' in html
     db.set_practice_social(bandeen, "pg3", "ig3")
     db.set_practice_social(pinnacle, "pg4", "")
     status = sync.sync_all(today=date(2026, 10, 12))
-    assert status["results"][str(bandeen)]["facebook"] == {"ok": True, "posts": 1}     # read with Postiz's token
+    assert status["results"][str(bandeen)]["facebook"] == {"ok": True, "posts": 1, "accounts": 1}   # via Postiz's token
     assert "connect it in Postiz" in status["results"][str(bandeen)]["instagram"]["error"]
     assert "connect it in Postiz" in status["results"][str(pinnacle)]["facebook"]["error"]
     assert "Bandeen open house" in c.get(f"/p/{bandeen}?show=organic").text
@@ -194,8 +195,8 @@ def test_post_performance_report_ranks_within_practice(hub):
     assert by_views.index("Free smile consults") < by_views.index("Team photo")     # 2,400 vs 1,300 views
     csv = c.get(f"/p/{heights}/posts.csv?period=90d").text
     lines = csv.strip().splitlines()
-    assert lines[0].lstrip("\ufeff").startswith("Rank,Practice,Date,Network,Post,Link,Views")
-    assert lines[1].startswith("1,Heights Orthodontics,2026-10-10,Instagram,Before your first adjustment")
+    assert lines[0].lstrip("\ufeff").startswith("Rank,Practice,Location (account),Date,Network,Post,Link,Views")
+    assert lines[1].startswith("1,Heights Orthodontics,@heightsortho,2026-10-10,Instagram,Before your first adjustment")
     assert len(lines) == 5
     # Titles come from the first sentence/line; empty posts get a type label
     assert organic.post_title({"text": "Free smile consults all October! Book online."}) == "Free smile consults all October!"
@@ -233,7 +234,7 @@ def test_new_post_without_stats_still_shows_and_status_is_visible(hub):
     assert posts["pg1_1"]["views"] is None and posts["pg1_1"]["likes"] == 40      # kept, counts still read
     assert any(l[1] == "/v25.0/pg1/published_posts" for l in mp.LOG)              # published_posts edge used
     html = c.get(f"/p/{heights}?show=organic").text
-    assert "Facebook Page:" in html and "2 posts found in the last sync" in html
+    assert "Facebook · Heights Orthodontics:" in html and "2 posts found in the last sync" in html
     conn = c.get("/connections").text
     assert "Facebook posts ✓" in conn and "Instagram posts ✓" in conn
 
@@ -250,3 +251,40 @@ def test_old_ad_upload_does_not_hide_recent_posts(hub, monkeypatch):
     monkeypatch.setattr(sync, "sync_window", lambda today=None: (date(2026, 10, 1), date(2026, 10, 12)))
     html = c.get(f"/p/{heights}?show=organic").text
     assert "Free smile consults" in html and "2026-10-01 to 2026-10-12" in html
+
+
+def test_several_locations_merge_into_one_practice(hub):
+    c, db, sync, cx, _ = hub
+    sync.refresh_account_lists()
+    pid = db.add_practice("Waterford Orthodontics", 0, 0, "Waterford")
+    # Tick two Facebook Pages (two locations) and one Instagram account on the practice's form
+    c.post(f"/p/{pid}/accounts", data={"meta_account_id": "", "google_customer_id": "", "social": "1",
+                                       "fb_page_id": ["pg1", "pg2"], "ig_account_id": ["ig1"]})
+    p = db.practice(pid)
+    assert db.social_ids(p, "fb") == ["pg1", "pg2"] and db.social_ids(p, "ig") == ["ig1"]
+    status = sync.sync_all(today=date(2026, 10, 12))
+    fb = status["results"][str(pid)]["facebook"]
+    assert fb == {"ok": True, "posts": 3, "accounts": 2}                      # 2 + 1 posts, merged
+
+    html = c.get(f"/p/{pid}?show=organic").text
+    assert "3 locations combined" in html and "By location" in html
+    loc = html.split("By location")[1].split("Top posts")[0]
+    assert "Heights Orthodontics" in loc and "Havens Orthodontics" in loc and "@heightsortho" in loc
+    assert "Facebook · Heights Orthodontics:" in html and "Facebook · Havens Orthodontics:" in html
+    assert html.count('name="fb_page_id" value="pg1" checked') == 1 and 'value="pg2" checked' in html
+
+    rep = c.get(f"/p/{pid}/posts?period=90d").text
+    ranked = rep.split("Every post, ranked")[1]
+    assert '<span class="loc">Havens Orthodontics</span>' in ranked and '<span class="loc">@heightsortho</span>' in ranked
+    assert "Havens is hiring" in ranked                                       # the second location's post merged in
+    assert "5 posts" not in rep and ">5<" in rep                               # 5 posts total across locations
+    csv = c.get(f"/p/{pid}/posts.csv?period=90d").text
+    assert ",Havens Orthodontics,2026-10-05,Facebook,Havens is hiring!" in csv
+
+    email_html = c.get(f"/p/{pid}/email?inc=postrank&period=90d").text
+    assert "By location" in email_html and "Havens Orthodontics" in email_html
+
+    # Unticking everything unlinks
+    c.post(f"/p/{pid}/accounts", data={"meta_account_id": "", "google_customer_id": "", "social": "1"})
+    p = db.practice(pid)
+    assert db.social_ids(p, "fb") == [] and db.social_ids(p, "ig") == []

@@ -16,7 +16,7 @@
   <header>
     <p class="muted">Social post performance</p>
     <h1>{{ p.name }}</h1>
-    <p class="muted small">Organic (unpaid) Facebook and Instagram posts published {{ rep.since.strftime('%B %-d') }} – {{ rep.until.strftime('%B %-d, %Y') }}{% if rep.practice_of %} · all practices{% endif %}</p>
+    <p class="muted small">Organic (unpaid) Facebook and Instagram posts published {{ rep.since.strftime('%B %-d') }} – {{ rep.until.strftime('%B %-d, %Y') }}{% if rep.practice_of %} · all practices{% elif rep.multi %} · {{ rep.locations|length }} locations combined{% endif %}</p>
   </header>
 
   <form method="get" class="report-filters no-print">
@@ -53,6 +53,21 @@
   </section>
   {% endif %}
 
+  {% if rep.multi and rep.locations %}
+  <h2>By location</h2>
+  <div class="table-scroll"><table class="data loc-table">
+    <thead><tr><th>Location</th><th>Where</th><th class="num">Posts</th><th class="num">Views</th><th class="num">Engagement</th><th class="num">Per post</th><th class="num">Rate</th></tr></thead>
+    <tbody>
+    {% for l in rep.locations %}
+      <tr><td><strong>{{ l.account_name }}</strong>{% if l.practice_name %}<br><span class="muted small">{{ l.practice_name }}</span>{% endif %}</td>
+        <td><span class="tag tag-{{ l.network }}">{{ l.network|title }}</span></td>
+        <td class="num">{{ l.count }}</td><td class="num">{{ '{:,}'.format(l.views) if l.views is not none else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(l.engagement) }}</td><td class="num">{{ '{:,.0f}'.format(l.per_post) }}</td><td class="num">{{ l.rate|pct }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+
   <h2>Every post, ranked</h2>
   <p class="muted small">Ranked by {{ sorts[rep.sort]|lower }} within {{ 'all practices' if rep.practice_of else p.name }}. Engagement = likes + comments + shares + saves. Engagement rate = engagement ÷ views. “Vs. average” compares each post with this {{ 'group' if rep.practice_of else 'practice' }}’s average post.</p>
   <div class="table-scroll"><table class="data rank-table">
@@ -67,7 +82,7 @@
         <td class="post-cell">
           {% if r.permalink %}<a href="{{ r.permalink }}" target="_blank" rel="noopener">{{ r.title }}</a>{% else %}{{ r.title }}{% endif %}
           <span class="post-meta small"><span class="tag tag-{{ r.network }}">{{ 'Facebook' if r.network == 'facebook' else 'Instagram' }}</span>
-            {{ r.created[:10] }}{% if rep.practice_of %} · {{ rep.practice_of.get(r.account_id, '') }}{% endif %}
+            <span class="loc">{{ r.account_name }}</span> · {{ r.created[:10] }}{% if rep.practice_of %} · {{ rep.practice_of.get(r.account_id, '') }}{% endif %}
             {% if r.tier == 'top' %}<span class="tier-tag tier-tag-top">Top 25%</span>{% elif r.tier == 'low' %}<span class="tier-tag tier-tag-low">Bottom 25%</span>{% endif %}</span>
         </td>
         <td class="num">{{ '{:,}'.format(r.views) if r.views is not none else '—' }}</td>

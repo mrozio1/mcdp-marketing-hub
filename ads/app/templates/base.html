@@ -30,6 +30,13 @@
     const b = e.submitter || f.querySelector('button[type=submit]');
     if (b) { b.disabled = true; b.textContent = b.dataset.busy || f.dataset.busy; }
   }));
+  // Filter long Page / Instagram tick lists
+  document.querySelectorAll('.pick-filter').forEach(inp => inp.addEventListener('input', () => {
+    const q = inp.value.toLowerCase();
+    inp.parentElement.querySelectorAll('.pick-list label').forEach(l => {
+      l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }));
   // Fixes list: "select all" per group, and keep the Apply button's count current.
   const fixForm = document.querySelector('form.fix-list');
   if (fixForm) {

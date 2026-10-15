@@ -146,8 +146,8 @@ def social_window(today=None):
 def sync_social(practices, today=None):
     """Pull organic posts for every Page / Instagram account linked to a practice (each once).
     Returns {account_id: {'ok': bool, 'posts'|'error'}}."""
-    fb_ids = sorted({p.get("fb_page_id") for p in practices if p.get("fb_page_id")})
-    ig_ids = sorted({p.get("ig_account_id") for p in practices if p.get("ig_account_id")})
+    fb_ids = sorted({a for p in practices for a in db.social_ids(p, "fb")})
+    ig_ids = sorted({a for p in practices for a in db.social_ids(p, "ig")})
     if not (fb_ids or ig_ids) or not cx.meta_configured():
         return {}
     since, _ = social_window(today)
@@ -211,9 +211,19 @@ def sync_all(today=None):
         if social:
             db.set_setting("social_status", json.dumps({"at": db.now(), "accounts": social}))
         for p in practices:
-            for key, acct in (("facebook", p.get("fb_page_id")), ("instagram", p.get("ig_account_id"))):
-                if acct and acct in social:
-                    results.setdefault(str(p["id"]), {"name": p["name"]})[key] = social[acct]
+            for key, kind in (("facebook", "fb"), ("instagram", "ig")):
+                accts = [a for a in db.social_ids(p, kind) if a in social]
+                if not accts:
+                    continue
+                bad = [social[a] for a in accts if not social[a].get("ok")]
+                merged = {"ok": not bad, "posts": sum(social[a].get("posts", 0) for a in accts if social[a].get("ok")),
+                          "accounts": len(accts)}
+                notes = [social[a]["note"] for a in accts if social[a].get("note")]
+                if notes:
+                    merged["note"] = "; ".join(notes)
+                if bad:
+                    merged["error"] = bad[0]["error"] + (f" (and {len(bad) - 1} more)" if len(bad) > 1 else "")
+                results.setdefault(str(p["id"]), {"name": p["name"]})[key] = merged
         status = {"at": db.now(), "since": since.isoformat(), "until": until.isoformat(), "results": results}
         db.set_setting("last_sync", json.dumps(status))
         return status

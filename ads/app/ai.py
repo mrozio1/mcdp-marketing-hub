@@ -75,8 +75,12 @@ def _organic_context(org):
                      f"reach {n['reach'] if n['reach'] is not None else 'not reported'}, interactions {n['interactions']} "
                      f"(likes {n['likes']}, comments {n['comments']}, shares {n['shares']}"
                      + (f", saves {n['saves']}" if n['saves'] is not None else "") + f"), engagement rate {pct(n['rate'])}")
-    lines.append("Top posts (date | network | views | interactions | text):\n" + "\n".join(
-        f"{x['created'][:10]} | {x['network']} | {x['views'] if x['views'] is not None else '-'} | {x['interactions'] or 0} | "
+    if org.get("multi") and org.get("locations"):
+        lines.append("By location (account | network | posts | views | engagement | per post):\n" + "\n".join(
+            f"{l['account_name']} | {l['network']} | {l['count']} | {l['views'] if l['views'] is not None else '-'} | "
+            f"{l['engagement']} | {l['per_post']:.0f}" for l in org["locations"]))
+    lines.append("Top posts (date | network | location | views | interactions | text):\n" + "\n".join(
+        f"{x['created'][:10]} | {x['network']} | {x.get('account_name', '')} | {x['views'] if x['views'] is not None else '-'} | {x['interactions'] or 0} | "
         f"{' '.join((x['text'] or '').split())[:120]}" for x in org["top"][:8]))
     lines.append("Organic posts have no spend or conversions; compare them with ads on views and interactions only.")
     return lines

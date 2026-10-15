@@ -5,16 +5,17 @@
     <a class="btn btn-quiet btn-small" href="/p/{{ p.id }}/posts">Post performance report</a>
   </div>
   {% set accts = social_status.get('accounts', {}) if social_status else {} %}
-  {% for key, label, acct in [('facebook', 'Facebook Page', p.fb_page_id), ('instagram', 'Instagram', p.ig_account_id)] if acct %}
+  {% set names = {} %}{% for a in fb_pages + ig_accounts %}{% set _ = names.update({a.id: a.name}) %}{% endfor %}
+  {% for key, label, ids in [('facebook', 'Facebook', fb_linked), ('instagram', 'Instagram', ig_linked)] %}{% for acct in ids %}
     {% set st = accts.get(acct) %}
     <p class="sync-line small {{ 'danger' if st and not st.ok else 'muted' }}">
-      {{ label }}:
+      {{ label }} · {{ names.get(acct, acct) }}:
       {% if not st %}not synced yet — click “Sync now” on the right.
       {% elif st.ok %}{{ st.posts }} post{{ '' if st.posts == 1 else 's' }} found in the last sync ({{ social_status.at.replace('T', ' ')[:16] }}){% if st.note %} · {{ st.note }}{% endif %}.
       {% else %}last sync failed — {{ st.error }}{% endif %}
     </p>
-  {% endfor %}
-  <p class="muted small">Unpaid Facebook and Instagram posts published {{ org.since }} to {{ org.until }}{% if not (p.fb_page_id or p.ig_account_id) %} · every Page and Instagram account linked to a practice{% endif %}</p>
+  {% endfor %}{% endfor %}
+  <p class="muted small">Unpaid Facebook and Instagram posts published {{ org.since }} to {{ org.until }}{% if not (fb_linked or ig_linked) %} · every Page and Instagram account linked to a practice{% elif org.multi %} · all {{ org.locations|length }} locations combined{% endif %}</p>
   {% if not org.totals or not org.totals.count %}
     <p class="muted">No posts published in this period yet{% if not last_sync.at %}, or the accounts haven’t synced: use “Sync now”{% endif %}.</p>
   {% else %}
@@ -30,6 +31,21 @@
     {% else %}<p class="muted small">No {{ n.label }} posts in this period.</p>{% endif %}
   {% endfor %}
 
+  {% if org.multi and org.locations %}
+  <h3>By location</h3>
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Location</th><th>Where</th><th class="num">Posts</th><th class="num">Views</th><th class="num">Engagement</th><th class="num">Per post</th><th class="num">Rate</th></tr></thead>
+    <tbody>
+    {% for l in org.locations %}
+      <tr><td>{{ l.account_name }}{% if l.practice_name %}<br><span class="muted small">{{ l.practice_name }}</span>{% endif %}</td>
+        <td><span class="tag tag-{{ l.network }}">{{ l.network|title }}</span></td>
+        <td class="num">{{ l.count }}</td><td class="num">{{ '{:,}'.format(l.views) if l.views is not none else '—' }}</td>
+        <td class="num">{{ '{:,}'.format(l.engagement) }}</td><td class="num">{{ '{:,.0f}'.format(l.per_post) }}</td><td class="num">{{ l.rate|pct }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+
   <h3>Top posts</h3>
   <div class="table-scroll"><table class="data posts-table">
     <thead><tr><th>Post</th><th>Where</th><th class="num">Views</th><th class="num">Interactions</th><th class="num">Rate</th></tr></thead>
@@ -38,7 +54,7 @@
       <tr>
         <td><span class="muted small">{{ post.created[:10] }}</span><br>
           {% if post.permalink %}<a href="{{ post.permalink }}" target="_blank" rel="noopener">{{ (post.text or '(no text)')|truncate(90) }}</a>{% else %}{{ (post.text or '(no text)')|truncate(90) }}{% endif %}</td>
-        <td><span class="tag tag-{{ post.network }}">{{ 'Facebook' if post.network == 'facebook' else 'Instagram' }}</span>{% if post.media_type %}<br><span class="muted small">{{ post.media_type|replace('_', ' ')|lower }}</span>{% endif %}</td>
+        <td><span class="tag tag-{{ post.network }}">{{ 'Facebook' if post.network == 'facebook' else 'Instagram' }}</span><br><span class="small">{{ post.account_name }}</span>{% if post.practice_name %}<br><span class="muted small">{{ post.practice_name }}</span>{% endif %}</td>
         <td class="num">{{ '{:,}'.format(post.views) if post.views is not none else '—' }}</td>
         <td class="num">{{ '{:,}'.format(post.interactions or 0) }}</td>
         <td class="num">{{ ((post.interactions or 0) / post.views)|pct if post.views else '—' }}</td>
