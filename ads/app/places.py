@@ -178,14 +178,39 @@ def box_touches_circle(box, lat, lng, miles):
 
 
 # ------------------------------------------------------------------ Google Places API (New)
+# Google limits requests per minute per project (the exact number depends on the account), so calls are
+# spaced out, and when Google still says "slow down" (HTTP 429 / quota exceeded) we wait and try again.
+PACE_SECONDS = float(os.environ.get("MAPS_PACE_SECONDS", "0.15"))     # ~400 calls a minute per kind
+RETRY_WAITS = (20, 40, 60, 60, 60, 90)                                  # seconds, then give up
+_sleep = time.sleep
+_last_call = {}
+QUOTA_HINT = re.compile(r"HTTP 429|RESOURCE_EXHAUSTED|quota exceeded|rate limit", re.I)
+TRANSIENT_HINT = re.compile(r"HTTP 50[0234]|Couldn't reach|timed out", re.I)
+
+
+def _paced(kind, fn):
+    for attempt in range(len(RETRY_WAITS) + 1):
+        wait = _last_call.get(kind, 0) + PACE_SECONDS - time.monotonic()
+        if wait > 0:
+            _sleep(wait)
+        _last_call[kind] = time.monotonic()
+        try:
+            return fn()
+        except cx.ConnectorError as e:
+            busy = QUOTA_HINT.search(str(e))
+            if attempt >= len(RETRY_WAITS) or not (busy or (TRANSIENT_HINT.search(str(e)) and attempt < 2)):
+                raise
+            _sleep(RETRY_WAITS[attempt] if busy else 5)
+
+
 def _search(body, key, fields):
-    return cx._http(f"{PLACES_BASE}/v1/places:searchText", data=body, headers={
-        "Content-Type": "application/json", "X-Goog-Api-Key": key, "X-Goog-FieldMask": fields})
+    return _paced("search", lambda: cx._http(f"{PLACES_BASE}/v1/places:searchText", data=body, headers={
+        "Content-Type": "application/json", "X-Goog-Api-Key": key, "X-Goog-FieldMask": fields}))
 
 
 def _details(place_id, key, fields):
-    return cx._http(f"{PLACES_BASE}/v1/places/{place_id}", headers={
-        "X-Goog-Api-Key": key, "X-Goog-FieldMask": fields})
+    return _paced("details", lambda: cx._http(f"{PLACES_BASE}/v1/places/{place_id}", headers={
+        "X-Goog-Api-Key": key, "X-Goog-FieldMask": fields}))
 
 
 def _latlng(j):
@@ -196,8 +221,8 @@ def _latlng(j):
 class Searcher:
     """Free ID-only Text Search over a box, splitting busy boxes so nothing is missed past Google's 60-result cap."""
 
-    def __init__(self, key, limit=MAX_SEARCHES):
-        self.key, self.limit, self.requests, self.capped = key, limit, 0, False
+    def __init__(self, key, limit=MAX_SEARCHES, progress=None):
+        self.key, self.limit, self.requests, self.capped, self.progress = key, limit, 0, False, progress
 
     def search_box(self, query, box):
         ids, token = [], None
@@ -212,6 +237,8 @@ class Searcher:
             if token:
                 body["pageToken"] = token
             self.requests += 1
+            if self.progress and self.requests % 50 == 0:
+                self.progress(self.requests)
             j = _search(body, self.key, SEARCH_FIELDS)
             ids.extend(p["id"] for p in j.get("places") or [] if p.get("id"))
             token = j.get("nextPageToken")
@@ -587,8 +614,31 @@ def refresh(now=None):
     if not _lock.acquire(blocking=False):
         raise MapError("A refresh is already running. Check back in a few minutes.")
     started = time.time()
+    began = db.now()
+    pending = {"new": [], "upd": []}
+    saved = {"new": 0, "upd": 0, "new_layer": 0}
+    stamp = None
+
+    def flush():
+        if not (pending["new"] or pending["upd"]):
+            return
+        with db.conn() as c:
+            c.executemany("INSERT INTO map_places(layer, offers_ortho, office_id, miles, lat, lng, coords_at, "
+                          "brands_key, last_seen, place_id, first_seen, gone_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL) "
+                          "ON CONFLICT(place_id) DO UPDATE SET layer=excluded.layer, offers_ortho=excluded.offers_ortho, "
+                          "office_id=excluded.office_id, miles=excluded.miles, lat=excluded.lat, lng=excluded.lng, "
+                          "coords_at=excluded.coords_at, brands_key=excluded.brands_key, last_seen=excluded.last_seen, "
+                          "gone_at=NULL", [r + (stamp,) for r in pending["new"]])
+            c.executemany("UPDATE map_places SET layer=?, offers_ortho=?, office_id=?, miles=?, lat=?, lng=?, "
+                          "coords_at=?, brands_key=?, last_seen=?, gone_at=NULL WHERE place_id=?", pending["upd"])
+        saved["new"] += len(pending["new"])
+        saved["upd"] += len(pending["upd"])
+        saved["new_layer"] += sum(1 for r in pending["new"] if r[0] in LAYERS)
+        pending["new"].clear()
+        pending["upd"].clear()
+
     try:
-        _set_status(busy=True, started=db.now())
+        _set_status(busy=True, started=began, step="Finding our offices on Google")
         moment = now or datetime.now()
         stamp = moment.isoformat(timespec="seconds")
         renew_before = (moment - timedelta(days=RENEW_AFTER_DAYS)).isoformat(timespec="seconds")
@@ -604,7 +654,8 @@ def refresh(now=None):
             with db.conn() as c:
                 c.execute("UPDATE map_offices SET lat=?, lng=?, coords_at=? WHERE id=?", (lat, lng, stamp, o["id"]))
 
-        s = Searcher(key)
+        s = Searcher(key, progress=lambda n: _set_status(
+            busy=True, started=began, step=f"Searching around our offices ({n:,} searches so far)"))
         found = {}   # place_id -> set of queries that found it
         for o in offs:
             for q in QUERIES:
@@ -612,7 +663,9 @@ def refresh(now=None):
                     found.setdefault(pid, set()).add(q)
         office_ids = {o["place_id"] for o in offs}
         known = {p["place_id"]: p for p in places()}
-        new_rows, updates, skipped = [], [], 0
+        new_rows, updates, skipped = pending["new"], pending["upd"], 0
+        todo = len(found)
+        _set_status(busy=True, started=began, step=f"Found {todo:,} places; looking up the new ones")
 
         def nearest(lat, lng):
             o = min(offs, key=lambda o: miles_between(o["lat"], o["lng"], lat, lng))
@@ -656,14 +709,15 @@ def refresh(now=None):
                 updates.append(row)
             else:
                 new_rows.append(row)
+            if len(new_rows) + len(updates) >= 200:   # save as we go, so an interruption loses little
+                flush()
+                done = budget.pro + budget.essentials
+                _set_status(busy=True, started=began,
+                            step=f"Looked up {done:,} places of up to {min(todo, budget.limit):,}")
 
         complete = not (s.capped or budget.capped)
+        flush()
         with db.conn() as c:
-            c.executemany("INSERT INTO map_places(layer, offers_ortho, office_id, miles, lat, lng, coords_at, "
-                          "brands_key, last_seen, place_id, first_seen, gone_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)",
-                          [r + (stamp,) for r in new_rows])
-            c.executemany("UPDATE map_places SET layer=?, offers_ortho=?, office_id=?, miles=?, lat=?, lng=?, "
-                          "coords_at=?, brands_key=?, last_seen=?, gone_at=NULL WHERE place_id=?", updates)
             gone = 0
             if complete:   # only a full sweep can say a place is no longer listed
                 gone = c.execute("UPDATE map_places SET gone_at=? WHERE gone_at IS NULL AND last_seen < ? "
@@ -674,12 +728,18 @@ def refresh(now=None):
         db.set_setting("map_last_refresh", stamp)
         res = {"busy": False, "ok": True, "at": stamp, "searches": s.requests, "pro": budget.pro,
                "essentials": budget.essentials, "capped": not complete, "skipped": skipped,
-               "new": sum(1 for r in new_rows if r[0] in LAYERS), "gone": gone,
+               "new": saved["new_layer"], "gone": gone,
                "seconds": round(time.time() - started)}
         _set_status(**res)
         return res
-    except Exception as e:   # always clear "busy" and record why
-        res = {"busy": False, "ok": False, "at": db.now(), "error": str(e)[:300]}
+    except Exception as e:   # always clear "busy", keep what was found, and record why
+        try:
+            if stamp:
+                flush()
+        except Exception:
+            pass
+        kept = saved["new"] + saved["upd"]
+        res = {"busy": False, "ok": False, "at": db.now(), "error": str(e)[:300], "kept": kept}
         _set_status(**res)
         raise MapError(str(e))
     finally:

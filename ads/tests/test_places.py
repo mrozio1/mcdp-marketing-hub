@@ -16,6 +16,8 @@ KEY = "AIzaServerKey123"
 OFFICE = {"id": "ChIJ_office_defiance01", "lat": 41.2845, "lng": -84.3558}
 BRYAN = {"id": "ChIJ_office_bryan00001", "lat": 41.4748, "lng": -84.5525}
 LOG = []
+SLEPT = []
+THROTTLE = {"details": 0, "fail_after": None, "served": 0}   # 429s to send, and a hard failure after N lookups
 
 
 def P(pid, name, lat, lng, types=("dentist", "health"), status="OPERATIONAL", q=("dentist",)):
@@ -64,6 +66,14 @@ class H(BaseHTTPRequestHandler):
         LOG.append(("details", mask, pid))
         if self._denied():
             return
+        if THROTTLE["details"] > 0:
+            THROTTLE["details"] -= 1
+            return self._send(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message":
+                              "Quota exceeded for quota metric 'GetPlaceRequest' and limit 'GetPlaceRequest per minute'"}})
+        THROTTLE["served"] += 1
+        if THROTTLE["fail_after"] is not None and THROTTLE["served"] > THROTTLE["fail_after"]:
+            return self._send(403, {"error": {"code": 403, "message": "This API key was deleted.",
+                                              "status": "PERMISSION_DENIED"}})
         p = PLACES.get(pid)
         if not p:
             return self._send(404, {"error": {"code": 404, "message": "Not found.", "status": "NOT_FOUND"}})
@@ -111,6 +121,8 @@ def env(tmp_path_factory):
     from app import connectors, db, places
     for m in (db, connectors, places):
         importlib.reload(m)
+    places._sleep = lambda secs: SLEPT.append(secs)
+    places.PACE_SECONDS = 0
     db.init()
     places.init()
     reset_places()
@@ -375,3 +387,30 @@ def test_upgrade_from_first_version(tmp_path, monkeypatch):
     assert p["coords_at"] == p["first_seen"] == "2026-10-20T06:00:00"
     with db.conn() as c2:   # new rows insert fine (no leftover NOT NULL date column)
         c2.execute("INSERT INTO map_places(place_id, layer) VALUES ('ChIJ_y_000000001', 'skip')")
+
+
+def test_slow_down_is_retried_and_progress_survives_a_failure(env):
+    db, places = env
+    db.set_setting("maps_server_key", KEY)
+    db.set_setting("map_brand_terms", "Heights Orthodontics, Retry")   # forces lookups of every place
+    THROTTLE.update(details=2, fail_after=None, served=0)
+    SLEPT.clear()
+    res = places.refresh(T0 + timedelta(days=90))
+    assert res["ok"] and SLEPT[:2] == [20, 40]                        # waited, then carried on
+    # a lookup that fails for good part-way: what was found is kept, and the next run carries on
+    for i in range(250):
+        pid = f"ChIJ_dent_bulk_{i:05d}"
+        PLACES[pid] = P(pid, f"Bulk Dental {i}", 41.20 + (i % 50) * 0.002, -84.40 + (i // 50) * 0.01)
+    db.set_setting("map_brand_terms", "Heights Orthodontics")
+    THROTTLE.update(details=0, fail_after=230, served=0)
+    with pytest.raises(places.MapError, match="deleted"):
+        places.refresh(T0 + timedelta(days=91))
+    st = places.status()
+    assert st["ok"] is False and not st["busy"] and st["kept"] >= 200
+    THROTTLE.update(fail_after=None, served=0)
+    LOG.clear()
+    res = places.refresh(T0 + timedelta(days=91, hours=1))
+    assert res["ok"]
+    redone = {pid for *_, pid in calls("details", places.NEW_FIELDS)}
+    assert len(redone) < 100                                          # only what wasn't saved is looked up again
+    assert sum(1 for p in places.places() if p["place_id"].startswith("ChIJ_dent_bulk_")) == 250

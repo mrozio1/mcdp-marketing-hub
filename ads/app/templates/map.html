@@ -13,9 +13,9 @@
 <p class="lede">Our offices, every general dental practice within {{ radius|round(0)|int }} miles (potential referrers) and every orthodontist that isn't ours (competitors), from Google. Click a pin for its name, address and link.</p>
 
 {% if status.busy %}
-  <p class="flash" role="status">Refresh running since {{ status.started[11:16] }}. Reload in a minute or two.</p>
+  <p class="flash" role="status">Refresh running since {{ status.started[11:16] }}{% if status.step %}: {{ status.step }}{% endif %}. With many offices this takes a while; reload to see progress. You can leave the page.</p>
 {% elif status and status.ok is false %}
-  <p class="flash flash-error" role="status">Last refresh failed: {{ status.error }}</p>
+  <p class="flash flash-error" role="status">Last refresh stopped: {{ status.error }}{% if status.kept %} {{ "{:,}".format(status.kept) }} places found before it stopped are saved, so clicking <strong>{{ 'Refresh map' if last else 'Build the map' }}</strong> again continues from there.{% endif %}</p>
 {% elif status.capped %}
   <p class="flash flash-error" role="status">The last refresh stopped at the {{ max_requests }}-lookup limit, so {{ status.skipped or 'some' }} places are waiting for the next refresh, and nothing was marked “no longer listed”. Raise the limit in Map setup if your free allowance has room.</p>
 {% elif status.ok and status.at == last %}
