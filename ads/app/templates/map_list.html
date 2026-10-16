@@ -18,7 +18,7 @@
 {% endif %}
 
 {% if not offices %}
-<p class="empty">Add our offices on the <a href="/map">Map page</a> first; the lists are built around them.</p>
+<p class="empty">{% if can_edit %}Add our offices on the <a href="/map">Map page</a> first; the lists are built around them.{% else %}No offices are on the map yet, so there are no lists to export. An editor adds them on the Map page.{% endif %}</p>
 {% elif not ref_last %}
 <section class="panel">
   <p>The lists come from the <a href="https://npiregistry.cms.hhs.gov/" target="_blank" rel="noopener">NPI Registry</a> (public government data, so they can be exported): every dental and orthodontic practice within {{ radius|round(0)|int }} miles of our offices. Click <strong>Build the lists</strong> to pull them; it takes a few minutes and then updates itself monthly.</p>
@@ -73,6 +73,7 @@
   let rows = [], shown = 200;
   const state = { office: $("ref-office").value, kind: document.querySelector("input[name=kind]:checked").value,
                   q: "", starred: false, omitted: false };
+  const CAN_EDIT = {{ can_edit|tojson }};
 
   function filtered() {
     const q = state.q.toLowerCase();
@@ -106,9 +107,11 @@
       const inc = el("input"); inc.type = "checkbox"; inc.checked = !r.omitted; inc.title = "Include in the export";
       inc.setAttribute("aria-label", `Include ${r.name}`);
       inc.onchange = () => { save(r, { omitted: !inc.checked }); render(); };
+      if (!CAN_EDIT) inc.disabled = true;
       const star = el("button", "ref-star" + (r.starred ? " on" : ""), r.starred ? "★" : "☆");
       star.type = "button"; star.title = r.starred ? "Unstar" : "Star"; star.setAttribute("aria-pressed", r.starred);
       star.onclick = () => { save(r, { starred: !r.starred }); render(); };
+      if (!CAN_EDIT) { star.disabled = true; star.title = r.starred ? "Starred" : ""; }
       const who = el("td");
       who.append(el("strong", null, r.name));
       if (r.dentists && r.dentists.length) who.append(el("span", "small muted ref-sub", r.dentists.slice(0, 4).join("; ") + (r.dentists.length > 4 ? ` +${r.dentists.length - 4}` : "")));
@@ -120,6 +123,7 @@
       if (state.office === "all") dist.append(el("span", "small muted ref-sub", r.office));
       const note = el("textarea", "ref-note"); note.rows = 1; note.value = r.note || ""; note.placeholder = "Add a note";
       note.setAttribute("aria-label", `Note for ${r.name}`);
+      if (!CAN_EDIT) { note.readOnly = true; note.placeholder = ""; }
       note.onchange = () => { save(r, { note: note.value }).then(() => { note.classList.add("saved"); setTimeout(() => note.classList.remove("saved"), 1200); }); };
       const links = el("td", "ref-links");
       const a = el("a", "small", "Google Maps"); a.href = r.maps_url; a.target = "_blank"; a.rel = "noopener"; links.append(a);

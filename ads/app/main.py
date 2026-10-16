@@ -10,13 +10,13 @@ import sqlite3
 from pathlib import Path
 
 import markdown as md
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, organic, places, referrals, scope, sync
+from . import actions, ai, auth, db, emailfmt, organic, places, referrals, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -27,7 +27,24 @@ SECRET = os.environ.get("ADS_SECRET") or os.urandom(32).hex()
 MAX_UPLOAD = 20 * 1024 * 1024
 PLATFORMS = (("google", "Google Ads"), ("meta", "Meta Ads"))
 
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+class NotAllowed(Exception):
+    def __init__(self, needed):
+        self.needed = needed
+
+
+def _role_gate(request: Request):
+    """Runs before every route: checks the signed-in person's role against what the request needs
+    (auth.needed_role). Not signed in is left to each route, which sends people to /login."""
+    need = auth.needed_role(request.method, request.url.path)
+    if need is None:
+        return
+    me = auth.current(request.session)
+    request.state.me = me
+    if me is not None and not auth.at_least(me["role"], need):
+        raise NotAllowed(need)
+
+
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(_role_gate)])
 app.add_middleware(SessionMiddleware, secret_key=SECRET, same_site="lax", https_only=False,
                    max_age=60 * 60 * 24 * 14, session_cookie="mcdp_ads")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -66,6 +83,7 @@ PUBLIC_URL = os.environ.get("ADS_PUBLIC_URL", "").rstrip("/")
 @app.on_event("startup")
 def _startup():
     db.init()
+    auth.init()
     places.init()
     places.purge_old()
     referrals.init()
@@ -76,7 +94,28 @@ def _startup():
 
 
 def authed(request: Request):
-    return request.session.get("ok") is True
+    return auth.current(request.session) is not None
+
+
+def me(request: Request):
+    return getattr(request.state, "me", None) or auth.current(request.session)
+
+
+@app.exception_handler(NotAllowed)
+async def _not_allowed(request: Request, exc: NotAllowed):
+    what = {"editor": "an Editor or Admin", "admin": "an Admin"}.get(exc.needed, "someone with more access")
+    msg = f"Your sign-in can view and export, but this needs {what}. Ask an admin on the Team page if you need it."
+    if request.method == "GET":
+        who = me(request)
+        return templates.TemplateResponse(request, "denied.html", {
+            "msg": msg, "me": who, "flash": None, "role_labels": auth.ROLE_LABELS, "social_url": SOCIAL_URL,
+            "can_edit": bool(who) and auth.at_least(who["role"], "editor"),
+            "is_admin": bool(who) and who["role"] == "admin"}, status_code=403)
+    if request.headers.get("content-type", "").startswith("application/json"):
+        return Response('{"ok": false, "error": "view only"}', status_code=403, media_type="application/json")
+    flash(request, msg, "error")
+    back = request.headers.get("referer") or "/"
+    return RedirectResponse(back, status_code=303)
 
 
 def guard(request: Request):
@@ -90,6 +129,11 @@ def flash(request, msg, kind="ok"):
 
 
 def page(request, name, **ctx):
+    who = me(request)
+    ctx["me"] = who
+    ctx["can_edit"] = bool(who) and auth.at_least(who["role"], "editor")
+    ctx["is_admin"] = bool(who) and who["role"] == "admin"
+    ctx["role_labels"] = auth.ROLE_LABELS
     ctx["flash"] = request.session.pop("flash", None)
     ctx["ai_on"] = ai.available()
     ctx["last_sync"] = sync.last_sync()
@@ -165,17 +209,124 @@ def is_master(p, practices):
 def login_form(request: Request):
     if authed(request):
         return RedirectResponse("/", status_code=303)
-    return page(request, "login.html", error=None, configured=bool(PASSWORD))
+    return page(request, "login.html", error=None, configured=bool(PASSWORD) or bool(auth.users()), email="")
 
 
 @app.post("/login", response_class=HTMLResponse)
-async def login(request: Request, password: str = Form("")):
-    if PASSWORD and hmac.compare_digest(password.encode(), PASSWORD.encode()):
+async def login(request: Request, email: str = Form(""), password: str = Form("")):
+    sess = auth.login(email, password, PASSWORD)
+    if sess:
         request.session.clear()
-        request.session["ok"] = True
+        request.session.update(sess)
         return RedirectResponse("/", status_code=303)
     await asyncio.sleep(1.5)  # slow down guessing
-    return page(request, "login.html", error="That password isn't right.", configured=bool(PASSWORD))
+    err = "That email and password don't match." if email.strip() else "That password isn't right."
+    return page(request, "login.html", error=err, configured=bool(PASSWORD) or bool(auth.users()), email=email)
+
+
+@app.get("/setup/{token}", response_class=HTMLResponse)
+def setup_form(request: Request, token: str):
+    u = auth.by_setup_token(token)
+    return page(request, "setup.html", u=u, token=token, error=None)
+
+
+@app.post("/setup/{token}", response_class=HTMLResponse)
+async def setup_save(request: Request, token: str, password: str = Form(""), confirm: str = Form("")):
+    u = auth.by_setup_token(token)
+    if not u:
+        return page(request, "setup.html", u=None, token=token, error=None)
+    problem = auth.password_problem(password) or (None if password == confirm else "The two passwords don't match.")
+    if problem:
+        return page(request, "setup.html", u=u, token=token, error=problem)
+    auth.set_password(u["id"], password)
+    request.session.clear()
+    request.session.update(auth.login(u["email"], password, PASSWORD))
+    flash(request, f"Welcome, {u['name']}. You're signed in as {auth.ROLE_LABELS[u['role']].lower()}.")
+    return RedirectResponse("/", status_code=303)
+
+
+# ---------- team: who has access ----------
+def _link(request, token):
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    return f"{base}/setup/{token}"
+
+
+@app.get("/team", response_class=HTMLResponse)
+def team(request: Request):
+    if (r := guard(request)):
+        return r
+    new = request.session.pop("new_link", None)
+    return page(request, "team.html", people=auth.users(), roles=auth.ROLES, role_help=auth.ROLE_HELP,
+                new_link=new, link_days=auth.LINK_DAYS)
+
+
+@app.post("/team/add")
+def team_add(request: Request, name: str = Form(""), email: str = Form(""), role: str = Form("viewer")):
+    if (r := guard(request)):
+        return r
+    if not name.strip() or not auth.valid_email(email):
+        flash(request, "Enter a name and a valid email address.", "error")
+    elif auth.by_email(email):
+        flash(request, "Someone with that email already has a sign-in. Use “New setup link” on their row.", "error")
+    else:
+        uid, token = auth.add_user(name, email, role)
+        request.session["new_link"] = {"uid": uid, "name": name.strip(), "email": email.strip().lower(),
+                                       "url": _link(request, token), "role": role}
+    return RedirectResponse("/team", status_code=303)
+
+
+def _team_target(request, uid):
+    u = auth.user(uid)
+    who = me(request)
+    if not u:
+        return None, "That person isn't on the list any more."
+    if who and who.get("uid") == uid:
+        return None, "You can't change your own access here; ask another admin."
+    return u, None
+
+
+@app.post("/team/{uid}/role")
+def team_role(request: Request, uid: int, role: str = Form("viewer")):
+    if (r := guard(request)):
+        return r
+    u, err = _team_target(request, uid)
+    if u:
+        auth.set_role(uid, role)
+        flash(request, f"{u['name']} is now {auth.ROLE_LABELS.get(role, role).lower()}.")
+    else:
+        flash(request, err, "error")
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/link")
+def team_link(request: Request, uid: int):
+    if (r := guard(request)):
+        return r
+    u = auth.user(uid)
+    if u:
+        token = auth.new_setup_link(uid)
+        request.session["new_link"] = {"uid": uid, "name": u["name"], "email": u["email"],
+                                       "url": _link(request, token), "role": u["role"], "reset": bool(u["pw_hash"])}
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/access")
+def team_access(request: Request, uid: int, action: str = Form("")):
+    if (r := guard(request)):
+        return r
+    u, err = _team_target(request, uid)
+    if not u:
+        flash(request, err, "error")
+    elif action == "disable":
+        auth.set_disabled(uid, True)
+        flash(request, f"{u['name']} can't sign in any more (their history is kept).")
+    elif action == "enable":
+        auth.set_disabled(uid, False)
+        flash(request, f"{u['name']} can sign in again.")
+    elif action == "delete":
+        auth.delete_user(uid)
+        flash(request, f"Removed {u['name']}.")
+    return RedirectResponse("/team", status_code=303)
 
 
 @app.post("/logout")
@@ -516,6 +667,7 @@ async def fixes_apply(request: Request, pid: int):
         ok, msg = await asyncio.to_thread(actions.apply_change, ch)
         if ok:
             done += 1
+            db.update_change(cid, applied_by=(me(request) or {}).get("name", ""))
         else:
             problems.append(f"{ch['title']}: {msg}")
     msg = f"Applied {done} change{'s' if done != 1 else ''} in Google / Meta." if done else "Nothing was applied."

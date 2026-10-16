@@ -3,16 +3,19 @@
 {% block chrome %}{% endblock %}
 {% block mainclass %}login{% endblock %}
 {% block content %}
-<h1 class="brand-big">MCDP Ads</h1>
-<p class="muted">Google and Meta ad results for every practice.</p>
+<h1 class="brand-big">MCDP Hub</h1>
+<p class="muted">Ads, social and the market map for your practices.</p>
 {% if not configured %}
   <p class="flash flash-error">No team password is set. Run <code>sh enable-ads.sh</code> on the server.</p>
 {% else %}
 <form method="post" action="/login" class="stack">
-  <label for="pw">Team password</label>
-  <input id="pw" name="password" type="password" autocomplete="current-password" required autofocus>
+  <label for="em">Email</label>
+  <input id="em" name="email" type="email" autocomplete="username" value="{{ email or '' }}" autofocus>
+  <label for="pw">Password</label>
+  <input id="pw" name="password" type="password" autocomplete="current-password" required>
   {% if error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
   <button type="submit" class="btn">Sign in</button>
+  <p class="small muted">Using the shared team password? Leave email blank.</p>
 </form>
 {% endif %}
 {% endblock %}

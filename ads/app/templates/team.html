@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Team{% endblock %}
+{% block content %}
+<h1>Team</h1>
+<p class="lede">Who can sign in, and what they can do. Everyone signs in with their own email and password.</p>
+
+{% if new_link %}
+<section class="panel link-box" aria-live="polite">
+  <h2>{{ 'New password link' if new_link.reset else 'Send this to ' ~ new_link.name.split(' ')[0] }}</h2>
+  <p>{{ new_link.name }} sets {{ 'a new' if new_link.reset else 'their' }} password with this link. It works once and expires in {{ link_days }} days.</p>
+  <div class="link-row">
+    <input id="setup-link" value="{{ new_link.url }}" readonly aria-label="Setup link">
+    <button class="btn" type="button" id="copy-link">Copy link</button>
+  </div>
+  <p class="small"><a href="mailto:{{ new_link.email }}?subject={{ 'Your MCDP Hub sign-in'|urlencode }}&body={{ ('Hi ' ~ new_link.name.split(' ')[0] ~ ',\n\nHere is your link to set a password for the MCDP Hub (' ~ role_labels[new_link.role] ~ ' access). It works once and expires in ' ~ link_days ~ ' days:\n\n' ~ new_link.url ~ '\n\nAfter that, sign in with your email at the same address.')|urlencode }}">Open an email to {{ new_link.email }} with the link</a></p>
+  <p class="copy-status small" id="copy-status" role="status"></p>
+</section>
+{% endif %}
+
+<div class="team-grid">
+  <section>
+    <div class="table-scroll"><table class="data team-table">
+      <thead><tr><th>Person</th><th>Access</th><th>Last signed in</th><th></th></tr></thead>
+      <tbody>
+      {% for u in people %}
+        <tr class="{{ 'muted' if u.disabled }}">
+          <td><strong>{{ u.name }}</strong><br><span class="muted small">{{ u.email }}</span>
+            {% if u.disabled %}<br><span class="tag tag-off">Can’t sign in</span>{% elif not u.pw_hash %}<br><span class="tag">Hasn’t set a password yet</span>{% endif %}</td>
+          <td>
+            {% if me.uid == u.id %}{{ role_labels[u.role] }} <span class="muted small">(you)</span>
+            {% else %}
+            <form method="post" action="/team/{{ u.id }}/role" class="role-form">
+              <select name="role" aria-label="Access for {{ u.name }}" onchange="this.form.submit()">
+                {% for r in roles %}<option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ role_labels[r] }}</option>{% endfor %}
+              </select>
+              <noscript><button class="linklike small" type="submit">Save</button></noscript>
+            </form>
+            {% endif %}
+          </td>
+          <td class="small">{{ u.last_login.replace('T', ' ')[:16] if u.last_login else '—' }}</td>
+          <td class="team-actions">
+            {% if me.uid != u.id %}
+            <form method="post" action="/team/{{ u.id }}/link"><button class="linklike small" type="submit">{{ 'New password link' if u.pw_hash else 'New setup link' }}</button></form>
+            <form method="post" action="/team/{{ u.id }}/access" {% if not u.disabled %}data-confirm="Stop {{ u.name }} signing in? Their history is kept."{% endif %}>
+              <input type="hidden" name="action" value="{{ 'enable' if u.disabled else 'disable' }}">
+              <button class="linklike small {{ '' if u.disabled else 'danger' }}" type="submit">{{ 'Allow sign-in' if u.disabled else 'Turn off' }}</button></form>
+            {% if u.disabled %}
+            <form method="post" action="/team/{{ u.id }}/access" data-confirm="Remove {{ u.name }} completely?">
+              <input type="hidden" name="action" value="delete"><button class="linklike small danger" type="submit">Remove</button></form>
+            {% endif %}
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">No personal sign-ins yet; everyone is using the shared team password. Add people on the right.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+
+  <aside>
+    <section class="panel">
+      <h2>Add someone</h2>
+      <form method="post" action="/team/add" class="stack">
+        <label>Name<input name="name" required autocomplete="off"></label>
+        <label>Email<input name="email" type="email" required autocomplete="off"></label>
+        <fieldset class="role-pick">
+          <legend>Access</legend>
+          {% for r in roles %}
+          <label class="check"><input type="radio" name="role" value="{{ r }}" {% if r == 'viewer' %}checked{% endif %}>
+            <span><strong>{{ role_labels[r] }}</strong><br><span class="muted small">{{ role_help[r] }}</span></span></label>
+          {% endfor %}
+        </fieldset>
+        <button class="btn" type="submit">Add and get their link</button>
+      </form>
+    </section>
+    <details class="how">
+      <summary>About the shared team password</summary>
+      <p>The original team password still signs in with Admin access (leave email blank). Once everyone has their own sign-in, change it on the server with <code>sh enable-ads.sh NEW_PASSWORD</code> and keep it for emergencies.</p>
+    </details>
+  </aside>
+</div>
+
+<script>
+  const btn = document.getElementById("copy-link");
+  if (btn) btn.addEventListener("click", async () => {
+    const f = document.getElementById("setup-link");
+    try { await navigator.clipboard.writeText(f.value); } catch (e) { f.select(); document.execCommand("copy"); }
+    document.getElementById("copy-status").textContent = "Link copied.";
+  });
+</script>
+{% endblock %}

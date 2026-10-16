@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="{% block bodyclass %}{% endblock %}">
+<body class="{% block bodyclass %}{% endblock %}{% if me and not can_edit %} view-only{% endif %}">
 {% block chrome %}
 {% set here = request.url.path %}
 <header class="topbar">
@@ -18,8 +18,10 @@
     <a href="/practices" {% if here == '/practices' or here.startswith('/p/') %}aria-current="page"{% endif %}>Practices</a>
     <a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>
     <a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>
-    <a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>
-    <form method="post" action="/logout"><button class="linklike" type="submit">Sign out</button></form>
+    {% if is_admin %}<a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>
+    <a href="/team" {% if here.startswith('/team') %}aria-current="page"{% endif %}>Team</a>{% endif %}
+    {% if me %}<span class="who" title="Signed in as {{ me.name }}">{{ me.name.split(' ')[0] if me.uid else 'Shared login' }}{% if me.role != 'admin' %} <span class="role-chip">{{ role_labels[me.role] }}</span>{% endif %}</span>{% endif %}
+    <form method="post" action="/logout" class="viewer-ok"><button class="linklike" type="submit">Sign out</button></form>
   </nav>
 </header>
 {% endblock %}

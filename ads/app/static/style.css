@@ -515,3 +515,29 @@ details.drawer > summary:focus-visible { outline-offset: 4px; }
 .look a { color: var(--teal-deep); }
 @media (max-width: 640px) { .door-title { flex-basis: 100%; } .door-arrow { display: none; } }
 details:not([open]) > :not(summary) { display: none; }
+
+/* ---- sign-ins and access levels ---- */
+.who { color: inherit; opacity: 0.85; font-size: 0.92rem; }
+.role-chip { font-size: 0.72rem; font-weight: 700; padding: 0.08rem 0.45rem; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-soft); margin-left: 0.25rem; vertical-align: 0.1em; }
+.team-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 20rem); gap: 1.5rem; align-items: start; }
+.team-table td { vertical-align: top; }
+.team-actions { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start; }
+.team-actions form, .role-form { margin: 0; }
+.tag-off { color: var(--rose); background: #FBEFF3; }
+.role-pick { border: 0; padding: 0; margin: 0; display: grid; gap: 0.5rem; }
+.role-pick legend { font-weight: 500; font-size: 0.92rem; margin-bottom: 0.3rem; }
+.role-pick label.check { display: flex; flex-direction: row; gap: 0.55rem; align-items: flex-start; font-weight: 400; }
+.role-pick input { margin-top: 0.3rem; accent-color: var(--teal); width: auto; flex: none; }
+.link-box { margin-bottom: 1.5rem; border-left: 4px solid var(--teal); }
+.link-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.link-row input { flex: 1 1 18rem; min-width: 0; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; }
+.copy-status { color: var(--green); font-weight: 600; min-height: 1.2em; margin: 0.3rem 0 0; }
+.view-note { background: var(--paper); border: 1px dashed var(--line); border-radius: var(--radius-m); padding: 0.6rem 0.9rem; color: var(--ink-soft); font-size: 0.9rem; }
+@media (max-width: 820px) { .team-grid { grid-template-columns: minmax(0, 1fr); } }
+/* View-only sign-ins: hide every control that changes something (the server refuses them anyway). */
+.view-only form[method="post"]:not(.viewer-ok) { display: none !important; }
+.view-only .ref-star:disabled { cursor: default; opacity: 1; }
+.view-only .ref-note[readonly] { border-color: transparent; background: transparent; resize: none; }
+.readonly-list { margin: 0; display: grid; gap: 0.2rem; }
+.readonly-list dt { font-size: 0.8rem; color: var(--ink-soft); margin-top: 0.4rem; }
+.readonly-list dd { margin: 0; overflow-wrap: anywhere; }

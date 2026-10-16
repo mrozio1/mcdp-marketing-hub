@@ -278,6 +278,27 @@ Meta "results" count `lead`,
 
 Tests: `cd ads && ADS_DISABLE_SCHEDULER=1 python -m pytest tests` (includes a mock of the Meta and Google APIs).
 
+## Who can do what (sign-ins and access levels)
+
+Everyone signs in with their own email and password. Admins manage this on the **Team**
+page: add a person, pick their access, and send them the one-time setup link (Copy link, or
+"Open an email" to send it from Outlook; links expire after 7 days).
+
+| | Viewer | Editor | Admin |
+|---|:-:|:-:|:-:|
+| See practices, ads, organic posts, the map and map lists | ✓ | ✓ | ✓ |
+| Run AI write-ups and reports; print, email, download spreadsheets, export map lists | ✓ | ✓ | ✓ |
+| Add/edit/delete practices, uploads, linked accounts, campaigns; Sync now | | ✓ | ✓ |
+| Prepare, apply and undo fixes in Google / Meta; write draft ads | | ✓ | ✓ |
+| Map offices, imports, refresh; referral list marks (include / star / note) | | ✓ | ✓ |
+| Connections (tokens, keys), map setup (keys), Team page | | | ✓ |
+
+Rules are enforced on the server for every request, not just hidden in the page. A role
+change or "Turn off" takes effect immediately. The fixes history records who applied each
+change. The original shared team password (ADS_PASSWORD) still signs in as Admin with email
+left blank; once everyone has a personal sign-in, change it with `sh enable-ads.sh NEW_PASSWORD`
+and keep it for emergencies. Passwords are stored as salted PBKDF2 hashes.
+
 ## Maintenance
 
 - Backups: automatic once a day (database, media and the Ads page data) via the `postiz-backup`

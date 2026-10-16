@@ -62,7 +62,7 @@
     <tbody>
     {% for o in offices %}{% set c = counts.get(o.id, {}) %}
       <tr>
-        <td><form method="post" action="/map/offices/{{ o.id }}/rename" class="rename-form">
+        <td>{% if not can_edit %}<strong>{{ o.label }}</strong><br>{% endif %}<form method="post" action="/map/offices/{{ o.id }}/rename" class="rename-form">
           <input name="label" value="{{ o.label }}" aria-label="Office name" maxlength="120">
           <button class="btn btn-small btn-quiet" type="submit">Rename</button></form>
           {% if o.address %}<span class="small muted">{{ o.address }}</span>{% endif %}
@@ -141,6 +141,7 @@
   </div>
 </details>
 
+{% if is_admin %}
 <details class="drawer" id="setup" {% if not browser_key or not server_key_set %}open{% endif %}>
   <summary><span class="drawer-title">Map setup</span><span class="drawer-hint">Google keys, radius, brand names, limits</span></summary>
   <div class="drawer-body">
@@ -181,6 +182,7 @@
   </details>
   </div>
 </details>
+{% endif %}
 
 {% if browser_key %}
 <script>

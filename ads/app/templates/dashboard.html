@@ -41,6 +41,7 @@
 <p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, from each practice’s latest exports.</p>
 {% endif %}
 
+{% if can_edit %}
 <details class="drawer add" id="add-practice" {% if not items %}open{% endif %}>
   <summary><span class="drawer-title">Add a practice</span><span class="drawer-hint">Name, monthly budgets and which campaigns are its own</span></summary>
   <div class="drawer-body">
@@ -53,4 +54,5 @@
   </form>
   </div>
 </details>
+{% endif %}
 {% endblock %}

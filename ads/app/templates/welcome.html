@@ -4,7 +4,7 @@
 <div class="welcome">
   <section class="welcome-hero">
     <h1 class="welcome-greeting" id="greeting">Welcome.</h1>
-    <p class="welcome-lede">Everything for your practices, in one quiet place. Start wherever you like; nothing changes in Google or Meta until you approve it.</p>
+    <p class="welcome-lede">Everything for your practices, in one quiet place. {% if can_edit %}Start wherever you like; nothing changes in Google or Meta until you approve it.{% else %}You can look at everything and run, print, email or export any report.{% endif %}</p>
   </section>
 
   <section aria-labelledby="start-here">
@@ -57,7 +57,8 @@
   (() => {
     const h = new Date().getHours();
     const word = h < 5 ? "evening" : h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
-    document.getElementById("greeting").textContent = `Good ${word}.`;
+    const first = {{ (me.name.split(' ')[0] if me and me.uid else '')|tojson }};
+    document.getElementById("greeting").textContent = first ? `Good ${word}, ${first}.` : `Good ${word}.`;
   })();
 </script>
 {% endblock %}
