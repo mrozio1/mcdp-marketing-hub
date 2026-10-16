@@ -1,0 +1,169 @@
+/* MCDP Hub look for Social (social.mcdp.com). Added to every page by the social-skin proxy;
+   the scheduling app itself is unchanged. Remove the proxy to go back to the stock look. */
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Public+Sans:wght@400;500;600;700&display=swap");
+
+/* ---- palette: one light theme for both of the app's modes (hub ivory, white, hairlines, teal) ---- */
+:root body.dark, :root body.light, :root body {
+  --new-back-drop: #1A1A1A !important;
+  --new-settings: #F1EEE7 !important;
+  --new-sep: #DCD7CD !important;
+  --new-border: #E3DED4 !important;
+  --new-bgColor: #FAF8F4 !important;
+  --new-bgColorInner: #FFFFFF !important;
+  --new-bgLineColor: #E3DED4 !important;
+  --new-textItemFocused: #0A5654 !important;
+  --new-textItemBlur: #5B5852 !important;
+  --new-boxFocused: #E6F0EE !important;
+  --new-textColor: 26 26 26 !important;
+  --new-blockSeparator: #EEEAE2 !important;
+  --new-btn-simple: #F1EEE7 !important;
+  --new-btn-text: #1A1A1A !important;
+  --new-btn-primary: #0F7471 !important;
+  --new-ai-btn: #9A4A2E !important;
+  --new-box-hover: #F6F3ED !important;
+  --new-table-border: #E3DED4 !important;
+  --new-table-header: #F7F4EE !important;
+  --new-table-text: #5B5852 !important;
+  --new-table-text-focused: #0F7471 !important;
+  --new-small-strips: #1A1A1A !important;
+  --new-big-strips: #F6F3ED !important;
+  --new-col-color: #F1EEE7 !important;
+  --new-menu-dots: #8A867E !important;
+  --new-menu-hover: #1A1A1A !important;
+  --menu-shadow: -22px 83px 24px 0 rgba(55, 52, 75, 0), -14px 53px 22px 0 rgba(55, 52, 75, 0.01), -8px 30px 19px 0 rgba(55, 52, 75, 0.05), -3px 13px 14px 0 rgba(55, 52, 75, 0.09), -1px 3px 8px 0 rgba(55, 52, 75, 0.1) !important;
+  --popup-color: rgba(26, 26, 26, 0.25) !important;
+  --border-preview: #EEEAE2 !important;
+  --preview-box-shadow: 0 386px 108px 0 rgba(38, 32, 64, 0), 0 247px 99px 0 rgba(38, 32, 64, 0.01), 0 139px 83px 0 rgba(38, 32, 64, 0.03), 0 62px 62px 0 rgba(38, 32, 64, 0.04), 0 15px 34px 0 rgba(38, 32, 64, 0.05) !important;
+  --linkedin-border: #e9e5df !important;
+  --linkedin-bg: #fff !important;
+  --linkedin-text: #707070 !important;
+  --facebook-bg: #fff !important;
+  --facebook-bg-comment: #f6f6f6 !important;
+  --instagram-bg: #fff !important;
+  --tiktok-item-bg: #EEF1F0 !important;
+  --tiktok-item-icon-bg: #454645 !important;
+  --youtube-bg: #FFF !important;
+  --youtube-button: #000 !important;
+  --youtube-action-color: #F1F1F1 !important;
+  --youtube-svg-border: #1A1A1A !important;
+  --color-primary: #FAF8F4 !important;
+  --color-secondary: #FFFFFF !important;
+  --color-text: #1A1A1A !important;
+  --color-third: #FFFFFF !important;
+  --color-forth: #0F7471 !important;
+  --color-fifth: var(--new-bgLineColor) !important;
+  --color-sixth: var(--new-table-header) !important;
+  --color-seventh: #0F7471 !important;
+  --color-gray: #8A867E !important;
+  --color-input: var(--new-table-header) !important;
+  --color-input-text: #64748b !important;
+  --color-table-border: #E3DED4 !important;
+  --color-custom1: #324264 !important;
+  --color-custom2: #F6F3ED !important;
+  --color-custom3: #fff !important;
+  --color-custom4: #0F7471 !important;
+  --color-custom5: #EEEAE2 !important;
+  --color-custom6: var(--new-bgLineColor) !important;
+  --color-custom7: #0F7471 !important;
+  --color-custom8: var(--new-btn-simple) !important;
+  --color-custom9: #354258 !important;
+  --color-custom10: #e4b895 !important;
+  --color-custom11: #5FA8A2 !important;
+  --color-custom12: #CFE3DF !important;
+  --color-custom13: #ffac30 !important;
+  --color-custom14: #576a9a !important;
+  --color-custom15: #0a0a0a !important;
+  --color-custom16: #121a2d !important;
+  --color-custom17: #000 !important;
+  --color-custom18: #000 !important;
+  --color-custom19: #f97066 !important;
+  --color-custom20: #f5f5f5 !important;
+  --color-custom21: #506490 !important;
+  --color-custom22: #b91c1c !important;
+  --color-custom23: #f5f5f5 !important;
+  --color-custom24: #eaff00 !important;
+  --color-custom25: #2e3336 !important;
+  --color-custom26: #1d9bf0 !important;
+  --color-custom27: #71767b !important;
+  --color-custom28: #9CC9C3 !important;
+  --color-custom29: #0A3F3D !important;
+  --color-custom30: #efefef !important;
+  --color-custom31: #e0e0e0 !important;
+  --color-custom32: #181818 !important;
+  --color-custom33: #f2f2f2 !important;
+  --color-custom34: #334155 !important;
+  --color-custom35: #242424 !important;
+  --color-custom36: #6b6b6b !important;
+  --color-custom37: #0b1416 !important;
+  --color-custom38: #d9d9d9 !important;
+  --color-custom39: #000 !important;
+  --color-custom40: #fff !important;
+  --color-custom41: #CFE3DF !important;
+  --color-custom42: #32d583 !important;
+  --color-custom43: #425379 !important;
+  --color-custom44: #283450 !important;
+  --color-custom45: #0A5654 !important;
+  --color-custom46: #658dac !important;
+  --color-custom47: #182034 !important;
+  --color-custom48: #fff !important;
+  --color-custom49: #0a0b14 !important;
+  --color-custom50: #0A3F3D !important;
+  --color-custom51: #0F7471 !important;
+  --color-custom52: #EEEAE2 !important;
+  --color-custom53: #7c7d86 !important;
+  --color-custom54: #afb8c1 !important;
+  --color-custom55: #d5d7e1 !important;
+  --color-modalCustom: transparent !important;
+  --mcdp-ink: #1A1A1A; --mcdp-soft: #5B5852; --mcdp-ground: #FAF8F4; --mcdp-hair: #E3DED4;
+  --mcdp-teal: #0F7471; --mcdp-teal-deep: #0A5654; --mcdp-wash: #E6F0EE; --mcdp-clay: #9A4A2E;
+}
+
+/* ---- type: the hub's fonts ---- */
+body[class], body[class] button, body[class] input, body[class] textarea, body[class] select {
+  font-family: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+body[class] { background: var(--mcdp-ground) !important; color: var(--mcdp-ink); }
+[class~="text-[24px]"][class~="font-[600]"], h1, h2 {
+  font-family: "Newsreader", Georgia, serif !important; font-weight: 400 !important; letter-spacing: -0.01em;
+}
+.set-font-family { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif !important; } /* post previews */
+
+/* ---- logo: the app's mark becomes a quiet MCDP mark ---- */
+svg[viewBox="0 0 60 60"]:has(> path[fill="#612BD3"]) { display: none !important; }
+:has(> svg[viewBox="0 0 60 60"] > path[fill="#612BD3"])::before {
+  content: "M"; display: grid; place-items: center; width: 48px; height: 48px; margin-top: 8px;
+  font-family: "Newsreader", Georgia, serif; font-size: 30px; line-height: 1; color: var(--mcdp-teal);
+  background: #fff; border: 1px solid var(--mcdp-hair); border-radius: 10px;
+}
+svg[viewBox="0 0 101 33"] { display: none !important; }
+:has(> svg[viewBox="0 0 101 33"])::before {
+  content: "MCDP Social"; font-family: "Newsreader", Georgia, serif; font-size: 30px; color: var(--mcdp-ink);
+}
+
+/* ---- sign-in pages: ivory instead of black, no marketing panel ---- */
+[class~="bg-[#0E0E0E]"] { background: var(--mcdp-ground) !important; color: var(--mcdp-ink) !important; justify-content: center; }
+[class~="bg-[#0E0E0E]"] > [class~="pt-[88px]"] { display: none !important; }
+[class~="bg-[#1A1919]"], [class~="bg-[#2A2929]"] { background: #fff !important; border: 1px solid var(--mcdp-hair); color: var(--mcdp-ink) !important; }
+[class~="bg-[#0E0E0E]"] [class~="text-white"]:not(button):not(a) { color: var(--mcdp-ink) !important; }
+[class~="bg-[#0E0E0E]"] input { background: #fff !important; color: var(--mcdp-ink) !important; border-color: #D8D2C6 !important; }
+
+/* ---- the app's purple and pink, written directly into some buttons, become teal / clay ---- */
+[class~="bg-[#612BD3]"], [class~="bg-[#612bd3]"], [class~="bg-[#7B3FF2]"], [class~="bg-[#5520CB]"] { background-color: var(--mcdp-teal) !important; }
+[class~="hover:bg-[#5520CB]"]:hover, [class~="hover:bg-[#612BD3]"]:hover { background-color: var(--mcdp-teal-deep) !important; }
+[class~="border-[#612BD3]"], [class~="border-[#612bd3]"], [class~="border-[#FC69FF]"] { border-color: var(--mcdp-teal) !important; }
+[class~="text-[#612BD3]"], [class~="text-[#612bd3]"], [class~="text-[#FC69FF]"], [class~="text-[#B69DEC]"] { color: var(--mcdp-teal) !important; }
+[class~="bg-[#FC69FF]"] { background-color: var(--mcdp-teal) !important; }
+[class~="bg-[#D82D7E]"], [class~="bg-[#AA0FA4]"] { background-color: var(--mcdp-clay) !important; }
+[class*="from-[#"] { --tw-gradient-from: #0F7471 !important; --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to, #0A5654) !important; }
+[class*="to-[#"] { --tw-gradient-to: #0A5654 !important; }
+::selection { background: var(--mcdp-wash); }
+
+/* ---- the small hub / license link added by skin.js ---- */
+.mcdp-foot {
+  position: fixed; right: 12px; bottom: 8px; z-index: 5; display: flex; gap: 10px;
+  font: 12px/1.4 "Public Sans", system-ui, sans-serif; color: var(--mcdp-soft);
+  background: rgba(250, 248, 244, 0.92); padding: 4px 10px; border: 1px solid var(--mcdp-hair); border-radius: 999px;
+}
+.mcdp-foot a { color: var(--mcdp-soft); text-decoration: none; }
+.mcdp-foot a:hover { color: var(--mcdp-teal-deep); text-decoration: underline; }
+@media print { .mcdp-foot { display: none; } }

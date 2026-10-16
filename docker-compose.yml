@@ -201,6 +201,27 @@ services:
     profiles: [ads]
 
   # ---- Cloudflare Tunnel: public HTTPS URL with no open ports on the server ----
+  # ---- MCDP Hub look for Social (social.mcdp.com) ----
+  # Adds the hub's stylesheet and wording to Social's pages; the app itself is unchanged.
+  # Takes effect once the tunnel's social.mcdp.com route points at http://social-skin:8080.
+  social-skin:
+    image: nginx:1.27-alpine
+    container_name: social-skin
+    restart: unless-stopped
+    volumes:
+      - ./social-skin/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./social-skin/www:/skin:ro
+    ports:
+      # Server-only, for checking it from the NAS itself: http://127.0.0.1:4011
+      - "127.0.0.1:${SOCIAL_SKIN_PORT:-4011}:8080"
+    networks: [postiz-network]
+    depends_on: [postiz]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/__mcdp-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: postiz-tunnel

@@ -91,6 +91,21 @@ that isn't a daily task — uploads, linked accounts, budgets, keys and tokens, 
 map setup — sits in a closed drop-down on its page. Drop-downs open by themselves when something
 there still needs setting up, and any link to one (e.g. `#settings`) opens it.
 
+### Social (social.mcdp.com) in the same look
+
+The `social-skin` container is a small nginx that sits in front of the social app. It passes
+everything through unchanged, but adds `social-skin/www/skin.css` and `skin.js` to each page:
+the ivory/teal colours and serif headings, light mode only, an “M” mark in place of the vendor
+logo, and the vendor's name replaced with “Social” in what you read on screen (never inside
+posts you are writing, code or form fields). A small footer pill links back to the hub and to the
+open-source licence and source code, which the AGPL licence asks us to keep offered.
+
+To switch it on, point the tunnel's public hostname `social.mcdp.com` at
+`http://social-skin:8080` instead of `http://postiz:5000` (Cloudflare Zero Trust → Networks →
+Tunnels → your tunnel → Public Hostname). To switch it off, point it back. Nothing inside the
+social app is changed, so updates to it keep working; if a new screen shows stray purple, add a
+rule to `skin.css` and bump `?v=` in `social-skin/default.conf`.
+
 ## Ads page (Google Ads + Meta Ads, per practice)
 
 A separate page (container `postiz-ads`) for paid ads. Add each practice with its
