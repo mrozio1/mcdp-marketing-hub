@@ -52,7 +52,8 @@ COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", 
            "active": "INTEGER NOT NULL DEFAULT 1", "ever_set": "INTEGER NOT NULL DEFAULT 0",
            "last_login": "TEXT DEFAULT ''", "field_budget": "REAL DEFAULT 0", "home_address": "TEXT DEFAULT ''",
            "home_lat": "REAL", "home_lng": "REAL",
-           "field": "INTEGER NOT NULL DEFAULT 0"}   # field visits switched on for this person (any access level)
+           "field": "INTEGER NOT NULL DEFAULT 0",
+           "social": "INTEGER NOT NULL DEFAULT 1"}   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
 
 
 def init():
@@ -75,9 +76,18 @@ def init():
         c.execute("UPDATE users SET role='viewer', field=1 WHERE role='agent'")
 
 
-def set_field(uid, on):
+SWITCHES = {"field": "Field visits", "social": "Social"}
+
+
+def set_switch(uid, name, on):
+    if name not in SWITCHES:
+        raise ValueError("Unknown switch.")
     with db.conn() as c:
-        c.execute("UPDATE users SET field=? WHERE id=?", (1 if on else 0, uid))
+        c.execute(f"UPDATE users SET {name}=? WHERE id=?", (1 if on else 0, uid))
+
+
+def set_field(uid, on):
+    set_switch(uid, "field", on)
 
 
 def rank(role):
@@ -151,7 +161,7 @@ def any_admin():
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def add(name, email, role, field=False):
+def add(name, email, role, field=False, social=True):
     """Returns (user, setup_token) or raises ValueError with a message for the page."""
     name, email = (name or "").strip(), (email or "").strip().lower()
     if not name:
@@ -163,8 +173,8 @@ def add(name, email, role, field=False):
     if by_email(email):
         raise ValueError(f"{email} already has an account.")
     with db.conn() as c:
-        cur = c.execute("INSERT INTO users(email, name, role, created_at, field) VALUES (?,?,?,?,?)",
-                        (email, name[:80], role, db.now(), 1 if field else 0))
+        cur = c.execute("INSERT INTO users(email, name, role, created_at, field, social) VALUES (?,?,?,?,?,?)",
+                        (email, name[:80], role, db.now(), 1 if field else 0, 1 if social else 0))
         uid = cur.lastrowid
     return get(uid), new_link(uid)
 

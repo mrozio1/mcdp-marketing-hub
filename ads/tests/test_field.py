@@ -25,7 +25,7 @@ def env(tmp_path_factory):
     from fastapi.testclient import TestClient
 
     def person(admin, name, email, role, field_on=False):
-        r = admin.post("/team/add", data={"name": name, "email": email, "role": role, "field_on": "1" if field_on else ""})
+        r = admin.post("/team/add", data={"name": name, "email": email, "role": role, "field_on": "1" if field_on else "", "social_on": "1"})
         tok = re.search(r"/setup/([\w-]+)", r.text).group(1)
         c = TestClient(main.app)
         c.post(f"/setup/{tok}", data={"password": "long-password-1", "confirm": "long-password-1"})
@@ -76,16 +76,16 @@ def test_who_can_log(env):
     assert "view-only access" in r.text
     # The switch: off stops logging straight away, on brings it back; any access level can have it.
     uid = env["users"].by_email("abe@example.com")["id"]
-    env["admin"].post(f"/team/{uid}/field", data={"on": ""})
+    env["admin"].post(f"/team/{uid}/switch/field", data={"on": ""})
     r = a.get("/field/log?place=ChIJ_dentist_maple001", follow_redirects=True)
     assert "Field visits aren" in r.text
-    env["admin"].post(f"/team/{uid}/field", data={"on": "1"})
+    env["admin"].post(f"/team/{uid}/switch/field", data={"on": "1"})
     assert a.get("/field/log?place=ChIJ_dentist_maple001").status_code == 200
     ann = env["users"].by_email("ann@example.com")["id"]
     assert env["admin"].get("/field/log", follow_redirects=False).status_code == 303   # admins too need it on
-    env["admin"].post(f"/team/{ann}/field", data={"on": "1"})
+    env["admin"].post(f"/team/{ann}/switch/field", data={"on": "1"})
     assert env["admin"].get("/field/log").status_code == 200
-    env["admin"].post(f"/team/{ann}/field", data={"on": ""})
+    env["admin"].post(f"/team/{ann}/switch/field", data={"on": ""})
 
 
 def test_log_from_a_map_pin_uses_npi_name_not_google(env):
@@ -232,3 +232,18 @@ def test_old_field_agent_level_becomes_viewer_with_switch(env):
     users.init()
     u = users.by_email("old@example.com")
     assert u["role"] == "viewer" and u["field"] == 1
+
+
+def test_social_switch_shows_or_hides_the_link(env):
+    users, admin, v = env["users"], env["admin"], env["viewer"]
+    vid = users.by_email("vi@example.com")["id"]
+    assert users.get(vid)["social"] == 1                                         # on unless switched off
+    assert 'href="https://social.mcdp.com"' in v.get("/").text
+    admin.post(f"/team/{vid}/switch/social", data={"on": ""})
+    home = v.get("/").text
+    assert 'href="https://social.mcdp.com"' not in home and "Social posts" not in home
+    admin.post(f"/team/{vid}/switch/social", data={"on": "1"})
+    assert 'href="https://social.mcdp.com"' in v.get("/").text
+    assert admin.post(f"/team/{vid}/switch/nonsense", data={"on": "1"}).status_code == 200   # ignored
+    r = admin.post("/team/add", data={"name": "No Social", "email": "nos@example.com", "role": "viewer"})
+    assert users.by_email("nos@example.com")["social"] == 0                       # unticked when adding

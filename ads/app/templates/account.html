@@ -7,6 +7,7 @@
     <div><dt>Name</dt><dd>{{ me.name }}</dd></div>
     {% if me.email %}<div><dt>Email</dt><dd>{{ me.email }}</dd></div>{% endif %}
     <div><dt>Access</dt><dd>{{ labels[me.role] }} <span class="muted small">· {{ help[me.role] }}</span></dd></div>
+    <div><dt>Social</dt><dd>{{ 'On' if me.get('social', 1) else 'Off' }}</dd></div>
     <div><dt>Field visits</dt><dd>{{ 'On' if me.field else 'Off' }}{% if not me.field %} <span class="muted small">· an admin can switch them on</span>{% endif %}</dd></div>
   </dl>
 </section>

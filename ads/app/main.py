@@ -191,6 +191,7 @@ def page(request, name, **ctx):
     ctx["can_edit"] = bool(u) and users.rank(u["role"]) >= users.rank("editor")
     ctx["is_admin"] = bool(u) and u["role"] == "admin"
     ctx["can_log"] = bool(u) and bool(u.get("field"))
+    ctx["show_social"] = bool(u) and bool(u.get("social", 1))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -372,11 +373,11 @@ def team(request: Request):
 
 @app.post("/team/add")
 def team_add(request: Request, name: str = Form(""), email: str = Form(""), role: str = Form("viewer"),
-             field_on: str = Form("")):
+             field_on: str = Form(""), social_on: str = Form("")):
     if (r := guard(request)):
         return r
     try:
-        u, token = users.add(name, email, role, bool(field_on))
+        u, token = users.add(name, email, role, bool(field_on), bool(social_on))
     except ValueError as e:
         flash(request, str(e), "error")
         return RedirectResponse("/team#add", status_code=303)
@@ -421,14 +422,14 @@ def team_active(request: Request, uid: int, active: str = Form("")):
     return RedirectResponse("/team", status_code=303)
 
 
-@app.post("/team/{uid}/field")
-def team_field(request: Request, uid: int, on: str = Form("")):
+@app.post("/team/{uid}/switch/{name}")
+def team_switch(request: Request, uid: int, name: str, on: str = Form("")):
     if (r := guard(request)):
         return r
     u = users.get(uid)
-    if u:
-        users.set_field(uid, bool(on))
-        flash(request, f"Field visits {'on' if on else 'off'} for {u['name']}.")
+    if u and name in users.SWITCHES:
+        users.set_switch(uid, name, bool(on))
+        flash(request, f"{users.SWITCHES[name]} {'on' if on else 'off'} for {u['name']}.")
     return RedirectResponse("/team", status_code=303)
 
 

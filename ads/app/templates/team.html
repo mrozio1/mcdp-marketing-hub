@@ -18,13 +18,13 @@
 
 <dl class="roles">
   {% for r in roles %}<div><dt>{{ labels[r] }}</dt><dd>{{ help[r] }}</dd></div>{% endfor %}
-  <div><dt>Field visits</dt><dd>A switch for anyone, whatever their access: log office visits, receipts and routes.</dd></div>
+  <div><dt>Social · Field visits</dt><dd>Switches for anyone, whatever their access. Social shows the link to social.mcdp.com (which has its own sign-in); Field visits lets them log office visits, receipts and routes.</dd></div>
 </dl>
 
 {% if people %}
 <div class="table-scroll">
 <table class="data team-table">
-  <thead><tr><th>Person</th><th>Access</th><th>Field visits</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>Person</th><th>Access</th><th>Social</th><th>Field visits</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for u in people %}
     <tr class="{{ '' if u.active else 'muted' }}">
@@ -38,7 +38,13 @@
         </form>
       </td>
       <td>
-        <form method="post" action="/team/{{ u.id }}/field" class="inline-form">
+        <form method="post" action="/team/{{ u.id }}/switch/social" class="inline-form">
+          <label class="switch"><input type="checkbox" name="on" value="1" {% if u.social %}checked{% endif %} onchange="this.form.requestSubmit()" aria-label="Social for {{ u.name }}"><span>{{ 'On' if u.social else 'Off' }}</span></label>
+          <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/team/{{ u.id }}/switch/field" class="inline-form">
           <label class="switch"><input type="checkbox" name="on" value="1" {% if u.field %}checked{% endif %} onchange="this.form.requestSubmit()" aria-label="Field visits for {{ u.name }}"><span>{{ 'On' if u.field else 'Off' }}</span></label>
           <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
         </form>
@@ -74,6 +80,7 @@
     <label>Access
       <select name="role">{% for r in roles %}<option value="{{ r }}" {% if (shared and r == 'admin') or (not shared and r == 'viewer') %}selected{% endif %}>{{ labels[r] }}</option>{% endfor %}</select>
     </label>
+    <label class="check"><input type="checkbox" name="social_on" value="1" checked> Social <span class="muted small">(the link to social.mcdp.com in the hub)</span></label>
     <label class="check"><input type="checkbox" name="field_on" value="1"> Field visits <span class="muted small">(log office visits, receipts and routes)</span></label>
     <button class="btn" type="submit">Add and make a setup link</button>
   </form>

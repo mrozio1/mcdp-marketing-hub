@@ -16,7 +16,7 @@
   <a class="brand" href="/">MCDP Hub</a>
   <nav aria-label="Main">
     <a href="/practices" {% if here == '/practices' or here.startswith('/p/') %}aria-current="page"{% endif %}>Practices</a>
-    <a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>
+    {% if show_social %}<a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>{% endif %}
     <a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>
     <a href="/field" {% if here.startswith('/field') %}aria-current="page"{% endif %}>Field</a>
     {% if is_admin %}
