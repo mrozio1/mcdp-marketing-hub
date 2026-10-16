@@ -78,6 +78,19 @@ sh enable-cf-images.sh CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN   # token: "Wo
 sh enable-cf-images.sh off
 ```
 
+## Welcome page and layout
+
+`ads.mcdp.com` opens on a welcome page: a greeting that follows the viewer's time of day
+(“Good morning / afternoon / evening”, from their computer's clock; “Welcome.” if scripts are
+off), four ways in (Practices & ads, Social posts, Market map, Export map lists), this month's ad
+spend, leads and practices mapped, and up to three things worth a look (fixes waiting, a map or
+list that needs attention, the last ad sync). The practices list lives at `/practices`.
+
+The whole app uses the same quiet look (ivory background, serif headings, hairlines). Anything
+that isn't a daily task — uploads, linked accounts, budgets, keys and tokens, the office list,
+map setup — sits in a closed drop-down on its page. Drop-downs open by themselves when something
+there still needs setting up, and any link to one (e.g. `#settings`) opens it.
+
 ## Ads page (Google Ads + Meta Ads, per practice)
 
 A separate page (container `postiz-ads`) for paid ads. Add each practice with its

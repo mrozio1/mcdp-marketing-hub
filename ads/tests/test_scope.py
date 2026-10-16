@@ -105,7 +105,7 @@ def test_master_split_and_filtered_practice(client):
     # Master is labelled, keeps everything, and breaks spend down by practice
     html = c.get(f"/p/{master}").text
     assert "Master record" in html and "By practice" in html and "$819.00" in html
-    dash = c.get("/").text
+    dash = c.get("/practices").text
     assert dash.index("MCDP Ads") < dash.index("Invisalign - Search")   # master listed first
     assert "Master</span>" in dash
 

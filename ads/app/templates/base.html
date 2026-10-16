@@ -3,20 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}Ads{% endblock %} · MCDP Ads</title>
+<title>{% block title %}Ads{% endblock %} · MCDP Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="{% block bodyclass %}{% endblock %}">
 {% block chrome %}
+{% set here = request.url.path %}
 <header class="topbar">
-  <a class="brand" href="/">MCDP Ads</a>
-  <nav>
-    <a href="/">Practices</a>
-    <a href="/map">Map</a>
-    <a href="/connections">Connections</a>
+  <a class="brand" href="/">MCDP Hub</a>
+  <nav aria-label="Main">
+    <a href="/practices" {% if here == '/practices' or here.startswith('/p/') %}aria-current="page"{% endif %}>Practices</a>
+    <a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>
+    <a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>
+    <a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>
     <form method="post" action="/logout"><button class="linklike" type="submit">Sign out</button></form>
   </nav>
 </header>
@@ -26,6 +28,15 @@
   {% block content %}{% endblock %}
 </main>
 <script>
+  // Drop-downs (setup, uploads, keys): a link to one, or to something inside one, opens it.
+  const openTarget = () => {
+    if (!location.hash) return;
+    const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    const d = t && (t.matches("details") ? t : t.closest("details"));
+    if (d && !d.open) { d.open = true; t.scrollIntoView({ block: "start" }); }
+  };
+  openTarget();
+  window.addEventListener("hashchange", openTarget);
   // Disable buttons on submit so slow AI requests aren't sent twice, and say what's happening.
   document.querySelectorAll('form[data-busy]').forEach(f => f.addEventListener('submit', e => {
     const b = e.submitter || f.querySelector('button[type=submit]');

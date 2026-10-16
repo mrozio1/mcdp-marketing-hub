@@ -158,12 +158,12 @@ def sync_social(practices, today=None):
         return {a: {"ok": False, "error": str(e)} for a in fb_ids + ig_ids}
     tokens = {pg["id"]: pg["token"] for pg in pages}
     ig_tokens = {ig["id"]: ig["token"] for ig in igs}
-    no_access = ("can't be read yet. Either connect it in Postiz, or in Meta Business Settings assign it to "
+    no_access = ("can't be read yet. Either connect it in Social (social.mcdp.com), or in Meta Business Settings assign it to "
                  "the MCDP_Ads_Reader system user (View Page performance).")
     for pid in fb_ids:
         if pid not in tokens:
             out[pid] = {"ok": False, "error": "This Facebook Page isn't visible any more: it isn't assigned to the "
-                                              "system user, in an MCDP portfolio, or connected in Postiz."}
+                                              "system user, in an MCDP portfolio, or connected in Social."}
             continue
         if not tokens[pid]:
             out[pid] = {"ok": False, "error": "This Facebook Page " + no_access}

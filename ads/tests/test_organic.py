@@ -125,7 +125,7 @@ def test_page_permission_problem_is_reported(hub, monkeypatch):
     monkeypatch.setattr(cx, "meta_pages", lambda: ([], []))
     status = sync.sync_all(today=date(2026, 10, 12))
     fb = status["results"][str(heights)]["facebook"]
-    assert not fb["ok"] and "isn't visible any more" in fb["error"] and "Postiz" in fb["error"]
+    assert not fb["ok"] and "isn't visible any more" in fb["error"] and "Social" in fb["error"]
 
 
 def test_portfolio_pages_and_postiz_fallback(hub, monkeypatch):
@@ -151,8 +151,8 @@ def test_portfolio_pages_and_postiz_fallback(hub, monkeypatch):
     db.set_practice_social(pinnacle, "pg4", "")
     status = sync.sync_all(today=date(2026, 10, 12))
     assert status["results"][str(bandeen)]["facebook"] == {"ok": True, "posts": 1, "accounts": 1}   # via Postiz's token
-    assert "connect it in Postiz" in status["results"][str(bandeen)]["instagram"]["error"]
-    assert "connect it in Postiz" in status["results"][str(pinnacle)]["facebook"]["error"]
+    assert "connect it in Social" in status["results"][str(bandeen)]["instagram"]["error"]
+    assert "connect it in Social" in status["results"][str(pinnacle)]["facebook"]["error"]
     assert "Bandeen open house" in c.get(f"/p/{bandeen}?show=organic").text
     assert all("token" not in x for x in sync.cached_list("fb_pages") + sync.cached_list("ig_accounts"))
 

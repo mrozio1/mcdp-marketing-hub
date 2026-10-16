@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Welcome{% endblock %}
+{% block content %}
+<div class="welcome">
+  <section class="welcome-hero">
+    <h1 class="welcome-greeting" id="greeting">Welcome.</h1>
+    <p class="welcome-lede">Everything for your practices, in one quiet place. Start wherever you like; nothing changes in Google or Meta until you approve it.</p>
+  </section>
+
+  <section aria-labelledby="start-here">
+    <h2 id="start-here" class="eyebrow">Start here</h2>
+    <ul class="doors">
+      <li><a href="/practices">
+        <span class="door-title">Practices &amp; ads</span>
+        <span class="door-text">Spend, leads and pacing for every practice, with fixes you approve one by one.</span>
+        <span class="door-arrow" aria-hidden="true">→</span></a></li>
+      <li><a href="{{ social_url }}" target="_blank" rel="noopener">
+        <span class="door-title">Social posts</span>
+        <span class="door-text">Plan and schedule Facebook and Instagram posts.</span>
+        <span class="door-arrow" aria-hidden="true">↗</span></a></li>
+      <li><a href="/map">
+        <span class="door-title">Market map</span>
+        <span class="door-text">Our offices, the dentists around them and the competition.</span>
+        <span class="door-arrow" aria-hidden="true">→</span></a></li>
+      <li><a href="/map/list">
+        <span class="door-title">Export map lists</span>
+        <span class="door-text">Referral and competition lists by practice, ready for Excel.</span>
+        <span class="door-arrow" aria-hidden="true">→</span></a></li>
+    </ul>
+  </section>
+
+  <section class="welcome-lower">
+    <div aria-labelledby="this-month">
+      <h2 id="this-month" class="eyebrow">This month</h2>
+      <dl class="glance">
+        <div><dt>Ad spend</dt><dd>{% if ads %}{{ ads.spend|money }}{% else %}—{% endif %}</dd></div>
+        <div><dt>Leads</dt><dd>{% if ads %}{{ '{:,.0f}'.format(ads.leads) }}{% else %}—{% endif %}</dd></div>
+        <div><dt>Practices mapped</dt><dd>{% if mapped %}{{ '{:,}'.format(mapped) }}{% else %}—{% endif %}</dd></div>
+      </dl>
+      {% if ads %}<p class="small muted">Ads from {{ ads.since.strftime('%b %-d') }} to {{ ads.until.strftime('%b %-d') }}, all practices.</p>
+      {% else %}<p class="small muted">Ad numbers appear once accounts are synced or exports uploaded.</p>{% endif %}
+    </div>
+    <div aria-labelledby="worth-a-look">
+      <h2 id="worth-a-look" class="eyebrow">Worth a look</h2>
+      {% if look %}
+      <ul class="look">
+        {% for it in look %}<li>{% if it.href %}<a href="{{ it.href }}">{{ it.text }}</a>{% else %}<span class="muted">{{ it.text }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% else %}<p class="muted">Nothing needs you right now.</p>{% endif %}
+    </div>
+  </section>
+
+  <p class="small muted">Every page has a “Where do I get this?” guide if you get stuck.</p>
+</div>
+<script>
+  // Greet by the time of day where the viewer is (their computer's clock and time zone).
+  (() => {
+    const h = new Date().getHours();
+    const word = h < 5 ? "evening" : h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+    document.getElementById("greeting").textContent = `Good ${word}.`;
+  })();
+</script>
+{% endblock %}

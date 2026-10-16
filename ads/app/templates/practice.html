@@ -2,7 +2,7 @@
 {% from "_macros.html" import ruler %}
 {% block title %}{{ p.name }}{% endblock %}
 {% block content %}
-<p class="crumb"><a href="/">Practices</a></p>
+<p class="crumb"><a href="/practices">Practices</a></p>
 <h1>{{ p.name }}</h1>
 {% if master %}<p class="scope-note"><span class="tag tag-master">Master record</span> Every campaign in the linked accounts, with a breakdown by practice.</p>
 {% elif p.campaign_filter %}<p class="scope-note">Campaigns containing <strong>{{ p.campaign_filter }}</strong> <a class="small" href="#settings">change</a></p>{% endif %}
@@ -308,8 +308,12 @@
   </div>
 
   <aside class="side-col">
-    <section class="panel">
-      <h2>Upload an export</h2>
+    {% set has_any = views|selectattr('upload')|list or views|selectattr('search_upload')|list %}
+    {% set linked_any = p.meta_account_id or p.google_customer_id or fb_linked or ig_linked %}
+    <p class="eyebrow side-eyebrow">Practice setup</p>
+    <details class="drawer" id="upload" {% if not has_any and not linked_any %}open{% endif %}>
+      <summary><span class="drawer-title">Upload an export</span><span class="drawer-hint">A CSV from Google Ads or Meta</span></summary>
+      <div class="drawer-body">
       <form method="post" action="/p/{{ p.id }}/upload" enctype="multipart/form-data" class="stack" data-busy="Reading…">
         <input type="file" name="file" accept=".csv,.tsv,text/csv" required>
         <button type="submit" class="btn">Upload</button>
@@ -318,13 +322,15 @@
         <summary>Which export do I need?</summary>
         <p><strong>Google Ads:</strong> Campaigns → set the date range → Download (⬇) → .csv. For wasted searches, also download Insights and reports → Search terms the same way. Add the “Day” segment for budget pacing.</p>
         <p><strong>Meta Ads Manager:</strong> Campaigns tab → set the date range → Reports → Export table data → .csv.</p>
-        <p>The page works out the platform and report type by itself. A new upload replaces the previous one for that platform; older uploads stay listed below.</p>
+        <p>The page works out the platform and report type by itself. A new upload replaces the previous one for that platform; older uploads stay listed under “Uploads”.</p>
       </details>
-    </section>
+      </div>
+    </details>
 
     {% if meta_on or google_on %}
-    <section class="panel">
-      <h2>Linked accounts</h2>
+    <details class="drawer" id="accounts" {% if not linked_any %}open{% endif %}>
+      <summary><span class="drawer-title">Linked accounts</span><span class="drawer-hint">{% if linked_any %}Ad accounts, Facebook Pages and Instagram linked{% else %}Nothing linked yet{% endif %}</span></summary>
+      <div class="drawer-body">
       <form method="post" action="/p/{{ p.id }}/accounts" class="stack">
         {% if meta_on %}
         <label>Meta ad account
@@ -362,8 +368,8 @@
           </div>
         </fieldset>
         {% endfor %}
-        {% if not fb_pages %}<p class="muted small">No Facebook Pages are visible yet. Connect them in Postiz, or assign them to the Meta system user (see Connections), then Refresh account lists.</p>
-        {% else %}<p class="muted small">Pages come from the MCDP business portfolios and from Postiz. “No access yet” ones need connecting in Postiz (or assigning to the system user) before their posts can be read.</p>{% endif %}
+        {% if not fb_pages %}<p class="muted small">No Facebook Pages are visible yet. Connect them in Social, or assign them to the Meta system user (see Connections), then Refresh account lists.</p>
+        {% else %}<p class="muted small">Pages come from the MCDP business portfolios and from Social. “No access yet” ones need connecting in Social (or assigning to the system user) before their posts can be read.</p>{% endif %}
         {% endif %}
         <button type="submit" class="btn btn-quiet">Save links</button>
       </form>
@@ -372,11 +378,13 @@
         <input type="hidden" name="back" value="/p/{{ p.id }}"><button class="linklike" type="submit">Sync now</button>
       </form>
       {% endif %}
-    </section>
+      </div>
+    </details>
     {% endif %}
 
-    <section class="panel" id="settings">
-      <h2>Budgets and notes</h2>
+    <details class="drawer" id="settings">
+      <summary><span class="drawer-title">Budgets and notes</span><span class="drawer-hint">Name, monthly budgets, which campaigns count</span></summary>
+      <div class="drawer-body">
       <form method="post" action="/p/{{ p.id }}/settings" class="stack">
         <label>Name<input name="name" value="{{ p.name }}" required></label>
         <label>Google Ads monthly budget<input name="google_budget" type="number" min="0" step="1" value="{{ '%g'|format(p.google_budget or 0) }}"></label>
@@ -388,11 +396,16 @@
         <label>Notes for write-ups<textarea name="notes" rows="3" placeholder="Services to push, location, offers you actually run…">{{ p.notes or '' }}</textarea></label>
         <button type="submit" class="btn btn-quiet">Save</button>
       </form>
-    </section>
+      <form method="post" action="/p/{{ p.id }}/delete" class="drawer-danger" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
+        <button class="linklike danger" type="submit">Delete this practice</button>
+      </form>
+      </div>
+    </details>
 
     {% if not master %}
-    <section class="panel" id="campaigns">
-      <h2>Campaigns added by name</h2>
+    <details class="drawer" id="campaigns">
+      <summary><span class="drawer-title">Campaigns added by name</span><span class="drawer-hint">{% if added %}{{ added|length }} added{% else %}For campaigns named differently{% endif %}</span></summary>
+      <div class="drawer-body">
       <p class="muted small">For campaigns whose names don’t contain {% if p.campaign_filter %}“{{ p.campaign_filter }}”{% else %}this practice’s words{% endif %}. They count for this practice only.</p>
       {% if added %}
       <ul class="added-list">
@@ -419,11 +432,13 @@
       {% elif not added %}
       <p class="muted small">Sync or upload data first; the campaigns in the linked accounts will be listed here.</p>
       {% endif %}
-    </section>
+      </div>
+    </details>
     {% endif %}
 
-    <section class="panel" id="uploads">
-      <h2>Uploads</h2>
+    <details class="drawer" id="uploads">
+      <summary><span class="drawer-title">Uploads</span><span class="drawer-hint">{% if uploads %}{{ uploads|length }} on file{% else %}None yet{% endif %}</span></summary>
+      <div class="drawer-body">
       {% if uploads %}
       <ul class="uploads">
         {% for u in uploads %}
@@ -435,11 +450,8 @@
         {% endfor %}
       </ul>
       {% else %}<p class="muted">None yet.</p>{% endif %}
-    </section>
-
-    <form method="post" action="/p/{{ p.id }}/delete" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
-      <button class="linklike danger" type="submit">Delete this practice</button>
-    </form>
+      </div>
+    </details>
   </aside>
 </div>
 {% endblock %}

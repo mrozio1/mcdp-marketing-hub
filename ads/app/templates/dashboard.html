@@ -6,7 +6,7 @@
   <h1>Practices</h1>
   {% if any_connection %}
   <form method="post" action="/sync" data-busy="Syncing…" class="sync-form">
-    <input type="hidden" name="back" value="/">
+    <input type="hidden" name="back" value="/practices">
     <button class="btn btn-quiet" type="submit">Sync now</button>
     <span class="muted small">{% if last_sync.at %}Last synced {{ last_sync.at.replace('T', ' ')[:16] }}{% else %}Not synced yet{% endif %}</span>
   </form>
@@ -41,8 +41,9 @@
 <p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, from each practice’s latest exports.</p>
 {% endif %}
 
-<section class="panel add">
-  <h2>Add a practice</h2>
+<details class="drawer add" id="add-practice" {% if not items %}open{% endif %}>
+  <summary><span class="drawer-title">Add a practice</span><span class="drawer-hint">Name, monthly budgets and which campaigns are its own</span></summary>
+  <div class="drawer-body">
   <form method="post" action="/practices" class="row-form">
     <label>Name<input name="name" required placeholder="Heights Orthodontics"></label>
     <label>Google Ads monthly budget<input name="google_budget" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
@@ -50,5 +51,6 @@
     <label>Campaigns to include <span class="muted small">(optional)</span><input name="campaign_filter" placeholder="e.g. Heights"></label>
     <button type="submit" class="btn">Add practice</button>
   </form>
-</section>
+  </div>
+</details>
 {% endblock %}

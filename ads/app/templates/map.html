@@ -51,8 +51,10 @@
 </section>
 {% endif %}
 
-<section class="panel" id="offices">
-  <h2>Our offices</h2>
+<p class="eyebrow">Manage the map</p>
+<details class="drawer" id="offices" {% if not offices or preview %}open{% endif %}>
+  <summary><span class="drawer-title">Our offices</span><span class="drawer-hint">{% if offices %}{{ offices|length }} offices · counts per office, upload a list, add one{% else %}None yet: start here{% endif %}</span></summary>
+  <div class="drawer-body">
   {% if offices %}
   <div class="table-scroll">
   <table class="loc-table">
@@ -136,10 +138,12 @@
   {% else %}
   <p class="small muted">Add the browser key in Map setup to search for offices.</p>
   {% endif %}
-</section>
+  </div>
+</details>
 
-<section class="panel" id="setup">
-  <h2>Map setup</h2>
+<details class="drawer" id="setup" {% if not browser_key or not server_key_set %}open{% endif %}>
+  <summary><span class="drawer-title">Map setup</span><span class="drawer-hint">Google keys, radius, brand names, limits</span></summary>
+  <div class="drawer-body">
   <form method="post" action="/map/setup" class="stack">
     <div class="two">
       <label>Browser key <span class="muted small">(shows the map)</span>
@@ -175,7 +179,8 @@
     <p>Optional: <strong>Google Maps Platform → Map management → Create Map ID</strong> (JavaScript, Vector) and paste it here. Without one, Google's demo map style is used.</p>
     <p>Set a <strong>budget alert</strong> (Billing → Budgets &amp; alerts, e.g. $5) so you'd hear about any charge.</p>
   </details>
-</section>
+  </div>
+</details>
 
 {% if browser_key %}
 <script>

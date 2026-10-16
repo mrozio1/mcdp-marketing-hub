@@ -94,6 +94,7 @@ def page(request, name, **ctx):
     ctx["ai_on"] = ai.available()
     ctx["last_sync"] = sync.last_sync()
     ctx["any_connection"] = cx.meta_configured() or cx.google_configured()
+    ctx.setdefault("social_url", SOCIAL_URL)
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -188,8 +189,72 @@ def health():
     return {"ok": True}
 
 
-# ---------- dashboard ----------
+# ---------- welcome ----------
+SOCIAL_URL = os.environ.get("SOCIAL_URL", "https://social.mcdp.com")
+
+
+def _ad_totals(allp):
+    """Spend and leads for the welcome page: the master record if there is one (it holds every
+    campaign), otherwise every practice added up. Returns (spend, leads, since, until) or None."""
+    master = next((p for p in allp if is_master(p, allp)), None)
+    pool = [master] if master else allp
+    spend = leads = 0.0
+    seen = False
+    ups = []
+    for p in pool:
+        for v in practice_views(p):
+            if v["totals"]:
+                seen = True
+                spend += v["totals"].get("spend") or 0
+                leads += v["totals"].get("conversions") or 0
+                if v["upload"]:
+                    ups.append(v["upload"])
+    if not seen:
+        return None
+    since, until = period_for([{"upload": u} for u in ups])
+    return {"spend": spend, "leads": leads, "since": since, "until": until}
+
+
+def _worth_a_look(allp):
+    items = []
+    waiting = [(p, len(db.changes(p["id"], ["proposed"]))) for p in allp]
+    waiting = [(p, n) for p, n in waiting if n]
+    if waiting:
+        total = sum(n for _, n in waiting)
+        first = waiting[0][0]
+        where = first["name"] if len(waiting) == 1 else f"{len(waiting)} practices"
+        items.append({"text": f"{total} fix{'es' if total != 1 else ''} waiting for your approval ({where})",
+                      "href": f"/p/{first['id']}#fixes"})
+    st = places.status()
+    if st.get("busy"):
+        items.append({"text": "The map is refreshing right now", "href": "/map"})
+    elif st and st.get("ok") is False:
+        items.append({"text": "The last map refresh stopped; have a look", "href": "/map"})
+    elif places.offices() and not db.get_setting("ref_last_refresh"):
+        items.append({"text": "Build the referral and competition lists once", "href": "/map/list"})
+    last = sync.last_sync().get("at")
+    if last:
+        from datetime import datetime as _dt
+        t = _dt.fromisoformat(last)
+        day = "today" if t.date() == _dt.now().date() else t.strftime("%A")
+        items.append({"text": f"Ads synced {day} at {t.strftime('%-I:%M %p')}", "href": None})
+    elif cx.meta_configured() or cx.google_configured():
+        items.append({"text": "Ads haven't synced yet", "href": "/connections"})
+    return items[:3]
+
+
 @app.get("/", response_class=HTMLResponse)
+def welcome(request: Request):
+    if (r := guard(request)):
+        return r
+    allp = db.practices()
+    mapped = sum(c.get("referrer", 0) for c in places.counts().values())
+    return page(request, "welcome.html", ads=_ad_totals(allp), mapped=mapped, look=_worth_a_look(allp),
+                social_url=SOCIAL_URL, practice_count=len(allp))
+
+
+# ---------- practices ----------
+@app.get("/practices", response_class=HTMLResponse)
 def dashboard(request: Request):
     if (r := guard(request)):
         return r
@@ -212,12 +277,12 @@ def create_practice(request: Request, name: str = Form(...), google_budget: floa
         return r
     if not name.strip():
         flash(request, "Give the practice a name.", "error")
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     try:
         pid = db.add_practice(name, max(google_budget, 0), max(meta_budget, 0), campaign_filter[:500])
     except sqlite3.IntegrityError:
         flash(request, f"“{name.strip()}” already exists.", "error")
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     flash(request, f"Added {name.strip()}. Upload its first export below.")
     return RedirectResponse(f"/p/{pid}", status_code=303)
 
@@ -233,7 +298,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
         return r
     p = get_practice_or_404(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     allp = db.practices()
     views = practice_views(p, with_breakdown=True)
     show = show if show in ("all", "paid", "organic") else "all"
@@ -281,7 +346,7 @@ def practice_delete(request: Request, pid: int):
     p = db.practice(pid)
     db.delete_practice(pid)
     flash(request, f"Deleted {p['name'] if p else 'practice'} and its uploads.")
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/practices", status_code=303)
 
 
 @app.post("/p/{pid}/split")
@@ -292,7 +357,7 @@ def practice_split(request: Request, pid: int, name: str = Form(...), campaign_f
         return r
     master = db.practice(pid)
     if not master or not name.strip() or not campaign_filter.strip():
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     try:
         new_id = db.add_practice(name, 0, 0, campaign_filter[:500], master.get("meta_account_id"),
                                  master.get("google_customer_id"))
@@ -363,7 +428,7 @@ async def upload(request: Request, pid: int, file: UploadFile = File(...)):
     if (r := guard(request)):
         return r
     if not db.practice(pid):
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     data = await file.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
         flash(request, "That file is over 20 MB. Export a shorter date range.", "error")
@@ -398,7 +463,7 @@ async def ai_generate(request: Request, pid: int, kind: str):
         return r
     p = db.practice(pid)
     if not p or kind not in ai.TASKS:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     views = practice_views(p, with_breakdown=True)
     org = organic_for(p, views, db.practices())
     if not any(v["totals"] for v in views) and not (org.get("totals") or {}).get("count"):
@@ -428,7 +493,7 @@ async def fixes_prepare(request: Request, pid: int):
         return r
     p = db.practice(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     n, notes = await asyncio.to_thread(actions.prepare, p, practice_views(p))
     msg = (f"{n} change{'s' if n != 1 else ''} ready to review." if n
            else "Nothing to change right now: no wasted searches to block, campaigns to pause or budgets off track.")
@@ -524,7 +589,7 @@ def post_report(request: Request, pid: int, period: str = "", sort: str = "engag
         return r
     p = db.practice(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     rep = _post_report(p, period, sort)
     return page(request, "posts.html", p=p, rep=rep, periods=organic.PERIODS, sorts=organic.SORTS)
 
@@ -535,7 +600,7 @@ def post_report_csv(request: Request, pid: int, period: str = "", sort: str = "e
         return r
     p = db.practice(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     import csv
     import io
     rep = _post_report(p, period, sort)
@@ -601,7 +666,7 @@ def email_preview(request: Request, pid: int, inc: str | None = None, picked: st
         return r
     p = db.practice(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     parts = _email_parts(p, inc if (inc is not None or picked) else None, period)
     body = parts["doc"].split("<body", 1)[1].split(">", 1)[1].rsplit("</body>", 1)[0]
     return page(request, "email.html", p=p, body=body, subject=parts["subject"], inc=parts["inc"],
@@ -615,7 +680,7 @@ def email_download(request: Request, pid: int, inc: str | None = None, period: s
         return r
     p = db.practice(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     parts = _email_parts(p, inc, period)
     fname = re.sub(r"[^A-Za-z0-9 _-]+", "", parts["subject"]).strip().replace(" ", "-")[:80] or "ad-results"
     return Response(emailfmt.eml(parts["subject"], parts["doc"]), media_type="message/rfc822",
@@ -628,7 +693,7 @@ def report(request: Request, pid: int):
         return r
     p = db.practice(pid)
     if not p:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/practices", status_code=303)
     return page(request, "report.html", p=p, views=practice_views(p), report=db.latest_ai(pid, "report"))
 
 
@@ -701,7 +766,7 @@ async def sync_now(request: Request, back: str = Form("/")):
         return r
     status = await asyncio.to_thread(sync.sync_all)
     flash(request, *summarize_sync(status))
-    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/", status_code=303)
+    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/practices", status_code=303)
 
 
 @app.get("/google/connect")

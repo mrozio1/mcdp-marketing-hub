@@ -1,9 +1,9 @@
 :root {
-  --enamel: #F6F8F8;
+  --enamel: #FAF8F4;
   --paper: #FFFFFF;
-  --ink: #1D2D35;
-  --ink-soft: #52646C;
-  --line: #D9E1E3;
+  --ink: #1A1A1A;
+  --ink-soft: #5B5852;
+  --line: #E3DED4;
   --teal: #0F7471;
   --teal-deep: #0A5654;
   --rose: #B83A5E;
@@ -435,3 +435,83 @@ tr.muted td { color: var(--ink-soft); }
 .list-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 1rem 1.5rem; margin-bottom: 0.5rem; }
 .list-head label.office-pick { display: grid; gap: 0.25rem; font-weight: 600; }
 .list-head label.office-pick select { min-width: 20rem; font-size: 1rem; }
+
+
+/* =================================================================
+   Minimal look (from the welcome page): ivory ground, serif headings,
+   a light header, hairlines instead of boxes, setup tucked into drop-downs.
+   ================================================================= */
+:root { --serif: "Newsreader", Georgia, "Times New Roman", serif; --hair: #E3DED4; --tint: #F1EEE7; }
+h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.1rem, 3.6vw, 2.75rem); letter-spacing: -0.015em; line-height: 1.1; }
+h2 { font-family: var(--serif); font-weight: 400; font-size: 1.45rem; letter-spacing: -0.005em; }
+h3 { font-weight: 600; }
+a { color: var(--teal-deep); }
+
+.topbar { background: transparent; color: var(--ink); border-bottom: 1px solid var(--hair); flex-wrap: wrap; padding-top: 1.1rem; padding-bottom: 1.1rem; }
+.topbar .brand { color: var(--ink); font-family: var(--serif); font-weight: 400; font-size: 1.4rem; letter-spacing: 0; }
+.topbar nav { flex-wrap: wrap; gap: 0.35rem 1.6rem; }
+.topbar nav a, .topbar .linklike { color: var(--ink-soft); text-decoration: none; font-size: 0.95rem; }
+.topbar nav a:hover, .topbar .linklike:hover { color: var(--ink); }
+.topbar nav a[aria-current="page"] { color: var(--ink); text-decoration: underline; text-decoration-color: var(--teal); text-decoration-thickness: 2px; text-underline-offset: 6px; }
+
+.flash { border-left-width: 2px; background: #EEF5F3; border-radius: 0; }
+.flash-error { background: #FBEDEF; }
+.panel, .platform, .empty { border-color: var(--hair); border-radius: 6px; box-shadow: none; }
+.empty { border-style: dashed; background: transparent; }
+.practices { border-color: var(--hair); border-radius: 6px; }
+.practices thead th { background: transparent; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.75rem; }
+.practices th, .practices td { border-bottom-color: var(--hair); }
+.btn { border-radius: 4px; font-weight: 500; }
+.btn-quiet { background: transparent; }
+.btn-quiet:hover { background: #EEF5F3; }
+input, textarea, select { border-color: #D8D2C6; }
+.lede { color: var(--ink-soft); }
+
+.eyebrow { margin: 2.5rem 0 0.6rem; font-family: inherit; font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-soft); }
+.side-eyebrow { margin-top: 0; }
+
+/* drop-downs for setup and other non-daily sections */
+details.drawer { border-top: 1px solid var(--hair); }
+details.drawer:last-of-type, details.drawer + :not(details.drawer) { border-bottom: 1px solid var(--hair); }
+details.drawer + details.drawer { border-top: 1px solid var(--hair); }
+details.drawer > summary { list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 1rem; padding: 1rem 2rem 1rem 0; position: relative; cursor: pointer; color: var(--ink); font-weight: 400; }
+details.drawer > summary::-webkit-details-marker { display: none; }
+details.drawer > summary::after { content: "+"; position: absolute; right: 0.25rem; top: 0.85rem; font-size: 1.3rem; line-height: 1; color: var(--teal); }
+details.drawer[open] > summary::after { content: "−"; }
+details.drawer > summary:hover .drawer-title { color: var(--teal-deep); }
+details.drawer > summary:focus-visible { outline-offset: 4px; }
+.drawer-title { font-family: var(--serif); font-size: 1.3rem; line-height: 1.25; }
+.drawer-hint { font-size: 0.88rem; color: var(--ink-soft); }
+.drawer-body { padding: 0.25rem 0 1.5rem; }
+.side-col .drawer-title { font-size: 1.15rem; }
+.side-col details.drawer > summary { padding-top: 0.85rem; padding-bottom: 0.85rem; }
+.side-col .drawer-hint { flex-basis: 100%; font-size: 0.82rem; }
+.drawer-inline { margin-top: 0.75rem; }
+.drawer-inline > summary .drawer-title { font-family: inherit; font-size: 0.95rem; font-weight: 600; color: var(--teal-deep); }
+.drawer-danger { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--hair); }
+.add { margin-top: 2.5rem; }
+
+/* welcome page */
+.welcome { max-width: 1040px; display: flex; flex-direction: column; gap: 4rem; padding-top: 1.5rem; }
+.welcome-hero { max-width: 42rem; padding-top: 1.5rem; }
+.welcome-greeting { font-size: clamp(2.75rem, 5.5vw, 4.25rem); line-height: 1.06; margin: 0 0 1.25rem; }
+.welcome-lede { margin: 0; font-size: 1.25rem; color: #4A4741; }
+.welcome .eyebrow { margin: 0 0 0.5rem; }
+.doors { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hair); }
+.doors li { border-bottom: 1px solid var(--hair); }
+.doors a { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 2rem; padding: 1.6rem 0; text-decoration: none; color: var(--ink); }
+.door-title { flex: 0 0 16rem; font-family: var(--serif); font-size: 1.9rem; line-height: 1.2; }
+.door-text { flex: 1 1 20rem; color: #4A4741; }
+.door-arrow { color: var(--teal); font-size: 1.4rem; transition: transform 0.15s; }
+.doors a:hover .door-title { color: var(--teal-deep); }
+.doors a:hover .door-arrow { transform: translateX(4px); }
+.welcome-lower { display: flex; flex-wrap: wrap; gap: 3rem 4rem; }
+.welcome-lower > div:first-child { flex: 2 1 28rem; min-width: 0; }
+.welcome-lower > div:last-child { flex: 1 1 17rem; min-width: 0; }
+.glance { margin: 0 0 0.75rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1.5rem; }
+.glance dt { font-size: 0.9rem; color: var(--ink-soft); }
+.glance dd { margin: 0.25rem 0 0; font-family: var(--serif); font-size: 2.2rem; line-height: 1.1; }
+.look { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+.look a { color: var(--teal-deep); }
+@media (max-width: 640px) { .door-title { flex-basis: 100%; } .door-arrow { display: none; } }
+details:not([open]) > :not(summary) { display: none; }
