@@ -4,18 +4,18 @@
 {% block mainclass %}login{% endblock %}
 {% block content %}
 <h1 class="brand-big">MCDP Hub</h1>
-{% if not u %}
-  <p class="flash flash-error">This setup link has expired or was already used. Ask an admin for a new one.</p>
-  <p><a href="/login">Go to sign in</a></p>
+{% if not person %}
+<p>This link has expired or has already been used.</p>
+<p class="muted">Ask an admin for a new one; each link works once and for {{ 7 }} days.</p>
+<p><a href="/login">Go to sign in</a></p>
 {% else %}
-<p>Hi {{ u.name.split(' ')[0] }}. Choose a password for <strong>{{ u.email }}</strong>.</p>
-<p class="small muted">You’ll have {{ role_labels[u.role] }} access: {{ {'viewer': 'see everything and run, print, email or export reports', 'editor': 'see and manage practices, uploads, fixes and the map', 'admin': 'everything, including connections and who has access'}[u.role] }}.</p>
+<p>Hi {{ person.name.split(' ')[0] }}. Pick a password to finish setting up your account (<strong>{{ person.email }}</strong>).</p>
 <form method="post" action="/setup/{{ token }}" class="stack">
-  <input type="hidden" name="username" value="{{ u.email }}" autocomplete="username">
-  <label for="pw">New password <span class="muted small">(at least 10 characters)</span></label>
-  <input id="pw" name="password" type="password" autocomplete="new-password" minlength="10" required autofocus>
+  <input type="email" name="email" value="{{ person.email }}" autocomplete="username" hidden>
+  <label for="pw">Password <span class="muted small">(at least {{ min_len }} characters)</span></label>
+  <input id="pw" name="password" type="password" autocomplete="new-password" minlength="{{ min_len }}" required autofocus>
   <label for="pw2">Type it again</label>
-  <input id="pw2" name="confirm" type="password" autocomplete="new-password" minlength="10" required>
+  <input id="pw2" name="confirm" type="password" autocomplete="new-password" minlength="{{ min_len }}" required>
   {% if error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
   <button type="submit" class="btn">Save and sign in</button>
 </form>

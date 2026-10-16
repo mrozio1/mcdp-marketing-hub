@@ -4,7 +4,7 @@
 {% block content %}
 <div class="title-row">
   <h1>Practices</h1>
-  {% if any_connection %}
+  {% if any_connection and can_edit %}
   <form method="post" action="/sync" data-busy="Syncing…" class="sync-form">
     <input type="hidden" name="back" value="/practices">
     <button class="btn btn-quiet" type="submit">Sync now</button>
@@ -15,7 +15,7 @@
 
 {% if not items %}
   <section class="empty">
-    <p>Add your first practice to start. Each practice gets its own monthly budgets and uploads.</p>
+    <p>{% if not can_edit %}No practices have been added yet.{% else %}Add your first practice to start. Each practice gets its own monthly budgets and uploads.{% endif %}</p>
   </section>
 {% else %}
 <table class="practices">

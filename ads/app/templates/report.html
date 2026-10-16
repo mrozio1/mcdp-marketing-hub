@@ -7,7 +7,7 @@
   <a href="/p/{{ p.id }}">Back to {{ p.name }}</a>
   <a class="btn btn-quiet" href="/p/{{ p.id }}/email?inc=summary,report">Email this report</a>
   <button class="btn" type="button" onclick="window.print()">Print or save as PDF</button>
-  {% if report %}<form method="post" action="/p/{{ p.id }}/ai/report/delete" data-confirm="Remove this report?"><input type="hidden" name="back" value="report"><button class="btn btn-quiet" type="submit">Remove report</button></form>{% endif %}
+  {% if report and can_edit %}<form method="post" action="/p/{{ p.id }}/ai/report/delete" data-confirm="Remove this report?"><input type="hidden" name="back" value="report"><button class="btn btn-quiet" type="submit">Remove report</button></form>{% endif %}
 </div>
 <article class="report">
   <header>

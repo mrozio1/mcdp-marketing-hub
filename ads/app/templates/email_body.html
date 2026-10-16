@@ -207,7 +207,7 @@
   <p style="{{ h2 }}">Changes made</p>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
     {% for ch in changes %}
-    <tr><td style="{{ td }}">{{ 'Google Ads' if ch.platform == 'google' else 'Meta' }}: {{ ch.title }}{% if ch.applied_by %} <span style="color:{{ em.SOFT }};">({{ ch.applied_by }})</span>{% endif %}</td><td align="right" style="{{ td }}text-align:right;color:{{ em.SOFT }};white-space:nowrap;">{{ ch.applied_at[:10] }}</td></tr>
+    <tr><td style="{{ td }}">{{ 'Google Ads' if ch.platform == 'google' else 'Meta' }}: {{ ch.title }}</td><td align="right" style="{{ td }}text-align:right;color:{{ em.SOFT }};white-space:nowrap;">{{ ch.applied_at[:10] }}</td></tr>
     {% endfor %}
   </table>
 </td></tr>

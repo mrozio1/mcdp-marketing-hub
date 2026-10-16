@@ -4,18 +4,19 @@
 {% block mainclass %}login{% endblock %}
 {% block content %}
 <h1 class="brand-big">MCDP Hub</h1>
-<p class="muted">Ads, social and the market map for your practices.</p>
+<p class="muted">Everything for your practices, in one quiet place.</p>
 {% if not configured %}
-  <p class="flash flash-error">No team password is set. Run <code>sh enable-ads.sh</code> on the server.</p>
+  <p class="flash flash-error">Nobody can sign in yet. Run <code>sh enable-ads.sh</code> on the server to set a team password.</p>
 {% else %}
 <form method="post" action="/login" class="stack">
-  <label for="em">Email</label>
-  <input id="em" name="email" type="email" autocomplete="username" value="{{ email or '' }}" autofocus>
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="username" value="{{ email or '' }}" {% if not shared %}required{% endif %} autofocus>
   <label for="pw">Password</label>
   <input id="pw" name="password" type="password" autocomplete="current-password" required>
   {% if error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
   <button type="submit" class="btn">Sign in</button>
-  <p class="small muted">Using the shared team password? Leave email blank.</p>
+  {% if shared %}<p class="muted small">First time with individual logins? Leave the email blank and use the shared team password, then set up your own admin account.</p>
+  {% else %}<p class="muted small">Forgot your password? Ask an admin for a new setup link.</p>{% endif %}
 </form>
 {% endif %}
 {% endblock %}

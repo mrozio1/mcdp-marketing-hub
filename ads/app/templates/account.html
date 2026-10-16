@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Your account{% endblock %}
+{% block content %}
+<h1>Your account</h1>
+<section class="panel narrow">
+  <dl class="facts">
+    <div><dt>Name</dt><dd>{{ me.name }}</dd></div>
+    {% if me.email %}<div><dt>Email</dt><dd>{{ me.email }}</dd></div>{% endif %}
+    <div><dt>Access</dt><dd>{{ labels[me.role] }} <span class="muted small">· {{ help[me.role] }}</span></dd></div>
+  </dl>
+</section>
+
+{% if me.id %}
+<details class="drawer" id="password" {% if error %}open{% endif %}>
+  <summary><span class="drawer-title">Change password</span><span class="drawer-hint">Signs you out on other devices</span></summary>
+  <div class="drawer-body">
+  <form method="post" action="/account/password" class="stack narrow">
+    <input type="email" name="email" value="{{ me.email }}" autocomplete="username" hidden>
+    <label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
+    <label>New password <span class="muted small">(at least {{ min_len }} characters)</span><input name="password" type="password" autocomplete="new-password" minlength="{{ min_len }}" required></label>
+    <label>Type it again<input name="confirm" type="password" autocomplete="new-password" minlength="{{ min_len }}" required></label>
+    {% if error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
+    <button class="btn btn-quiet" type="submit">Change password</button>
+  </form>
+  </div>
+</details>
+{% else %}
+<p class="muted">You're signed in with the shared team password. <a href="/team">Set up your own account</a>.</p>
+{% endif %}
+{% endblock %}

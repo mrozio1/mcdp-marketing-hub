@@ -2,91 +2,86 @@
 {% block title %}Team{% endblock %}
 {% block content %}
 <h1>Team</h1>
-<p class="lede">Who can sign in, and what they can do. Everyone signs in with their own email and password.</p>
+<p class="lede muted">Who can sign in, and what they can do.</p>
 
-{% if new_link %}
-<section class="panel link-box" aria-live="polite">
-  <h2>{{ 'New password link' if new_link.reset else 'Send this to ' ~ new_link.name.split(' ')[0] }}</h2>
-  <p>{{ new_link.name }} sets {{ 'a new' if new_link.reset else 'their' }} password with this link. It works once and expires in {{ link_days }} days.</p>
-  <div class="link-row">
-    <input id="setup-link" value="{{ new_link.url }}" readonly aria-label="Setup link">
-    <button class="btn" type="button" id="copy-link">Copy link</button>
-  </div>
-  <p class="small"><a href="mailto:{{ new_link.email }}?subject={{ 'Your MCDP Hub sign-in'|urlencode }}&body={{ ('Hi ' ~ new_link.name.split(' ')[0] ~ ',\n\nHere is your link to set a password for the MCDP Hub (' ~ role_labels[new_link.role] ~ ' access). It works once and expires in ' ~ link_days ~ ' days:\n\n' ~ new_link.url ~ '\n\nAfter that, sign in with your email at the same address.')|urlencode }}">Open an email to {{ new_link.email }} with the link</a></p>
-  <p class="copy-status small" id="copy-status" role="status"></p>
+{% if shared %}
+<p class="flash" role="status">You're signed in with the shared team password. Add yourself below as an <strong>Admin</strong>, open your setup link and pick a password. After that the shared password stops working, so everyone signs in as themselves.</p>
+{% endif %}
+
+{% if link %}
+<section class="panel link-box" aria-labelledby="link-h">
+  <h2 id="link-h">Setup link for {{ link.name }}</h2>
+  <p class="small">Send this to {{ link.name.split(' ')[0] }} (email, Teams, text). It works once, for {{ link_days }} days, and lets them pick their own password. Nobody else ever sees it.</p>
+  <div class="copy-row"><input id="setup-link" value="{{ link.url }}" readonly aria-label="Setup link"><button class="btn" type="button" id="copy-link">Copy link</button></div>
 </section>
 {% endif %}
 
-<div class="team-grid">
-  <section>
-    <div class="table-scroll"><table class="data team-table">
-      <thead><tr><th>Person</th><th>Access</th><th>Last signed in</th><th></th></tr></thead>
-      <tbody>
-      {% for u in people %}
-        <tr class="{{ 'muted' if u.disabled }}">
-          <td><strong>{{ u.name }}</strong><br><span class="muted small">{{ u.email }}</span>
-            {% if u.disabled %}<br><span class="tag tag-off">Can’t sign in</span>{% elif not u.pw_hash %}<br><span class="tag">Hasn’t set a password yet</span>{% endif %}</td>
-          <td>
-            {% if me.uid == u.id %}{{ role_labels[u.role] }} <span class="muted small">(you)</span>
-            {% else %}
-            <form method="post" action="/team/{{ u.id }}/role" class="role-form">
-              <select name="role" aria-label="Access for {{ u.name }}" onchange="this.form.submit()">
-                {% for r in roles %}<option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ role_labels[r] }}</option>{% endfor %}
-              </select>
-              <noscript><button class="linklike small" type="submit">Save</button></noscript>
-            </form>
-            {% endif %}
-          </td>
-          <td class="small">{{ u.last_login.replace('T', ' ')[:16] if u.last_login else '—' }}</td>
-          <td class="team-actions">
-            {% if me.uid != u.id %}
-            <form method="post" action="/team/{{ u.id }}/link"><button class="linklike small" type="submit">{{ 'New password link' if u.pw_hash else 'New setup link' }}</button></form>
-            <form method="post" action="/team/{{ u.id }}/access" {% if not u.disabled %}data-confirm="Stop {{ u.name }} signing in? Their history is kept."{% endif %}>
-              <input type="hidden" name="action" value="{{ 'enable' if u.disabled else 'disable' }}">
-              <button class="linklike small {{ '' if u.disabled else 'danger' }}" type="submit">{{ 'Allow sign-in' if u.disabled else 'Turn off' }}</button></form>
-            {% if u.disabled %}
-            <form method="post" action="/team/{{ u.id }}/access" data-confirm="Remove {{ u.name }} completely?">
-              <input type="hidden" name="action" value="delete"><button class="linklike small danger" type="submit">Remove</button></form>
-            {% endif %}
-            {% endif %}
-          </td>
-        </tr>
-      {% else %}
-        <tr><td colspan="4" class="muted">No personal sign-ins yet; everyone is using the shared team password. Add people on the right.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table></div>
-  </section>
+<dl class="roles">
+  {% for r in roles %}<div><dt>{{ labels[r] }}</dt><dd>{{ help[r] }}</dd></div>{% endfor %}
+</dl>
 
-  <aside>
-    <section class="panel">
-      <h2>Add someone</h2>
-      <form method="post" action="/team/add" class="stack">
-        <label>Name<input name="name" required autocomplete="off"></label>
-        <label>Email<input name="email" type="email" required autocomplete="off"></label>
-        <fieldset class="role-pick">
-          <legend>Access</legend>
-          {% for r in roles %}
-          <label class="check"><input type="radio" name="role" value="{{ r }}" {% if r == 'viewer' %}checked{% endif %}>
-            <span><strong>{{ role_labels[r] }}</strong><br><span class="muted small">{{ role_help[r] }}</span></span></label>
-          {% endfor %}
-        </fieldset>
-        <button class="btn" type="submit">Add and get their link</button>
-      </form>
-    </section>
-    <details class="how">
-      <summary>About the shared team password</summary>
-      <p>The original team password still signs in with Admin access (leave email blank). Once everyone has their own sign-in, change it on the server with <code>sh enable-ads.sh NEW_PASSWORD</code> and keep it for emergencies.</p>
-    </details>
-  </aside>
+{% if people %}
+<div class="table-scroll">
+<table class="data team-table">
+  <thead><tr><th>Person</th><th>Access</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for u in people %}
+    <tr class="{{ '' if u.active else 'muted' }}">
+      <td><strong>{{ u.name }}</strong>{% if me and u.id == me.id %} <span class="muted small">(you)</span>{% endif %}<br><span class="small muted">{{ u.email }}</span></td>
+      <td>
+        <form method="post" action="/team/{{ u.id }}/role" class="inline-form">
+          <select name="role" aria-label="Access for {{ u.name }}" onchange="this.form.requestSubmit()">
+            {% for r in roles %}<option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ labels[r] }}</option>{% endfor %}
+          </select>
+          <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
+        </form>
+      </td>
+      <td class="small">
+        {% if not u.active %}Switched off
+        {% elif not u.pw_hash %}{% if u.setup_expires and u.setup_expires > now %}Hasn't set a password yet{% else %}Setup link expired{% endif %}
+        {% elif u.last_login %}Last signed in {{ u.last_login.replace('T', ' ')[:16] }}
+        {% else %}Ready{% endif %}
+      </td>
+      <td class="team-actions">
+        <form method="post" action="/team/{{ u.id }}/link"><button class="linklike small" type="submit">{{ 'New setup link' if not u.pw_hash else 'Reset password' }}</button></form>
+        {% if not (me and u.id == me.id) %}
+        <form method="post" action="/team/{{ u.id }}/active"><input type="hidden" name="active" value="{{ '' if u.active else '1' }}"><button class="linklike small" type="submit">{{ 'Switch off' if u.active else 'Switch on' }}</button></form>
+        <form method="post" action="/team/{{ u.id }}/remove" data-confirm="Remove {{ u.name }}? Fixes they applied keep their name."><button class="linklike small danger" type="submit">Remove</button></form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
 </div>
+{% else %}
+<p class="empty">Nobody yet. Start with yourself.</p>
+{% endif %}
 
+<details class="drawer" id="add" {% if not people or shared %}open{% endif %}>
+  <summary><span class="drawer-title">Add a person</span><span class="drawer-hint">They get a link to set their own password</span></summary>
+  <div class="drawer-body">
+  <form method="post" action="/team/add" class="stack narrow">
+    <label>Name<input name="name" required maxlength="80" autocomplete="off"></label>
+    <label>Email<input name="email" type="email" required autocomplete="off"></label>
+    <label>Access
+      <select name="role">{% for r in roles %}<option value="{{ r }}" {% if (shared and r == 'admin') or (not shared and r == 'viewer') %}selected{% endif %}>{{ labels[r] }}</option>{% endfor %}</select>
+    </label>
+    <button class="btn" type="submit">Add and make a setup link</button>
+  </form>
+  <details class="how">
+    <summary>Locked out?</summary>
+    <p>If every admin forgets their password, run this on the server to get a fresh setup link:<br>
+    <code>docker exec postiz-ads python -m app.users reset you@example.com</code></p>
+  </details>
+  </div>
+</details>
 <script>
-  const btn = document.getElementById("copy-link");
-  if (btn) btn.addEventListener("click", async () => {
-    const f = document.getElementById("setup-link");
-    try { await navigator.clipboard.writeText(f.value); } catch (e) { f.select(); document.execCommand("copy"); }
-    document.getElementById("copy-status").textContent = "Link copied.";
-  });
+  const cb = document.getElementById("copy-link");
+  if (cb) cb.onclick = async () => {
+    const i = document.getElementById("setup-link");
+    try { await navigator.clipboard.writeText(i.value); } catch { i.select(); document.execCommand("copy"); }
+    cb.textContent = "Copied";
+  };
 </script>
 {% endblock %}

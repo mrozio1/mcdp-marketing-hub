@@ -92,7 +92,7 @@
       {% if b.overlap %}
       <p class="flash flash-error small">{{ b.overlap|length }} campaign{{ '' if b.overlap|length == 1 else 's' }} match more than one practice’s filter, so {{ 'it is' if b.overlap|length == 1 else 'they are' }} counted twice above: {{ b.overlap[:5]|join(', ') }}{% if b.overlap|length > 5 %}…{% endif %}. Make the filters more specific.</p>
       {% endif %}
-      {% if b.suggestions %}
+      {% if b.suggestions and can_edit %}
       <details class="split" {% if not b.by_practice %}open{% endif %}>
         <summary>{{ b.unassigned.count }} campaign{{ '' if b.unassigned.count == 1 else 's' }} not assigned to a practice yet ({{ b.unassigned.spend|money }})</summary>
         <p class="muted small">Grouped by the start of each campaign name. “Create practice” makes a practice that shows only those campaigns, linked to the same accounts and starting from this data. You can edit its name and filter afterwards.</p>
@@ -183,19 +183,20 @@
     <section class="fixes" id="fixes">
       <h2>Make the fixes</h2>
       <p class="muted">“Prepare fixes” turns the numbers above into exact changes, checked against the live accounts. Nothing changes in Google or Meta until you tick changes and click Apply, and every change can be undone.</p>
-      {% if not can_edit %}<p class="view-note">Your sign-in can see the changes made below; an editor prepares and applies fixes.</p>{% endif %}
+      {% if can_edit %}
       <form method="post" action="/p/{{ p.id }}/fixes/prepare" data-busy="Checking the accounts…" class="fix-prepare">
         <button class="btn" type="submit">{{ 'Prepare fixes again' if fixes_open else 'Prepare fixes' }}</button>
       </form>
+      {% else %}<p class="small muted">{% if fixes_open %}These are waiting for an editor to approve.{% else %}Nothing is waiting for approval.{% endif %}</p>{% endif %}
 
-      {% if fixes_open and can_edit %}
-      <form method="post" action="/p/{{ p.id }}/fixes/apply" class="fix-list" data-busy="Applying…">
+      {% if fixes_open %}
+      {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/apply" class="fix-list" data-busy="Applying…">{% else %}<div class="fix-list-readonly">{% endif %}
         {% for kind, label in kind_labels.items() %}
           {% set group = fixes_open|selectattr('kind', 'equalto', kind)|list %}
           {% if group %}
           <fieldset class="fix-group">
             <legend>{{ label }} <span class="muted small">({{ group|length }})</span></legend>
-            {% if group|length > 1 %}<label class="fix-all small"><input type="checkbox" data-all="{{ kind }}"> Select all</label>{% endif %}
+            {% if group|length > 1 and can_edit %}<label class="fix-all small"><input type="checkbox" data-all="{{ kind }}"> Select all</label>{% endif %}
             {% if kind == 'budget' %}
               {% for plat, label2 in [('google', 'Google'), ('meta', 'Meta')] %}
                 {% set pg = group|selectattr('platform', 'equalto', plat)|list %}
@@ -206,7 +207,7 @@
             {% for ch in group %}
               <li class="fix fix-{{ ch.status }}">
                 <label class="fix-main">
-                  <input type="checkbox" name="ids" value="{{ ch.id }}" data-group="{{ kind }}">
+                  {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="{{ kind }}">{% endif %}
                   <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span> {{ ch.title }}
                   {% if kind != 'budget' and ch.detail %}<br><span class="muted small">{{ ch.detail }}</span>{% endif %}
                   {% if kind == 'draft_ad' %}
@@ -223,15 +224,15 @@
                   {% if ch.error %}<br><span class="fix-error small">{{ 'Out of date' if ch.status == 'stale' else 'Didn’t go through' }}: {{ ch.error }}</span>{% endif %}
                   </span>
                 </label>
-                <button class="linklike small" type="submit" formaction="/p/{{ p.id }}/fixes/{{ ch.id }}/dismiss" data-busy="…">Dismiss</button>
+                {% if can_edit %}<button class="linklike small" type="submit" formaction="/p/{{ p.id }}/fixes/{{ ch.id }}/dismiss" data-busy="…">Dismiss</button>{% endif %}
               </li>
             {% endfor %}
             </ul>
           </fieldset>
           {% endif %}
         {% endfor %}
-        <button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
-      </form>
+        {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
+      </form>{% else %}</div>{% endif %}
       {% endif %}
 
       {% set draftable = [] %}
@@ -259,10 +260,10 @@
         {% for ch in fixes_done %}
           <li>
             <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span>
-              {% if ch.status == 'undone' %}<s>{{ ch.title }}</s> <span class="muted small">undone {{ ch.undone_at.replace('T', ' ')[:16] }}</span>
+              {% if ch.status == 'undone' %}<s>{{ ch.title }}</s> <span class="muted small">undone {{ ch.undone_at.replace('T', ' ')[:16] }}{% if ch.undone_by %} by {{ ch.undone_by }}{% endif %}</span>
               {% else %}{{ ch.title }} <span class="muted small">applied {{ ch.applied_at.replace('T', ' ')[:16] }}{% if ch.applied_by %} by {{ ch.applied_by }}{% endif %}</span>{% endif %}
               {% if ch.error %}<br><span class="fix-error small">{{ ch.error }}</span>{% endif %}</span>
-            {% if ch.status == 'applied' %}
+            {% if ch.status == 'applied' and can_edit %}
             <form method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/undo" data-busy="Undoing…" data-confirm="Undo this change in {{ 'Google Ads' if ch.platform == 'google' else 'Meta' }}?"><button class="linklike small" type="submit">Undo</button></form>
             {% endif %}
           </li>
@@ -282,23 +283,25 @@
     {% if has_data or (org.totals and org.totals.count) %}
     <section class="ai" id="ai">
       <h2>Write-ups</h2>
-      {% if not ai_on %}<p class="flash flash-error">AI isn’t switched on for this page yet. Run <code>sh enable-ads.sh</code> on the server.</p>{% endif %}
+      {% if not ai_on and can_edit %}<p class="flash flash-error">AI isn’t switched on for this page yet. Run <code>sh enable-ads.sh</code> on the server.</p>{% endif %}
       <div class="ai-actions">
-        <form method="post" action="/p/{{ p.id }}/ai/fixes" class="viewer-ok" data-busy="Writing fixes…"><button type="submit" class="btn" {% if not ai_on %}disabled{% endif %}>Explain and fix</button></form>
-        <form method="post" action="/p/{{ p.id }}/ai/creative" class="viewer-ok" data-busy="Writing ideas…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write ad ideas</button></form>
-        <form method="post" action="/p/{{ p.id }}/ai/report" class="viewer-ok" data-busy="Writing report…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write monthly report</button></form>
-        {% if ai_out.report %}<span class="report-chip"><a class="btn btn-quiet" href="/p/{{ p.id }}/report">Open last report</a><form method="post" action="/p/{{ p.id }}/ai/report/delete" data-confirm="Remove the monthly report?"><button class="x-btn" type="submit" aria-label="Remove the monthly report" title="Remove">&times;</button></form></span>{% endif %}
+        {% if can_edit %}
+        <form method="post" action="/p/{{ p.id }}/ai/fixes" data-busy="Writing fixes…"><button type="submit" class="btn" {% if not ai_on %}disabled{% endif %}>Explain and fix</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/creative" data-busy="Writing ideas…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write ad ideas</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/report" data-busy="Writing report…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write monthly report</button></form>
+        {% endif %}
+        {% if ai_out.report %}<span class="report-chip"><a class="btn btn-quiet" href="/p/{{ p.id }}/report">Open last report</a>{% if can_edit %}<form method="post" action="/p/{{ p.id }}/ai/report/delete" data-confirm="Remove the monthly report?"><button class="x-btn" type="submit" aria-label="Remove the monthly report" title="Remove">&times;</button></form>{% endif %}</span>{% elif not can_edit %}<span class="muted small">No monthly report written yet.</span>{% endif %}
       </div>
-      <p class="muted small">Write-ups take about 20–60 seconds. They use only the numbers above and are suggestions to review before changing anything in Google or Meta.</p>
+      {% if can_edit %}<p class="muted small">Write-ups take about 20–60 seconds. They use only the numbers above and are suggestions to review before changing anything in Google or Meta.</p>{% endif %}
       {% for kind, title in [('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
         {% set out = ai_out[kind] %}
         {% if out %}
         <article class="writeup" id="ai-{{ kind }}">
           <div class="writeup-head">
             <h3>{{ title }} <span class="muted small">written {{ out.created_at.replace('T', ' ')[:16] }}</span></h3>
-            <form method="post" action="/p/{{ p.id }}/ai/{{ kind }}/delete" data-confirm="Remove this write-up?">
+            {% if can_edit %}<form method="post" action="/p/{{ p.id }}/ai/{{ kind }}/delete" data-confirm="Remove this write-up?">
               <button class="x-btn" type="submit" aria-label="Remove this write-up" title="Remove">&times;</button>
-            </form>
+            </form>{% endif %}
           </div>
           <div class="prose">{{ out.content|markdown|safe }}</div>
         </article>
@@ -311,7 +314,7 @@
   <aside class="side-col">
     {% set has_any = views|selectattr('upload')|list or views|selectattr('search_upload')|list %}
     {% set linked_any = p.meta_account_id or p.google_customer_id or fb_linked or ig_linked %}
-    <p class="eyebrow side-eyebrow">{{ 'Practice setup' if can_edit else 'Practice details' }}</p>
+    <p class="eyebrow side-eyebrow">{{ 'Practice setup' if can_edit else 'On file' }}</p>
     {% if can_edit %}
     <details class="drawer" id="upload" {% if not has_any and not linked_any %}open{% endif %}>
       <summary><span class="drawer-title">Upload an export</span><span class="drawer-hint">A CSV from Google Ads or Meta</span></summary>
@@ -328,13 +331,11 @@
       </details>
       </div>
     </details>
-    {% endif %}
 
     {% if meta_on or google_on %}
     <details class="drawer" id="accounts" {% if not linked_any %}open{% endif %}>
       <summary><span class="drawer-title">Linked accounts</span><span class="drawer-hint">{% if linked_any %}Ad accounts, Facebook Pages and Instagram linked{% else %}Nothing linked yet{% endif %}</span></summary>
       <div class="drawer-body">
-      {% if can_edit %}
       <form method="post" action="/p/{{ p.id }}/accounts" class="stack">
         {% if meta_on %}
         <label>Meta ad account
@@ -377,16 +378,6 @@
         {% endif %}
         <button type="submit" class="btn btn-quiet">Save links</button>
       </form>
-      {% else %}
-      {% set pnames = {} %}{% for a in fb_pages + ig_accounts %}{% set _ = pnames.update({a.id: a.name}) %}{% endfor %}
-      <dl class="readonly-list">
-        {% if p.meta_account_id %}<dt>Meta ad account</dt><dd>{{ (meta_accounts|selectattr('id', 'equalto', p.meta_account_id)|map(attribute='name')|first) or p.meta_account_id }}</dd>{% endif %}
-        {% if p.google_customer_id %}<dt>Google Ads account</dt><dd>{{ (google_accounts|selectattr('id', 'equalto', p.google_customer_id)|map(attribute='name')|first) or p.google_customer_id }}</dd>{% endif %}
-        {% if fb_linked %}<dt>Facebook Pages</dt><dd>{% for x in fb_linked %}{{ pnames.get(x, x) }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>{% endif %}
-        {% if ig_linked %}<dt>Instagram</dt><dd>{% for x in ig_linked %}{{ pnames.get(x, x) }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>{% endif %}
-        {% if not linked_any %}<dd class="muted">Nothing linked yet.</dd>{% endif %}
-      </dl>
-      {% endif %}
       {% if p.meta_account_id or p.google_customer_id or fb_linked or ig_linked %}
       <form method="post" action="/sync" data-busy="Syncing…" class="inline-sync">
         <input type="hidden" name="back" value="/p/{{ p.id }}"><button class="linklike" type="submit">Sync now</button>
@@ -396,7 +387,6 @@
     </details>
     {% endif %}
 
-    {% if can_edit %}
     <details class="drawer" id="settings">
       <summary><span class="drawer-title">Budgets and notes</span><span class="drawer-hint">Name, monthly budgets, which campaigns count</span></summary>
       <div class="drawer-body">
@@ -411,12 +401,11 @@
         <label>Notes for write-ups<textarea name="notes" rows="3" placeholder="Services to push, location, offers you actually run…">{{ p.notes or '' }}</textarea></label>
         <button type="submit" class="btn btn-quiet">Save</button>
       </form>
-      <form method="post" action="/p/{{ p.id }}/delete" class="drawer-danger" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
+      {% if is_admin %}<form method="post" action="/p/{{ p.id }}/delete" class="drawer-danger" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
         <button class="linklike danger" type="submit">Delete this practice</button>
-      </form>
+      </form>{% endif %}
       </div>
     </details>
-    {% endif %}
 
     {% if not master %}
     <details class="drawer" id="campaigns">
@@ -451,6 +440,7 @@
       </div>
     </details>
     {% endif %}
+    {% endif %}{# end can_edit setup #}
 
     <details class="drawer" id="uploads">
       <summary><span class="drawer-title">Uploads</span><span class="drawer-hint">{% if uploads %}{{ uploads|length }} on file{% else %}None yet{% endif %}</span></summary>
@@ -461,7 +451,7 @@
         <li>
           <span>{{ 'Google' if u.platform == 'google' else 'Meta' }} · {{ {'campaign':'campaigns','search_term':'search terms','ad':'ad sets/ads'}[u.level] }}{% if u.source == 'sync' %} · <span class="tag">synced</span>{% endif %}<br>
           <span class="muted small">{{ u.date_start or '?' }} to {{ u.date_end or '?' }} · {{ u.row_count }} rows</span></span>
-          <form method="post" action="/p/{{ p.id }}/uploads/{{ u.id }}/delete" data-confirm="Remove this upload?"><button class="linklike danger" type="submit">Remove</button></form>
+          {% if can_edit %}<form method="post" action="/p/{{ p.id }}/uploads/{{ u.id }}/delete" data-confirm="Remove this upload?"><button class="linklike danger" type="submit">Remove</button></form>{% endif %}
         </li>
         {% endfor %}
       </ul>
