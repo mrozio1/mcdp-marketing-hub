@@ -18,11 +18,12 @@
     <a href="/practices" {% if here == '/practices' or here.startswith('/p/') %}aria-current="page"{% endif %}>Practices</a>
     <a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>
     <a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>
+    <a href="/field" {% if here.startswith('/field') %}aria-current="page"{% endif %}>Field</a>
     {% if is_admin %}
     <a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>
     <a href="/team" {% if here.startswith('/team') %}aria-current="page"{% endif %}>Team</a>
     {% endif %}
-    {% if me %}<a href="/account" class="nav-me" {% if here.startswith('/account') %}aria-current="page"{% endif %} title="{{ me.name }} · {{ me.role|capitalize }}">{{ me.name.split(' ')[0] }}{% if not can_edit %} <span class="role-chip">view only</span>{% endif %}</a>{% endif %}
+    {% if me %}<a href="/account" class="nav-me" {% if here.startswith('/account') %}aria-current="page"{% endif %} title="{{ me.name }} · {{ me.role|capitalize }}">{{ me.name.split(' ')[0] }}{% if me.role == 'viewer' %} <span class="role-chip">view only</span>{% elif me.role == 'agent' %} <span class="role-chip">field</span>{% endif %}</a>{% endif %}
     <form method="post" action="/logout"><button class="linklike" type="submit">Sign out</button></form>
   </nav>
 </header>

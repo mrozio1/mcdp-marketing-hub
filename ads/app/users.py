@@ -1,6 +1,6 @@
 """People who can sign in, and what each role may do.
 
-Roles: viewer (look and export), editor (also uploads, fixes, map refresh, offices, lists),
+Roles: viewer (look and export), agent (a viewer who also logs field visits), editor (also uploads, fixes, map refresh, offices, lists),
 admin (also keys and connections, people, deleting practices, map setup).
 
 New people get a one-time setup link (no email needed: the admin copies it to them) and pick
@@ -19,9 +19,10 @@ from datetime import datetime, timedelta
 
 from . import db
 
-ROLES = ("viewer", "editor", "admin")
-ROLE_LABELS = {"viewer": "Viewer", "editor": "Editor", "admin": "Admin"}
+ROLES = ("viewer", "agent", "editor", "admin")
+ROLE_LABELS = {"viewer": "Viewer", "agent": "Field agent", "editor": "Editor", "admin": "Admin"}
 ROLE_HELP = {"viewer": "Sees everything and exports; can't change anything.",
+             "agent": "A viewer who also logs office visits, receipts and routes.",
              "editor": "Also uploads, fixes, map refresh, offices and list stars/notes.",
              "admin": "Also keys and connections, people, map setup and deleting practices."}
 LINK_DAYS = 7
@@ -50,7 +51,8 @@ CREATE TABLE IF NOT EXISTS users (
 # so anyone set up there keeps their sign-in.
 COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", "gen": "INTEGER NOT NULL DEFAULT 1",
            "active": "INTEGER NOT NULL DEFAULT 1", "ever_set": "INTEGER NOT NULL DEFAULT 0",
-           "last_login": "TEXT DEFAULT ''"}
+           "last_login": "TEXT DEFAULT ''", "field_budget": "REAL DEFAULT 0", "home_address": "TEXT DEFAULT ''",
+           "home_lat": "REAL", "home_lng": "REAL"}
 
 
 def init():

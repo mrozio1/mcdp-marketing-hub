@@ -11,6 +11,16 @@
 </section>
 
 {% if me.id %}
+<details class="drawer" id="home" {% if not me.home_address %}open{% endif %}>
+  <summary><span class="drawer-title">Home address for routes</span><span class="drawer-hint">{{ me.home_address or 'Not set' }}</span></summary>
+  <div class="drawer-body">
+  <form method="post" action="/account/home" class="stack narrow">
+    <label>Street, city, state and ZIP<input name="address" value="{{ me.home_address or '' }}" maxlength="200" autocomplete="street-address"></label>
+    <p class="small muted">Only used as a starting point when you plan a route. Leave blank and save to remove it.</p>
+    <button class="btn btn-quiet" type="submit">Save</button>
+  </form>
+  </div>
+</details>
 <details class="drawer" id="password" {% if error %}open{% endif %}>
   <summary><span class="drawer-title">Change password</span><span class="drawer-hint">Signs you out on other devices</span></summary>
   <div class="drawer-body">

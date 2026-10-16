@@ -1,0 +1,213 @@
+"""Field visits: logging (with on-site check and receipts), activity, budgets, map overlay and routes."""
+import importlib
+import io
+import json
+import os
+import re
+from datetime import date, timedelta
+
+import pytest
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+
+@pytest.fixture(scope="module")
+def env(tmp_path_factory):
+    for k in [k for k in os.environ if k.startswith(("META_", "GOOGLE_"))]:
+        os.environ.pop(k)
+    os.environ.update({"ADS_DB": str(tmp_path_factory.mktemp("db") / "ads.db"), "ADS_PASSWORD": "shared-pw",
+                       "ADS_DISABLE_SCHEDULER": "1", "AI_API_KEY": "test"})
+    from app import ai, connectors, db, field, places, referrals, users
+    for m in (db, users, connectors, places, referrals, ai, field):
+        importlib.reload(m)
+    from app import main
+    importlib.reload(main)
+    from fastapi.testclient import TestClient
+
+    def person(admin, name, email, role):
+        r = admin.post("/team/add", data={"name": name, "email": email, "role": role})
+        tok = re.search(r"/setup/([\w-]+)", r.text).group(1)
+        c = TestClient(main.app)
+        c.post(f"/setup/{tok}", data={"password": "long-password-1", "confirm": "long-password-1"})
+        return c
+
+    with TestClient(main.app) as boss:
+        boss.post("/login", data={"password": "shared-pw"})
+        admin = person(boss, "Ann Admin", "ann@example.com", "admin")
+        agent = person(admin, "Abe Agent", "abe@example.com", "agent")
+        viewer = person(admin, "Vi Viewer", "vi@example.com", "viewer")
+        # Our office, a Google dental pin near it, and an NPI practice.
+        heights = db.add_practice("Heights Orthodontics", 1000, 500)
+        db.add_practice("Havens Orthodontics", 0, 0)
+        places.add_office("Heights – Defiance", "ChIJ_office_defiance01", 41.28, -84.35)
+        oid = places.offices()[0]["id"]
+        with db.conn() as c:
+            c.execute("INSERT INTO map_places(place_id, layer, office_id, miles, lat, lng, coords_at, ranked) "
+                      "VALUES ('ChIJ_dentist_maple001', 'referrer', ?, 1.2, 41.30, -84.36, ?, 1)", (oid, db.now()))
+            c.execute("INSERT INTO ref_practices(key, name, address, city, state, zip, lat, lng, place_id, seen_at) "
+                      "VALUES ('npi-maple', 'Maple Street Family Dental', '12 Maple St', 'Defiance', 'OH', '43512', "
+                      "41.30, -84.36, 'ChIJ_dentist_maple001', ?)", (db.now(),))
+            c.execute("INSERT INTO ref_practices(key, name, address, city, state, zip, lat, lng, place_id, seen_at) "
+                      "VALUES ('npi-oak', 'Oak Dental', '9 Oak Ave', 'Defiance', 'OH', '43512', 41.27, -84.40, '', ?)",
+                      (db.now(),))
+        yield {"main": main, "db": db, "field": field, "users": users, "ai": ai, "admin": admin, "agent": agent,
+               "viewer": viewer, "heights": heights, "oid": oid}
+
+
+def log(c, **kw):
+    data = {"place_id": "", "npi_key": "", "name": "", "rating": "warm", "met_name": "Pam", "met_role": "Office manager",
+            "dropped": "Lunch", "cost": "48.20", "followup": "", "notes": "Asked about Invisalign",
+            "visited_at": date.today().isoformat() + "T10:15"}
+    data.update(kw)
+    files = {"receipt": ("r.jpg", JPEG, "image/jpeg")} if kw.pop("with_receipt", False) or data.pop("with_receipt", None) else None
+    return c.post("/field/visits", data=data, files=files)
+
+
+def test_who_can_log(env):
+    v, a = env["viewer"], env["agent"]
+    assert v.get("/field").status_code == 200                                  # everyone sees the Field page
+    assert "Log a visit" not in v.get("/field").text
+    r = v.get("/field/log?place=ChIJ_dentist_maple001", follow_redirects=False)
+    assert r.status_code == 303                                                # viewers can't log
+    assert a.get("/field/log?place=ChIJ_dentist_maple001").status_code == 200
+    assert "view only" not in a.get("/").text and 'href="/field"' in a.get("/").text
+    # Agents can't do editor things.
+    r = a.post("/practices", data={"name": "X"}, follow_redirects=True)
+    assert "That needs editor access" in r.text
+
+
+def test_log_from_a_map_pin_uses_npi_name_not_google(env):
+    a, field, db = env["agent"], env["field"], env["db"]
+    page = a.get("/field/log?place=ChIJ_dentist_maple001").text
+    assert 'value="Maple Street Family Dental"' in page                        # from the NPI match
+    r = log(a, place_id="ChIJ_dentist_maple001", name="Maple Street Family Dental",
+            phone_lat="41.3001", phone_lng="-84.3602", phone_acc="15", followup=date.today().isoformat())
+    assert "logged (on site)" in r.text
+    o = field.find_office("ChIJ_dentist_maple001")
+    assert o["lat"] is None and o["lng"] is None                               # Google coordinates aren't stored
+    assert o["here_lat"] == 41.30 and o["our_office_id"] == env["oid"]
+    with db.conn() as c:
+        v = dict(c.execute("SELECT * FROM visits ORDER BY id DESC LIMIT 1").fetchone())
+    assert v["on_site"] == 1 and v["cost"] == 48.2 and v["user_name"] == "Abe Agent"
+
+
+def test_far_away_and_name_required(env):
+    a = env["agent"]
+    r = log(a, place_id="ChIJ_dentist_maple001", name="", phone_lat="41.5", phone_lng="-84.0")
+    assert "logged" in r.text and "mi from the office" in r.text               # existing office keeps its name
+    with env["db"].conn() as c:
+        assert c.execute("SELECT on_site FROM visits ORDER BY id DESC LIMIT 1").fetchone()[0] == 0
+    r = log(a, name="", phone_lat="41.4", phone_lng="-84.2")                    # brand-new office needs a name
+    assert "Add the office" in r.text
+
+
+def test_new_office_on_the_spot_and_npi_office(env):
+    a, field = env["agent"], env["field"]
+    r = log(a, name="Riverside Dental", phone_lat="41.29", phone_lng="-84.38", rating="cold", cost="")
+    assert "Riverside Dental logged (on site)" in r.text
+    o = [x for x in field.office_status() if x["name"] == "Riverside Dental"][0]
+    assert (o["lat"], o["lng"]) == (41.29, -84.38)
+    r = log(a, npi_key="npi-oak", name="Oak Dental", rating="hot", cost="12", with_receipt=True)
+    assert "Oak Dental logged" in r.text
+
+
+def test_receipts(env, monkeypatch):
+    a, field, ai = env["agent"], env["field"], env["ai"]
+    monkeypatch.setattr(ai, "_chat", lambda messages, **kw: '{"total": 23.45, "merchant": "Panera Bread"}')
+    r = a.post("/field/receipt/read", files={"receipt": ("r.jpg", JPEG, "image/jpeg")})
+    assert r.json() == {"total": 23.45, "merchant": "Panera Bread"}
+    sent = {}
+    monkeypatch.setattr(ai, "_chat", lambda messages, **kw: sent.update(m=messages) or "{}")
+    a.post("/field/receipt/read", files={"receipt": ("r.jpg", JPEG, "image/jpeg")})
+    assert sent["m"][1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    sent.clear()
+    r = env["viewer"].post("/field/receipt/read", files={"receipt": ("r.jpg", JPEG, "image/jpeg")}, follow_redirects=False)
+    assert r.status_code == 303 and not sent                                     # refused before the AI is asked
+    assert a.post("/field/receipt/read", files={"receipt": ("x.txt", b"hello", "text/plain")}).status_code == 422
+    # The saved receipt from the Oak visit can be opened by anyone signed in, and goes when the visit does.
+    with env["db"].conn() as c:
+        vid, name = c.execute("SELECT id, receipt FROM visits WHERE receipt!=''").fetchone()
+    assert env["viewer"].get(f"/field/receipts/{name}").content == JPEG
+    assert env["viewer"].get("/field/receipts/../../ads.db").status_code == 404
+    env["admin"].post(f"/field/visits/{vid}/delete")
+    assert field.receipt_path(name) is None
+
+
+def test_activity_page_budgets_and_export(env):
+    admin, field, db = env["admin"], env["field"], env["db"]
+    # 'Heights – Defiance' is suggested as Heights Orthodontics.
+    assert field.practice_links()[env["oid"]] == env["heights"]
+    abe = env["users"].by_email("abe@example.com")["id"]
+    admin.post("/field/settings/budgets", data={f"pb_{env['heights']}": "300", f"ab_{abe}": "$250"})
+    html = admin.get("/field?period=month").text
+    assert "Maple Street Family Dental" in html and "Riverside Dental" in html
+    assert "Heights Orthodontics" in html and "of $300.00" in html and "of $250.00" in html
+    assert "on site" in html and "Asked about Invisalign" in html
+    day = admin.get("/field?period=day").text
+    assert "Where they" in day
+    r = admin.get(f"/field.xlsx?period=month&who={abe}")
+    import openpyxl
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    assert ws["A2"].value == "Date" and ws.max_row >= 5
+    # Editors-only settings stay closed to agents.
+    assert env["agent"].post("/field/settings/budgets", data={}, follow_redirects=False).status_code == 303
+    assert "Field budgets" not in env["agent"].get("/field").text
+
+
+def test_followups_and_map_overlay(env):
+    field = env["field"]
+    due = field.followups()
+    assert [f["name"] for f in due] == []      # the Maple follow-up was replaced by a later visit without one
+    log(env["agent"], place_id="ChIJ_dentist_maple001", name="",
+        followup=(date.today() - timedelta(days=1)).isoformat(), visited_at=date.today().isoformat() + "T15:00")
+    due = field.followups()
+    assert due[0]["name"] == "Maple Street Family Dental" and due[0]["overdue"]
+    data = env["viewer"].get("/map/data.json").json()
+    v = data["visits"]["ChIJ_dentist_maple001"]
+    assert v["rating"] == "warm" and v["overdue"] and v["n"] >= 3
+    assert any(x["name"] == "Riverside Dental" for x in data["visited_offices"])
+    html = env["viewer"].get("/field").text
+    assert "Follow-ups due" in html and "Overdue" in html
+
+
+def test_route_ordering_and_links(env):
+    field = env["field"]
+    stops = [{"id": str(i), "lat": 41.0 + i * 0.1, "lng": -84.0} for i in (3, 1, 4, 2, 0)]
+    ordered = field.order_stops((40.9, -84.0), stops)
+    assert [s["id"] for s in ordered] == ["0", "1", "2", "3", "4"]
+    many = [{"id": str(i), "lat": 41 + i / 100, "lng": -84, "place_id": "ChIJ_x%07d" % i} for i in range(23)]
+    links = field.maps_links("", many)
+    assert [(l["from"], l["to"]) for l in links] == [(1, 10), (11, 20), (21, 23)]
+    assert "origin" not in links[0]["url"] and "origin=41.09,-84" in links[1]["url"]
+    assert "destination_place_id=ChIJ_x0000009" in links[0]["url"] and links[0]["url"].count("|") == 8
+    r = env["viewer"].post("/field/route-order", json={"start": {"kind": "office", "id": env["oid"]},
+                                                       "stops": stops})
+    j = r.json()
+    assert j["links"][0]["url"].startswith("https://www.google.com/maps/dir/?api=1") and "origin=41.28,-84.35" in j["links"][0]["url"]
+    assert "Add your home address" in env["viewer"].post("/field/route-order", json={"start": {"kind": "home"}, "stops": stops}).json()["error"]
+
+
+def test_home_address(env, monkeypatch):
+    field = env["field"]
+    monkeypatch.setattr(field, "geocode_one", lambda a: (41.25, -84.3) if "Main" in a else None)
+    a = env["agent"]
+    assert "Couldn" in a.post("/account/home", data={"address": "nowhere"}, follow_redirects=True).text
+    a.post("/account/home", data={"address": "1 Main St, Defiance, OH 43512"})
+    u = env["users"].by_email("abe@example.com")
+    assert (u["home_lat"], u["home_lng"]) == (41.25, -84.3)
+    j = a.post("/field/route-order", json={"start": {"kind": "home"}, "stops": [{"id": "x", "lat": 41.3, "lng": -84.3}]}).json()
+    assert "origin=41.25,-84.3" in j["links"][0]["url"]
+
+
+def test_only_own_visits_removable_by_agents(env):
+    with env["db"].conn() as c:
+        vid = c.execute("SELECT id FROM visits WHERE user_name='Abe Agent' LIMIT 1").fetchone()[0]
+    # A second agent can't remove Abe's visit; Abe can.
+    from fastapi.testclient import TestClient
+    r = env["admin"].post("/team/add", data={"name": "Bea", "email": "bea@example.com", "role": "agent"})
+    tok = re.search(r"/setup/([\w-]+)", r.text).group(1)
+    bea = TestClient(env["main"].app)
+    bea.post(f"/setup/{tok}", data={"password": "long-password-1", "confirm": "long-password-1"})
+    assert "Only the person" in bea.post(f"/field/visits/{vid}/delete", follow_redirects=True).text
+    env["agent"].post(f"/field/visits/{vid}/delete")
+    assert env["field"].visit(vid) is None

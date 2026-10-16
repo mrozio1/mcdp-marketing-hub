@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Log a visit{% endblock %}
+{% block content %}
+<div class="field-log">
+<p class="crumb"><a href="{{ back or '/map' }}">{{ 'Back' if back else 'Market map' }}</a></p>
+<h1>Log a visit</h1>
+
+<section class="visit-office" aria-label="Office">
+  {% if o.place_id %}<p class="live-name" id="live-name" hidden></p>{% endif %}
+  {% if o.address %}<p class="small muted">{{ o.address }}</p>{% endif %}
+  {% if history %}
+  <p class="small">Last visit {{ history[0].visited_at[:10] }} by {{ history[0].user_name or 'someone' }}{% if history[0].rating %} · <span class="rating-chip r-{{ history[0].rating }}">{{ ratings[history[0].rating] }}</span>{% endif %}{% if history[0].followup %} · follow up {{ history[0].followup }}{% endif %}</p>
+  {% endif %}
+</section>
+
+{% if error %}<p class="flash flash-error" role="alert">{{ error }}</p>{% endif %}
+
+<form method="post" action="/field/visits" enctype="multipart/form-data" class="stack visit-form" id="visit-form" data-busy="Saving…">
+  <input type="hidden" name="office_id" value="{{ o.id or '' }}">
+  <input type="hidden" name="place_id" value="{{ o.place_id or '' }}">
+  <input type="hidden" name="npi_key" value="{{ o.npi_key or '' }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <input type="hidden" name="phone_lat" id="phone-lat"><input type="hidden" name="phone_lng" id="phone-lng"><input type="hidden" name="phone_acc" id="phone-acc">
+  <input type="hidden" name="office_lat" value="{{ o.lat if o.lat is not none and not o.place_id else '' }}">
+  <input type="hidden" name="office_lng" value="{{ o.lng if o.lng is not none and not o.place_id else '' }}">
+
+  <label>Office name <span class="muted small">(as on their sign; this is what reports show)</span>
+    <input name="name" value="{{ o.name }}" required maxlength="160" placeholder="e.g. Maple Street Family Dental" autocomplete="off">
+  </label>
+  {% if not o.place_id and not o.npi_key and not o.id %}
+  <label>Address <span class="muted small">(optional if you're there now; your location is used)</span>
+    <input name="address" value="{{ o.address }}" maxlength="300" autocomplete="street-address">
+  </label>
+  {% endif %}
+
+  <p class="geo-status small" id="geo-status" aria-live="polite">Checking where you are…</p>
+
+  <label>When<input type="datetime-local" name="visited_at" id="visited-at"></label>
+
+  <div class="two-up">
+    <label>Who you met<input name="met_name" maxlength="120" placeholder="Name" autocomplete="off"></label>
+    <label>Their role
+      <select name="met_role"><option value="">Choose…</option>{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select>
+    </label>
+  </div>
+
+  <fieldset class="rating-pick">
+    <legend>Relationship</legend>
+    {% for k, label in ratings.items() %}
+    <label class="r-{{ k }}"><input type="radio" name="rating" value="{{ k }}" {% if history and history[0].rating == k %}checked{% endif %}><span>{{ label }}</span></label>
+    {% endfor %}
+  </fieldset>
+
+  <label>What you dropped off
+    <input name="dropped" id="dropped" maxlength="300" placeholder="e.g. Lunch for 8, referral pads" autocomplete="off">
+  </label>
+  <div class="chips" aria-label="Quick add">{% for c in chips %}<button type="button" class="chip" data-chip="{{ c }}">+ {{ c }}</button>{% endfor %}</div>
+
+  <div class="receipt-row">
+    <label class="receipt-pick">
+      <span class="btn btn-quiet">📷 Receipt photo</span>
+      <input type="file" name="receipt" id="receipt" accept="image/*" capture="environment" class="sr-only">
+    </label>
+    <img id="receipt-thumb" alt="Receipt" hidden>
+    <label class="cost">Cost
+      <span class="money-in"><span aria-hidden="true">$</span><input name="cost" id="cost" inputmode="decimal" placeholder="0.00" autocomplete="off"></span>
+    </label>
+  </div>
+  <p class="small muted" id="receipt-status" aria-live="polite">{% if ai_on %}Snap the receipt and the amount fills in; check it before saving.{% else %}Snap the receipt to keep it with the visit, and type the amount.{% endif %}</p>
+
+  <label>Follow up on<input type="date" name="followup" id="followup"></label>
+  <div class="chips">{% for d, l in [(7, 'In a week'), (14, 'In 2 weeks'), (30, 'In a month'), (90, 'In 3 months')] %}<button type="button" class="chip" data-days="{{ d }}">{{ l }}</button>{% endfor %}</div>
+
+  <label>Notes<textarea name="notes" rows="4" maxlength="4000" placeholder="What they said, referral potential, next step…"></textarea></label>
+
+  <button class="btn btn-big" type="submit">Save visit</button>
+</form>
+
+{% if history %}
+<details class="drawer" id="history">
+  <summary><span class="drawer-title">Earlier visits</span><span class="drawer-hint">{{ history|length }} most recent</span></summary>
+  <div class="drawer-body">
+  <ul class="visit-history">
+    {% for h in history %}
+    <li><strong>{{ h.visited_at[:10] }}</strong> · {{ h.user_name }}{% if h.rating %} · <span class="rating-chip r-{{ h.rating }}">{{ ratings[h.rating] }}</span>{% endif %}
+      {% if h.met_name %}<br><span class="small">Met {{ h.met_name }}{% if h.met_role %} ({{ h.met_role }}){% endif %}</span>{% endif %}
+      {% if h.dropped or h.cost %}<br><span class="small">{{ h.dropped }}{% if h.cost %} · {{ h.cost|money }}{% endif %}</span>{% endif %}
+      {% if h.notes %}<br><span class="small muted">{{ h.notes }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  </div>
+</details>
+{% endif %}
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, "0");
+  const now = new Date();
+  $("visited-at").value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const OFFICE = {{ {"lat": o.here_lat, "lng": o.here_lng}|tojson }};
+
+  // Where the phone is, once, when the visit is logged (not tracked in between).
+  const geo = $("geo-status");
+  const miles = (a, b) => { const r = 3958.8, t = x => x * Math.PI / 180;
+    const h = Math.sin(t(b.lat - a.lat) / 2) ** 2 + Math.cos(t(a.lat)) * Math.cos(t(b.lat)) * Math.sin(t(b.lng - a.lng) / 2) ** 2;
+    return 2 * r * Math.asin(Math.sqrt(h)); };
+  if (!navigator.geolocation) geo.textContent = "This browser can't share your location; the visit is saved without it.";
+  else navigator.geolocation.getCurrentPosition(p => {
+    const here = { lat: p.coords.latitude, lng: p.coords.longitude };
+    $("phone-lat").value = here.lat; $("phone-lng").value = here.lng; $("phone-acc").value = Math.round(p.coords.accuracy);
+    if (OFFICE.lat != null) {
+      const d = miles(here, OFFICE);
+      geo.textContent = d <= 0.2 + Math.min(p.coords.accuracy / 1609, 0.3) ? "📍 You're at the office." : `📍 You're ${d.toFixed(1)} mi from the office; that's fine if you're logging it later.`;
+      geo.className = "geo-status small " + (d <= 0.5 ? "ok" : "far");
+    } else geo.textContent = "📍 Location found; it'll be saved as this office's spot.";
+  }, () => { geo.textContent = "Location not shared, so the visit won't show as on site. You can allow it in the browser's settings."; },
+     { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+
+  // Quick-add chips
+  document.querySelectorAll("[data-chip]").forEach(b => b.onclick = () => {
+    const f = $("dropped"); f.value = f.value ? `${f.value}, ${b.dataset.chip.toLowerCase()}` : b.dataset.chip; f.focus();
+  });
+  document.querySelectorAll("[data-days]").forEach(b => b.onclick = () => {
+    const d = new Date(); d.setDate(d.getDate() + Number(b.dataset.days));
+    $("followup").value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  });
+
+  // Receipt: shrink the photo on the phone, show it, and let the AI read the total.
+  const input = $("receipt"), cost = $("cost"), status = $("receipt-status"), thumb = $("receipt-thumb");
+  let aiFilled = null;
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    if (!file) return;
+    let blob = file;
+    try {
+      const img = await createImageBitmap(file);
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.82));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], "receipt.jpg", { type: "image/jpeg" }));
+      input.files = dt.files;
+    } catch (e) { /* keep the original photo */ }
+    thumb.src = URL.createObjectURL(blob); thumb.hidden = false;
+    {% if ai_on %}
+    status.textContent = "Reading the receipt…";
+    const fd = new FormData(); fd.append("receipt", blob, "receipt.jpg");
+    try {
+      const res = await fetch("/field/receipt/read", { method: "POST", body: fd, credentials: "same-origin" });
+      const j = await res.json();
+      if (j.total != null) {
+        if (!cost.value || cost.value === aiFilled) { cost.value = j.total.toFixed(2); aiFilled = cost.value; }
+        status.textContent = `Read $${j.total.toFixed(2)}${j.merchant ? " from " + j.merchant : ""}. Check it matches the receipt.`;
+        const dropped = $("dropped");
+        if (j.merchant && !dropped.value) dropped.value = `Lunch (${j.merchant})`;
+      } else status.textContent = j.error || "Couldn't read the total; type it in.";
+    } catch (e) { status.textContent = "Couldn't read the receipt right now; type the amount."; }
+    {% endif %}
+  });
+})();
+</script>
+{% if o.place_id and browser_key %}
+<script>
+  (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
+  ({key: {{ browser_key|tojson }}, v: "weekly"});
+  // Google's name and address are shown live (never saved), to confirm it's the right place.
+  (async () => {
+    const { Place } = await google.maps.importLibrary("places");
+    const p = new Place({ id: {{ o.place_id|tojson }} });
+    await p.fetchFields({ fields: ["displayName", "formattedAddress"] });
+    const el = document.getElementById("live-name");
+    el.replaceChildren(Object.assign(document.createElement("strong"), { textContent: p.displayName || "" }),
+                       document.createTextNode(p.formattedAddress ? " · " + p.formattedAddress : ""));
+    el.append(Object.assign(document.createElement("span"), { className: "muted small", textContent: " (from Google)" }));
+    el.hidden = false;
+  })().catch(() => {});
+</script>
+{% endif %}
+{% endblock %}

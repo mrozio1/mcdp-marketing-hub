@@ -66,6 +66,7 @@
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const RADIUS = {{ radius|round(0)|int }};
   const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+  const CAN_LOG = {{ 'true' if can_log else 'false' }};
   const ABOUT = {
     referrer: `General dental practices within ${RADIUS} miles: potential referrers. Orthodontic-only practices and our own offices are left out.`,
     competitor: `Orthodontic practices within ${RADIUS} miles that aren't ours: the competition.`,
@@ -127,6 +128,22 @@
       const links = el("td", "ref-links");
       const a = el("a", "small", "Google Maps"); a.href = r.maps_url; a.target = "_blank"; a.rel = "noopener"; links.append(a);
       if (r.place_id) links.append(el("span", "small muted ref-sub", "on our map"));
+      if (CAN_LOG) {
+        const lv = el("a", "small ref-sub", "Log visit");
+        lv.href = "/field/log?" + new URLSearchParams({ npi: r.key, back: location.pathname + location.search });
+        links.append(lv);
+      }
+      if (r.lat != null) {
+        const add = el("button", "linklike small ref-sub", "Add to route"); add.type = "button";
+        add.onclick = () => {
+          let route = []; try { route = JSON.parse(localStorage.getItem("mcdp-route") || "[]"); } catch (e) {}
+          const id = r.place_id || ("n" + r.key);
+          if (!route.some(s => s.id === id)) route.push({ id, place_id: r.place_id || null, npi: r.key, name: r.name, lat: r.lat, lng: r.lng });
+          try { localStorage.setItem("mcdp-route", JSON.stringify(route)); } catch (e) {}
+          add.textContent = "In route ✓";
+        };
+        links.append(add);
+      }
       const c1 = el("td", "ref-inc"); c1.append(inc);
       const c2 = el("td"); c2.append(star);
       const c6 = el("td"); c6.append(note);

@@ -216,6 +216,34 @@ which prints a fresh setup link.
 Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 `ads.<mcdp-domain>` → `http://ads:8000`.
 
+### Field visits (agents in the field)
+
+Give field marketers **Field agent** access on the Team page: they see everything a viewer does,
+and can log visits, attach receipts and plan routes. Editors and admins can log visits too.
+
+- **Log a visit** from a dental pin on the map, from a practice on the Export Map List, or for a
+  new office on the spot. They record who they met and their role, the relationship (Cold, Warm,
+  Hot or Referring), what they dropped off and its cost, a follow-up date and notes.
+- **Receipt photo**: the photo is shrunk on the phone and saved with the visit, and the hub's
+  free AI reads the total into the cost box for the agent to check.
+- **On site**: when a visit is saved, the phone's location is recorded once (if allowed) and the
+  visit is marked *on site* when it's within 0.2 mi of the office. Nothing is tracked in between.
+- **Field page**: visits by day, week or month, filtered by agent or practice, with a map of the
+  day's stops in order, follow-ups due, an Excel export, and spend against monthly budgets per
+  practice and per agent (same pacing bar as the ads). A visit counts against the practice of
+  our nearest office; matches are suggested from the names and can be changed under
+  *Offices and practices*.
+- **Map**: visited pins get a ring in the relationship's colour; follow-ups due pulse. Filters
+  show only visited offices or only follow-ups due.
+- **Plan a route**: add pins (or the follow-ups due, or list rows) to the route, choose the
+  start (where you are, your home address from *Your account*, or one of our offices), and the
+  hub puts the stops in a short driving order and opens them in the Google Maps app (10 stops per
+  link; longer routes are split).
+
+Google's terms: our records hold the office name from the NPI Registry or as the agent types it;
+Google's own name and address are only shown live. Receipts are stored next to the database in
+`/data/receipts`.
+
 ### Market map (our offices, referrers, competitors)
 
 The **Map** page shows our offices, the closest general dental practices to each office

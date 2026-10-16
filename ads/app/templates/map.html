@@ -37,6 +37,8 @@
       <label><input type="checkbox" data-gone><span class="dot dot-gone"></span> No longer listed on Google <span class="muted" data-count="gone"></span></label>
       <label><input type="checkbox" data-only-new><span class="dot dot-new"></span> Only new since the last refresh <span class="muted" data-count="new"></span></label>
       <label><input type="checkbox" data-circles checked> {{ radius|round(0)|int }}-mile rings</label>
+      <label><input type="checkbox" data-only-visited> Only offices we've visited <span class="muted" data-count="visited"></span></label>
+      <label><input type="checkbox" data-only-due> Only follow-ups due <span class="muted" data-count="due"></span></label>
     </fieldset>
     <label class="map-office">Around
       <select data-office>
@@ -46,8 +48,30 @@
     </label>
   </div>
   <div id="map" class="map-canvas" role="region" aria-label="Map of offices, dental practices and orthodontists"></div>
+  <p class="rating-key small"><span class="muted">Ring colour = relationship from the last visit:</span>
+    <span class="rk rk-cold">Cold</span> <span class="rk rk-warm">Warm</span> <span class="rk rk-hot">Hot</span> <span class="rk rk-referring">Referring</span> <span class="rk rk-due">Follow-up due</span></p>
   <p class="small muted map-foot">{% if not offices and not can_edit %}No offices yet.{% elif not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>
+</section>
+
+<section class="panel route-panel" id="route" aria-labelledby="route-h">
+  <h2 id="route-h">Plan a route</h2>
+  <p class="small muted">Tap pins and choose <strong>Add to route</strong> (or add follow-ups from the Field page). The stops are put in a short driving order from where you start, then open in the Google Maps app for turn-by-turn directions.</p>
+  <div class="route-start">
+    <span class="field-label">Start from</span>
+    <label class="check"><input type="radio" name="route-start" value="here" checked> Where I am now</label>
+    {% set has_home = me and me.get('home_lat') is not none %}
+    <label class="check"><input type="radio" name="route-start" value="home" {% if not has_home %}disabled{% endif %}> Home{% if not has_home %} <a class="small" href="/account#home">(add your address)</a>{% endif %}</label>
+    <label class="check"><input type="radio" name="route-start" value="office"> One of our offices</label>
+    <select id="route-office" aria-label="Start office" hidden>{% for o in offices %}{% if o.lat is not none %}<option value="{{ o.id }}">{{ o.label }}</option>{% endif %}{% endfor %}</select>
+  </div>
+  <ol class="route-stops" id="route-stops"></ol>
+  <p class="small muted" id="route-empty">No stops yet.</p>
+  <div class="route-actions">
+    <button class="btn" type="button" id="route-go" disabled>Put in order and open in Google Maps</button>
+    <button class="linklike small" type="button" id="route-clear" hidden>Clear the route</button>
+  </div>
+  <div id="route-out" aria-live="polite"></div>
 </section>
 {% endif %}
 
@@ -201,6 +225,8 @@
   const { Place, PlaceAutocompleteElement } = await google.maps.importLibrary("places");
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const LABEL = {{ layers|tojson }};
+  const CAN_LOG = {{ 'true' if can_log else 'false' }};
+  const RATING = { cold: "Cold", warm: "Warm", hot: "Hot", referring: "Referring" };
 
   // ---- add-office search box ----
   const box = document.getElementById("office-search");
@@ -230,7 +256,55 @@
   const info = new InfoWindow();
   const offName = Object.fromEntries(data.offices.map(o => [o.id, o.label]));
 
-  function details(placeId, layer, extra) {
+  // ---- route (kept in this browser) ----
+  const ROUTE_KEY = "mcdp-route";
+  const loadRoute = () => { try { return JSON.parse(localStorage.getItem(ROUTE_KEY) || "[]"); } catch (e) { return []; } };
+  const saveRoute = r => { try { localStorage.setItem(ROUTE_KEY, JSON.stringify(r)); } catch (e) {} };
+  let route = loadRoute();
+  const liveNames = {};   // Google names for pins in the route: shown, never saved
+  function drawRoute() {
+    const list = document.getElementById("route-stops");
+    if (!list) return;
+    list.replaceChildren();
+    route.forEach((s, i) => {
+      const li = el("li");
+      li.append(el("span", null, s.name || liveNames[s.id] || "Loading name…"));
+      const x = el("button", "x-btn", "×"); x.type = "button"; x.title = "Remove"; x.setAttribute("aria-label", "Remove stop");
+      x.onclick = () => { route.splice(i, 1); saveRoute(route); drawRoute(); };
+      li.append(x); list.append(li);
+      if (!s.name && !liveNames[s.id] && s.place_id) {
+        const p = new Place({ id: s.place_id });
+        p.fetchFields({ fields: ["displayName"] }).then(() => { liveNames[s.id] = p.displayName; drawRoute(); }).catch(() => {});
+      }
+    });
+    document.getElementById("route-empty").hidden = route.length > 0;
+    document.getElementById("route-go").disabled = route.length === 0;
+    document.getElementById("route-clear").hidden = route.length === 0;
+  }
+  function addStop(stop) {
+    if (!route.some(s => s.id === stop.id)) { route.push(stop); saveRoute(route); drawRoute(); }
+  }
+
+  function visitBits(wrap, v, logUrl, stop, name) {
+    if (v) {
+      const p = el("p", "small");
+      p.append(el("span", `rating-chip r-${v.rating || "none"}`, RATING[v.rating] || "Visited"),
+               document.createTextNode(` Last visit ${v.last} by ${v.by}` + (v.n > 1 ? ` · ${v.n} visits` : "")));
+      if (v.due) p.append(el("br"), el("span", v.overdue ? "danger" : "", `Follow up ${v.due}`));
+      wrap.append(p);
+    }
+    const row = el("p", "pin-actions");
+    if (CAN_LOG && logUrl) { const a = el("a", "btn btn-small", v ? "Log a visit" : "Log first visit"); a.href = logUrl; row.append(a); }
+    if (stop) {
+      const b = el("button", "btn btn-small btn-quiet", route.some(s => s.id === stop.id) ? "In route ✓" : "Add to route");
+      b.type = "button";
+      b.onclick = () => { if (name) liveNames[stop.id] = name; addStop(stop); b.textContent = "In route ✓"; };
+      row.append(b);
+    }
+    wrap.append(row);
+  }
+
+  function details(placeId, layer, extra, pin) {
     const wrap = el("div", "pin-card");
     wrap.append(el("p", "pin-layer", LABEL[layer]), el("p", "muted small", "Loading from Google…"));
     info.setContent(wrap);
@@ -256,16 +330,23 @@
         };
         wrap.append(more);
         if (place.googleMapsURI) { const a = el("a", "small", "Open in Google Maps"); a.href = place.googleMapsURI; a.target = "_blank"; a.rel = "noopener"; wrap.append(el("br"), a); }
+        if (pin && layer === "referrer") {
+          visitBits(wrap, data.visits[placeId], "/field/log?" + new URLSearchParams({ place: placeId, back: "/map" }),
+                    { id: placeId, place_id: placeId, lat: pin.lat, lng: pin.lng }, place.displayName);
+        }
       })
       .catch(() => wrap.replaceChildren(el("p", "small danger", "Google couldn't load this place right now.")));
   }
 
-  function dot(layer, ortho, isNew, gone) {
-    const d = el("div", `pin pin-${layer}` + (ortho ? " pin-ortho" : "") + (isNew ? " pin-new" : "") + (gone ? " pin-gone" : ""));
+  function dot(layer, ortho, isNew, gone, v) {
+    const d = el("div", `pin pin-${layer}` + (ortho ? " pin-ortho" : "") + (isNew ? " pin-new" : "") + (gone ? " pin-gone" : "") +
+                        (v ? ` pin-visited pin-r-${v.rating || "none"}` + (v.due && v.due <= TODAY ? " pin-due" : "") : ""));
     d.setAttribute("aria-hidden", "true");
     return d;
   }
 
+  const pad2 = n => String(n).padStart(2, "0"), now = new Date();
+  const TODAY = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
   const markers = [];
   for (const o of data.offices) {
     const m = new AdvancedMarkerElement({ map, position: o, content: dot("ours"), title: o.label, zIndex: 1000 });
@@ -273,13 +354,29 @@
     markers.push({ m, layer: "ours", office: o.id, ortho: false });
   }
   for (const p of data.places) {
-    const m = new AdvancedMarkerElement({ position: { lat: p.lat, lng: p.lng }, content: dot(p.layer, p.ortho, p.new, p.gone),
+    const v = p.layer === "referrer" ? data.visits[p.id] : null;
+    const m = new AdvancedMarkerElement({ position: { lat: p.lat, lng: p.lng }, content: dot(p.layer, p.ortho, p.new, p.gone, v),
                                           zIndex: p.layer === "competitor" ? 500 : (p.layer === "ours" ? 900 : 100) });
     const extra = p.layer === "ours" ? null : `${p.mi} mi from ${offName[p.office] || "our nearest office"}` +
                   (p.ortho ? " · also comes up when people search “orthodontist”" : "") +
                   (p.gone ? ` · no longer listed on Google since ${p.gone}` : p.new ? " · new since the last refresh" : ` · on the map since ${p.since}`);
-    m.addListener("gmp-click", () => { details(p.id, p.layer, extra); info.open({ map, anchor: m }); });
-    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, isNew: p.new, gone: !!p.gone });
+    m.addListener("gmp-click", () => { details(p.id, p.layer, extra, p); info.open({ map, anchor: m }); });
+    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, isNew: p.new, gone: !!p.gone,
+                   visited: !!v, due: !!(v && v.due && v.due <= TODAY) });
+  }
+  // Offices we've visited that aren't Google pins (from the NPI list, or added on the spot).
+  for (const x of data.visited_offices) {
+    const m = new AdvancedMarkerElement({ position: { lat: x.lat, lng: x.lng }, content: dot("referrer", false, false, false, x), zIndex: 150 });
+    m.addListener("gmp-click", () => {
+      const wrap = el("div", "pin-card");
+      wrap.append(el("p", "pin-layer", "Visited office"), el("h4", null, x.name));
+      if (x.address) wrap.append(el("p", "small", x.address));
+      visitBits(wrap, x, "/field/log?" + new URLSearchParams({ office: x.fid, back: "/map" }),
+                { id: "f" + x.fid, name: x.name, npi: x.npi, lat: x.lat, lng: x.lng });
+      info.setContent(wrap); info.open({ map, anchor: m });
+    });
+    markers.push({ m, layer: "referrer", office: null, ortho: false, isNew: false, gone: false, visited: true,
+                   due: !!(x.due && x.due <= TODAY), extra: true });
   }
   const circles = data.offices.map(o => new Circle({ center: o, radius: data.radius * 1609.34, strokeColor: "#0F7471",
     strokeOpacity: 0.5, strokeWeight: 1, fillOpacity: 0.03, fillColor: "#0F7471", clickable: false, map, _office: o.id }));
@@ -291,21 +388,26 @@
     gone: document.querySelector("[data-gone]"),
     circles: document.querySelector("[data-circles]"),
     office: document.querySelector("[data-office]"),
+    onlyVisited: document.querySelector("[data-only-visited]"),
+    onlyDue: document.querySelector("[data-only-due]"),
   };
   function apply(fit) {
     const on = new Set(ui.layers.filter(i => i.checked).map(i => i.dataset.layer));
     const off = ui.office.value ? Number(ui.office.value) : null;
-    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, new: 0, gone: 0 };
+    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, new: 0, gone: 0, visited: 0, due: 0 };
     const bounds = new google.maps.LatLngBounds();
     for (const x of markers) {
-      const inOffice = off === null || x.office === off;
+      const inOffice = off === null || x.office === off || (x.extra && off !== null);
       const show = inOffice && (x.gone ? ui.gone.checked : on.has(x.layer))
+        && !(ui.onlyVisited.checked && !x.visited && x.layer !== "ours")
+        && !(ui.onlyDue.checked && !x.due && x.layer !== "ours")
         && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho)
         && !(ui.onlyNew.checked && !x.isNew && x.layer !== "ours" || ui.onlyNew.checked && x.gone);
       x.m.map = show ? map : null;
       if (inOffice) {
         if (x.gone) counts.gone++;
-        else { counts[x.layer]++; if (x.ortho) counts.ortho++; if (x.isNew) counts.new++; }
+        else { if (!x.extra) counts[x.layer]++; if (x.ortho) counts.ortho++; if (x.isNew) counts.new++; }
+        if (x.visited) counts.visited++; if (x.due) counts.due++;
       }
       if (show) bounds.extend(x.m.position);
     }
@@ -321,7 +423,43 @@
   ui.onlyNew.addEventListener("change", () => apply(false));
   ui.gone.addEventListener("change", () => apply(false));
   ui.office.addEventListener("change", () => apply(true));
+  ui.onlyVisited.addEventListener("change", () => apply(true));
+  ui.onlyDue.addEventListener("change", () => apply(true));
   apply(true);
+
+  // ---- route planner ----
+  drawRoute();
+  const startOffice = document.getElementById("route-office");
+  document.querySelectorAll("input[name=route-start]").forEach(r => r.addEventListener("change", () => {
+    startOffice.hidden = document.querySelector("input[name=route-start]:checked").value !== "office";
+  }));
+  document.getElementById("route-clear").onclick = () => { route = []; saveRoute(route); drawRoute(); document.getElementById("route-out").replaceChildren(); };
+  document.getElementById("route-go").onclick = async () => {
+    const out = document.getElementById("route-out");
+    const kind = document.querySelector("input[name=route-start]:checked").value;
+    let start = { kind };
+    if (kind === "office") start.id = startOffice.value;
+    if (kind === "here") {
+      out.replaceChildren(el("p", "small", "Finding where you are…"));
+      try {
+        const pos = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, { timeout: 15000, maximumAge: 120000 }));
+        start = { kind, lat: pos.coords.latitude, lng: pos.coords.longitude };
+      } catch (e) { out.replaceChildren(el("p", "small", "Location not shared; the order starts from the first stop instead.")); }
+    }
+    const res = await fetch("/field/route-order", { method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start, stops: route }) });
+    const j = await res.json();
+    if (j.error) { out.replaceChildren(el("p", "small danger", j.error)); return; }
+    route = j.stops; saveRoute(route); drawRoute();
+    out.replaceChildren();
+    j.links.forEach((l, i) => {
+      const a = el("a", "btn", j.links.length > 1 ? `Open stops ${l.from}–${l.to} in Google Maps` : "Open in Google Maps");
+      a.href = l.url; a.target = "_blank"; a.rel = "noopener";
+      out.append(el("p", null), a);
+    });
+    if (j.links.length > 1) out.append(el("p", "small muted", "Google Maps takes up to 10 stops at a time, so the route is split; open the next part when you finish the first."));
+    out.append(el("p", "small muted", "Ordered by straight-line distance; Google Maps then picks the roads."));
+  };
 })().catch(e => {
   const c = document.getElementById("map");
   if (c) c.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "The Google map couldn't load: " + e.message + " Check the browser key and that Maps JavaScript API is enabled." }));

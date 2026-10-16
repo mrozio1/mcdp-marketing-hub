@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% from "_macros.html" import ruler %}
+{% block title %}Field visits{% endblock %}
+{% block content %}
+{% set qs = {'period': period, 'd': day.isoformat(), 'who': who or '', 'practice': practice or ''} %}
+<div class="title-row">
+  <h1>Field visits</h1>
+  <div class="title-actions">
+    {% if can_log %}<a class="btn" href="/field/log?back=/field">Log a visit</a>{% endif %}
+    <a class="btn btn-quiet" href="/map#route">Plan a route</a>
+  </div>
+</div>
+
+<form class="field-filters" method="get" action="/field">
+  <nav class="seg" aria-label="Period">
+    {% for k, l in [('day', 'Day'), ('week', 'Week'), ('month', 'Month')] %}
+    <a href="/field?{{ dict(qs, period=k)|urlencode }}" {% if period == k %}aria-current="page"{% endif %}>{{ l }}</a>
+    {% endfor %}
+  </nav>
+  <div class="period-nav">
+    <a href="/field?{{ dict(qs, d=prev_d.isoformat())|urlencode }}" aria-label="Earlier">←</a>
+    <strong>{{ label }}</strong>
+    <a href="/field?{{ dict(qs, d=next_d.isoformat())|urlencode }}" aria-label="Later">→</a>
+    {% if not (start <= today < end) %}<a class="small" href="/field?{{ dict(qs, d=today.isoformat())|urlencode }}">Today</a>{% endif %}
+  </div>
+  <input type="hidden" name="period" value="{{ period }}"><input type="hidden" name="d" value="{{ day.isoformat() }}">
+  <label>Agent
+    <select name="who" onchange="this.form.submit()"><option value="">Everyone</option>
+      {% for t in team %}<option value="{{ t.id }}" {% if who == t.id %}selected{% endif %}>{{ t.name }}{% if t.id == my_id %} (you){% endif %}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Practice
+    <select name="practice" onchange="this.form.submit()"><option value="">All</option>
+      {% for p in practices %}<option value="{{ p.id }}" {% if practice == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+</form>
+
+<dl class="glance field-glance">
+  <div><dt>Visits</dt><dd>{{ sums.visits }}</dd></div>
+  <div><dt>Offices reached</dt><dd>{{ sums.offices }}</dd></div>
+  <div><dt>Spend</dt><dd>{{ sums.spend|money }}</dd></div>
+  <div><dt>Checked in on site</dt><dd>{% if sums.checked %}{{ sums.on_site }}<span class="of"> of {{ sums.checked }}</span>{% else %}—{% endif %}</dd></div>
+</dl>
+<p class="small"><a href="/field.xlsx?{{ qs|urlencode }}">Export these visits to Excel</a></p>
+
+{% if rows and browser_key %}
+<section class="panel" aria-label="Where visits were logged">
+  <div id="visit-map" class="map-canvas map-short" role="region" aria-label="Map of the visits"></div>
+  <p class="small muted">Each dot is a visit, numbered in order for each person and day; lines join each person's day. Dots use the phone's location when it was shared, otherwise the office.</p>
+</section>
+{% endif %}
+
+<section aria-labelledby="where-h">
+  <h2 id="where-h">Where they've been</h2>
+  {% for d, items in days %}
+  <h3 class="day-head">{{ d.strftime('%A, %B %-d') }}{% if d == today %} <span class="muted small">today</span>{% endif %} <span class="muted small">· {{ items|length }} visit{{ '' if items|length == 1 else 's' }}{% if items|sum(attribute='cost') %} · {{ items|sum(attribute='cost')|money }}{% endif %}</span></h3>
+  <ul class="visit-list">
+    {% for v in items %}
+    <li class="visit">
+      <div class="visit-when">{{ v.visited_at[11:16] }}</div>
+      <div class="visit-body">
+        <p class="visit-title"><strong>{{ v.office_name }}</strong>
+          {% if v.rating %}<span class="rating-chip r-{{ v.rating }}">{{ ratings[v.rating] }}</span>{% endif %}
+          {% if v.on_site == 1 %}<span class="tag tag-ok" title="Checked in within 0.2 mi">on site</span>{% elif v.on_site == 0 %}<span class="tag tag-far" title="Phone was {{ v.distance_mi }} mi away">{{ v.distance_mi }} mi away</span>{% endif %}
+        </p>
+        <p class="small muted">{{ v.user_name }}{% if v.met_name %} · met {{ v.met_name }}{% if v.met_role %} ({{ v.met_role }}){% endif %}{% endif %}</p>
+        {% if v.dropped or v.cost %}<p class="small">{{ v.dropped }}{% if v.cost %} · <strong>{{ v.cost|money }}</strong>{% endif %}{% if v.receipt %} · <a href="/field/receipts/{{ v.receipt }}" target="_blank" rel="noopener">receipt</a>{% endif %}</p>{% endif %}
+        {% if v.notes %}<p class="small visit-notes">{{ v.notes }}</p>{% endif %}
+        {% if v.followup %}<p class="small">Follow up {{ v.followup }}</p>{% endif %}
+        <p class="small visit-actions">
+          {% if can_log %}<a href="/field/log?{{ {'office': v.office_id, 'back': '/field?' ~ (qs|urlencode)}|urlencode }}">Log another visit here</a>{% endif %}
+          {% if (can_edit or v.user_id == my_id) and can_log %}
+          <form method="post" action="/field/visits/{{ v.id }}/delete" data-confirm="Remove this visit{{ ' and its receipt' if v.receipt else '' }}?"><button class="linklike danger small" type="submit">Remove</button></form>
+          {% endif %}
+        </p>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No visits {{ 'that day' if period == 'day' else 'in this ' ~ period }}{% if who or practice %} for this filter{% endif %}.</p>
+  {% endfor %}
+</section>
+
+<section aria-labelledby="due-h">
+  <h2 id="due-h">Follow-ups due</h2>
+  {% if follow %}
+  <ul class="due-list">
+    {% for f in follow %}
+    <li class="{{ 'overdue' if f.overdue else '' }}">
+      <span class="due-date">{{ 'Overdue · ' if f.overdue else ('Today · ' if f.due_today else '') }}{{ f.followup }}</span>
+      <span><strong>{{ f.name }}</strong>{% if f.rating %} <span class="rating-chip r-{{ f.rating }}">{{ ratings[f.rating] }}</span>{% endif %}
+        <span class="small muted">last seen {{ f.visited_at[:10] }} by {{ f.user_name }}</span></span>
+      {% if can_log %}<a class="small" href="/field/log?{{ {'office': f.office_id, 'back': '/field'}|urlencode }}">Log visit</a>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <button class="btn btn-quiet btn-small" type="button" id="due-route">Add these to my route</button>
+  {% else %}
+  <p class="muted">Nothing due in the next week.</p>
+  {% endif %}
+</section>
+
+<section aria-labelledby="budget-h" id="budgets">
+  <h2 id="budget-h">Spend against budget · {{ month_label }}</h2>
+  <div class="two">
+    <div>
+      <h3>By practice</h3>
+      {% for b in budgets.practices %}{{ ruler(b.pacing, b.name) }}{% else %}<p class="muted small">No practice has a field budget or spend yet.</p>{% endfor %}
+      {% if budgets.unlinked %}<p class="small muted">{{ budgets.unlinked|money }} was spent at offices not linked to a practice{% if can_edit %} (see “Offices and practices” below){% endif %}.</p>{% endif %}
+    </div>
+    <div>
+      <h3>By agent</h3>
+      {% for b in budgets.agents %}{{ ruler(b.pacing, b.name) }}{% else %}<p class="muted small">No agents yet. Give someone Field agent access on the Team page.</p>{% endfor %}
+    </div>
+  </div>
+</section>
+
+{% if can_edit %}
+<p class="eyebrow">Field setup</p>
+<details class="drawer" id="budget-setup">
+  <summary><span class="drawer-title">Field budgets</span><span class="drawer-hint">Monthly, per practice and per agent</span></summary>
+  <div class="drawer-body">
+  <form method="post" action="/field/settings/budgets" class="stack">
+    <div class="two">
+      <fieldset class="budget-grid"><legend>Practices</legend>
+        {% for p in practices %}<label>{{ p.name }}<span class="money-in"><span aria-hidden="true">$</span><input name="pb_{{ p.id }}" inputmode="decimal" value="{{ '%g'|format(p.field_budget or 0) }}"></span></label>{% endfor %}
+      </fieldset>
+      <fieldset class="budget-grid"><legend>Agents</legend>
+        {% for t in agents %}<label>{{ t.name }} <span class="muted small">{{ t.role|replace('agent', 'field agent') }}</span><span class="money-in"><span aria-hidden="true">$</span><input name="ab_{{ t.id }}" inputmode="decimal" value="{{ '%g'|format(t.field_budget or 0) }}"></span></label>{% endfor %}
+      </fieldset>
+    </div>
+    <button class="btn btn-quiet" type="submit">Save budgets</button>
+  </form>
+  </div>
+</details>
+<details class="drawer" id="links">
+  <summary><span class="drawer-title">Offices and practices</span><span class="drawer-hint">Which practice's budget a visit counts against</span></summary>
+  <div class="drawer-body">
+  <p class="small muted">A visit counts against the practice of our nearest office. Matches are suggested from the names; change any that are wrong.</p>
+  <form method="post" action="/field/settings/links" class="stack">
+    <div class="table-scroll"><table class="data"><thead><tr><th>Our office</th><th>Practice</th></tr></thead><tbody>
+    {% for o in offices %}
+      <tr><td>{{ o.label }}</td><td><select name="o_{{ o.id }}" aria-label="Practice for {{ o.label }}"><option value="">Not linked</option>
+        {% for p in practices %}<option value="{{ p.id }}" {% if links.get(o.id) == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></td></tr>
+    {% else %}<tr><td colspan="2" class="muted">Add our offices on the Map page first.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <button class="btn btn-quiet" type="submit">Save links</button>
+  </form>
+  </div>
+</details>
+{% endif %}
+
+<script>
+  // Follow-ups due -> the route planner on the map (kept in this browser).
+  const dueBtn = document.getElementById("due-route");
+  if (dueBtn) dueBtn.onclick = () => {
+    const info = {{ follow|tojson }};
+    let route = []; try { route = JSON.parse(localStorage.getItem("mcdp-route") || "[]"); } catch (e) {}
+    for (const f of info) {
+      if (f.here_lat == null) continue;
+      const id = f.place_id || ("f" + f.office_id);
+      if (!route.some(s => s.id === id)) route.push({ id, place_id: f.place_id || null, npi: f.npi_key || null, name: f.name, lat: f.here_lat, lng: f.here_lng });
+    }
+    try { localStorage.setItem("mcdp-route", JSON.stringify(route)); } catch (e) {}
+    location.href = "/map#route";
+  };
+</script>
+{% if rows and browser_key %}
+<script>
+  (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
+  ({key: {{ browser_key|tojson }}, v: "weekly"});
+  (async () => {
+    const { Map, Polyline, InfoWindow } = await google.maps.importLibrary("maps");
+    const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+    const visits = {{ rows|tojson }};
+    const COLORS = ["#0F7471", "#9A4A2E", "#2F4F8F", "#7A5C00", "#6B3FA0", "#1A1A1A"];
+    const who = [...new Set(visits.map(v => v.user_name))];
+    const map = new Map(document.getElementById("visit-map"), { mapId: {{ map_id|tojson }}, center: { lat: 42.7, lng: -84.4 },
+                                                                zoom: 8, mapTypeControl: false, streetViewControl: false });
+    const info = new InfoWindow(), bounds = new google.maps.LatLngBounds();
+    const groups = {};
+    for (const v of visits.slice().sort((a, b) => a.visited_at.localeCompare(b.visited_at))) {
+      const lat = v.phone_lat ?? v.office_lat, lng = v.phone_lng ?? v.office_lng;
+      if (lat == null) continue;
+      const key = v.user_name + "|" + v.visited_at.slice(0, 10);
+      (groups[key] = groups[key] || []).push({ lat, lng, v });
+    }
+    for (const [key, list] of Object.entries(groups)) {
+      const color = COLORS[who.indexOf(key.split("|")[0]) % COLORS.length];
+      if (list.length > 1) new Polyline({ map, path: list, strokeColor: color, strokeOpacity: 0.7, strokeWeight: 2 });
+      list.forEach((p, i) => {
+        const dot = document.createElement("div");
+        dot.className = "visit-dot"; dot.style.background = color; dot.textContent = i + 1;
+        const m = new AdvancedMarkerElement({ map, position: p, content: dot, title: p.v.office_name });
+        m.addListener("gmp-click", () => {
+          const box = document.createElement("div"); box.className = "pin-card";
+          box.append(Object.assign(document.createElement("strong"), { textContent: p.v.office_name }),
+                     Object.assign(document.createElement("p"), { className: "small", textContent: `${p.v.user_name} · ${p.v.visited_at.replace("T", " ")}` }));
+          info.setContent(box); info.open({ map, anchor: m });
+        });
+        bounds.extend(p);
+      });
+    }
+    if (!bounds.isEmpty()) map.fitBounds(bounds, 40);
+  })().catch(e => { const c = document.getElementById("visit-map"); if (c) c.textContent = "The map couldn't load: " + e.message; });
+</script>
+{% endif %}
+{% endblock %}

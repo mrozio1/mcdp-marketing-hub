@@ -97,7 +97,8 @@ def conn():
 MIGRATIONS = {
     "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''",
                   "campaign_filter": "TEXT DEFAULT ''", "campaign_list": "TEXT DEFAULT '[]'",
-                  "fb_page_id": "TEXT DEFAULT ''", "ig_account_id": "TEXT DEFAULT ''"},
+                  "fb_page_id": "TEXT DEFAULT ''", "ig_account_id": "TEXT DEFAULT ''",
+                  "field_budget": "REAL DEFAULT 0"},
     "uploads": {"source": "TEXT DEFAULT 'upload'"},
     "changes": {"applied_by": "TEXT DEFAULT ''", "undone_by": "TEXT DEFAULT ''"},
 }

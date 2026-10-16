@@ -7,6 +7,8 @@ import html
 import os
 import re
 import sqlite3
+import urllib.parse
+from datetime import date
 from pathlib import Path
 
 import markdown as md
@@ -16,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, organic, places, referrals, scope, sync, users
+from . import actions, ai, db, emailfmt, field, organic, places, referrals, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -33,7 +35,9 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
 PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/")
-ANY_SIGNED_IN_POST = ("/account",)
+ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
+AGENT = re.compile(r"^/field/(log|visits|receipt)(/|$)")          # logging visits: field agents and up
+FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
 ADMIN_ONLY = (re.compile(r"^/(connections|google|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/p/\d+/delete$"))
 
@@ -43,6 +47,10 @@ def needed_role(method, path):
         return None
     if any(rx.match(path) for rx in ADMIN_ONLY):
         return "admin"
+    if FIELD_SETTINGS.match(path):
+        return "editor"
+    if AGENT.match(path):
+        return "agent"
     if method in ("GET", "HEAD") or path.startswith(ANY_SIGNED_IN_POST):
         return "viewer"
     return "editor"
@@ -54,8 +62,10 @@ async def role_gate(request: Request, call_next):
     if need and request.state.user and users.rank(request.state.user["role"]) < users.rank(need):
         if request.state.user["role"] == "viewer":
             msg = "You have view-only access, so you can look and export but not change things. Ask an editor."
-        else:
+        elif need == "admin":
             msg = "That needs admin access. Ask an admin."
+        else:
+            msg = "That needs editor access. Ask an editor or admin."
         if "application/json" in (request.headers.get("content-type", "") + request.headers.get("accept", "")):
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": msg}, status_code=403)
@@ -112,6 +122,7 @@ def _startup():
     places.init()
     places.purge_old()
     referrals.init()
+    field.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
         places.start_scheduler()
@@ -172,6 +183,7 @@ def page(request, name, **ctx):
     ctx["me"] = u
     ctx["can_edit"] = bool(u) and users.rank(u["role"]) >= users.rank("editor")
     ctx["is_admin"] = bool(u) and u["role"] == "admin"
+    ctx["can_log"] = bool(u) and users.rank(u["role"]) >= users.rank("agent")
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -1148,7 +1160,7 @@ def market_map_data(request: Request):
     if not authed(request):
         return Response(status_code=401)
     places.purge_old()
-    return places.map_data()
+    return {**places.map_data(), **field.map_overlay()}
 
 
 def _map_back(anchor=""):
@@ -1372,3 +1384,211 @@ def referral_export(request: Request, office: str = "", starred: str = "", kind:
     fname = re.sub(r"[^A-Za-z0-9]+", "-", f"{what} {label} {_date.today()}").strip("-")
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{fname}.xlsx"'})
+
+
+# ---------- field visits ----------
+def _field_args(request):
+    q = request.query_params
+    period = q.get("period") if q.get("period") in ("day", "week", "month") else "week"
+    try:
+        day = date.fromisoformat(q.get("d", "")[:10])
+    except ValueError:
+        day = date.today()
+    who = int(q["who"]) if (q.get("who") or "").isdigit() else None
+    prac = int(q["practice"]) if (q.get("practice") or "").isdigit() else None
+    return period, day, who, prac
+
+
+@app.get("/field", response_class=HTMLResponse)
+def field_page(request: Request):
+    if (r := guard(request)):
+        return r
+    period, day, who, prac = _field_args(request)
+    start, end, label, prev_d, next_d = field.period_bounds(period, day)
+    rows = field.visits_between(start, end, who, prac)
+    m_start, m_end, *_ = field.period_bounds("month", day)
+    month_rows = field.visits_between(m_start, m_end)
+    team = users.all_users()
+    links = field.practice_links()
+    u = me(request)
+    return page(request, "field.html", period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
+                today=date.today(), start=start, end=end, rows=rows, days=field.by_day(rows), sums=field.summary(rows),
+                budgets=field.budgets(m_start, month_rows), month_label=m_start.strftime("%B %Y"),
+                who=who, practice=prac, team=team, practices=db.practices(), ratings=field.RATING_LABELS,
+                follow=field.followups(), offices=places.offices(), links=links,
+                agents=[t for t in team if t["active"]], browser_key=places.browser_key(), map_id=places.map_id(),
+                my_id=(u or {}).get("id"))
+
+
+@app.get("/field.xlsx")
+def field_export(request: Request):
+    if (r := guard(request)):
+        return r
+    period, day, who, prac = _field_args(request)
+    start, end, label, *_ = field.period_bounds(period, day)
+    rows = field.visits_between(start, end, who, prac)
+    data = field.export_xlsx(rows, f"Field visits · {label}")
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="field-visits-{start.isoformat()}.xlsx"'})
+
+
+@app.get("/field/log", response_class=HTMLResponse)
+def field_log_form(request: Request, place: str = "", npi: str = "", office: str = "", error: str = ""):
+    if (r := guard(request)):
+        return r
+    try:
+        o = (field.office(int(office)) if office.isdigit() else None) or field.office_draft(place or None, npi or None)
+    except field.FieldError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse("/map", status_code=303)
+    history = []
+    if o.get("id"):
+        with db.conn() as c:
+            history = [dict(x) for x in c.execute("SELECT * FROM visits WHERE office_id=? ORDER BY visited_at DESC LIMIT 5",
+                                                  (o["id"],))]
+    return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
+                chips=field.DROP_CHIPS, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
+                ai_on=ai.available(), back=request.query_params.get("back", ""))
+
+
+@app.post("/field/visits")
+async def field_log(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    data = {k: form.get(k) for k in ("office_id", "place_id", "npi_key", "name", "address", "office_lat", "office_lng", "visited_at",
+                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes",
+                                     "phone_lat", "phone_lng", "phone_acc")}
+    up = form.get("receipt")
+    blob = await up.read() if up is not None and getattr(up, "filename", "") else None
+    try:
+        vid = await asyncio.to_thread(field.log_visit, me(request), data, blob)
+    except field.FieldError as e:
+        q = urllib.parse.urlencode({k: v for k, v in (("office", data["office_id"]), ("place", data["place_id"]),
+                                                       ("npi", data["npi_key"]), ("error", str(e))) if v})
+        return RedirectResponse(f"/field/log?{q}", status_code=303)
+    v = field.visit(vid)
+    where = " (on site)" if v["on_site"] == 1 else f" ({v['distance_mi']:g} mi from the office)" if v["on_site"] == 0 else ""
+    flash(request, f"Visit to {v['office_name']} logged{where}.")
+    back = form.get("back") or ""
+    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/field?period=day",
+                            status_code=303)
+
+
+@app.post("/field/visits/{vid}/delete")
+def field_delete(request: Request, vid: int):
+    if (r := guard(request)):
+        return r
+    v, u = field.visit(vid), me(request)
+    if v and (v["user_id"] == u["id"] or users.rank(u["role"]) >= users.rank("editor")):
+        field.delete_visit(vid)
+        flash(request, "Visit removed.")
+    else:
+        flash(request, "Only the person who logged a visit, or an editor, can remove it.", "error")
+    return RedirectResponse(request.headers.get("referer") or "/field", status_code=303)
+
+
+@app.post("/field/receipt/read")
+async def field_receipt_read(request: Request):
+    if not authed(request):
+        return Response(status_code=401)
+    from fastapi.responses import JSONResponse
+    form = await request.form()
+    up = form.get("receipt")
+    if up is None:
+        return JSONResponse({"error": "No photo."}, status_code=400)
+    data = await up.read()
+    try:
+        got = await asyncio.to_thread(field.read_receipt, data)
+    except (field.FieldError, ai.AIError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return got
+
+
+@app.get("/field/receipts/{name}")
+def field_receipt(request: Request, name: str):
+    if not authed(request):
+        return Response(status_code=401)
+    p = field.receipt_path(name)
+    if not p:
+        return Response(status_code=404)
+    from fastapi.responses import FileResponse
+    return FileResponse(p, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.post("/field/route-order")
+async def field_route_order(request: Request):
+    if not authed(request):
+        return Response(status_code=401)
+    body = await request.json()
+    start = body.get("start") or {}
+    origin_text, start_xy = "", None
+    if start.get("kind") == "home":
+        u = users.get(me(request)["id"]) if me(request)["id"] else None
+        if u and u.get("home_lat") is not None:
+            start_xy, origin_text = (u["home_lat"], u["home_lng"]), f"{u['home_lat']},{u['home_lng']}"
+        else:
+            return {"error": "Add your home address on Your account first."}
+    elif start.get("kind") == "office":
+        o = next((x for x in places.offices() if str(x["id"]) == str(start.get("id")) and x["lat"] is not None), None)
+        if o:
+            start_xy, origin_text = (o["lat"], o["lng"]), f"{o['lat']},{o['lng']}"
+    elif start.get("lat") is not None:
+        try:
+            start_xy = (float(start["lat"]), float(start["lng"]))
+            origin_text = ""   # Google Maps starts from where the phone is
+        except (TypeError, ValueError):
+            pass
+    stops = [s for s in (body.get("stops") or [])[:60] if isinstance(s, dict)]
+    ordered = field.order_stops(start_xy, stops)
+    return {"stops": ordered, "links": field.maps_links(origin_text, ordered)}
+
+
+@app.post("/field/settings/budgets")
+async def field_budgets(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    try:
+        for k, v in form.items():
+            if k.startswith("pb_") and k[3:].isdigit():
+                field.set_practice_budget(int(k[3:]), field.money_in(v))
+            elif k.startswith("ab_") and k[3:].isdigit():
+                field.set_agent_budget(int(k[3:]), field.money_in(v))
+        flash(request, "Field budgets saved.")
+    except field.FieldError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/field?period=month#budgets", status_code=303)
+
+
+@app.post("/field/settings/links")
+async def field_links(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    pairs = {int(k[2:]): (int(v) if str(v).isdigit() else None) for k, v in form.items()
+             if k.startswith("o_") and k[2:].isdigit()}
+    field.set_links(pairs)
+    flash(request, "Offices linked to practices.")
+    return RedirectResponse("/field?period=month#links", status_code=303)
+
+
+@app.post("/account/home")
+async def account_home(request: Request, address: str = Form("")):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if not u["id"]:
+        return RedirectResponse("/account", status_code=303)
+    address = " ".join(address.split())[:200]
+    lat = lng = None
+    if address:
+        got = await asyncio.to_thread(field.geocode_one, address)
+        if not got:
+            flash(request, "Couldn't find that address. Try the full street, city, state and ZIP.", "error")
+            return RedirectResponse("/account#home", status_code=303)
+        lat, lng = got
+    with db.conn() as c:
+        c.execute("UPDATE users SET home_address=?, home_lat=?, home_lng=? WHERE id=?", (address, lat, lng, u["id"]))
+    flash(request, "Home address saved for routes." if address else "Home address removed.")
+    return RedirectResponse("/account#home", status_code=303)
