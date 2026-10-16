@@ -508,7 +508,7 @@ def office_status():
     """Latest visit per office: rating, when, by whom, open follow-up. Keyed by field office id."""
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT v.office_id, v.visited_at, v.user_name, v.rating, v.followup, v.met_name, "
+            "SELECT v.office_id, v.visited_at, v.user_id, v.user_name, v.rating, v.followup, v.met_name, "
             "(SELECT COUNT(*) FROM visits x WHERE x.office_id=v.office_id) AS n, "
             "o.place_id, o.npi_key, o.name, o.address, o.lat, o.lng "
             "FROM visits v JOIN field_offices o ON o.id=v.office_id "
@@ -526,8 +526,7 @@ def followups(today=None, within_days=7, user_id=None):
             out.append({**s, "overdue": s["followup"] < today.isoformat(), "due_today": s["followup"] == today.isoformat(),
                         "here_lat": o["here_lat"], "here_lng": o["here_lng"]})
     if user_id:
-        mine = {u["name"] for u in users.all_users() if u["id"] == user_id}
-        out = [f for f in out if f["user_name"] in mine]
+        out = [f for f in out if f["user_id"] == user_id]
     return sorted(out, key=lambda f: f["followup"])
 
 

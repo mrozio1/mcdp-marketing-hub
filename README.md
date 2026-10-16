@@ -226,8 +226,8 @@ Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 ### Field visits (agents in the field)
 
 Switch **Field visits** on for field marketers on the Team page (it works with any access level;
-a viewer with it on can log visits but still can't change anything else). Editors and admins
-set the field budgets and office-to-practice links, and can remove any visit.
+a viewer with it on can log visits but still can't change anything else). Admins set the
+field budgets and office-to-practice links; admins and editors can remove a visit.
 
 - **Log a visit** from a dental pin on the map, from a practice on the Export Map List, or for a
   new office on the spot. They record who they met and their role, the relationship (Cold, Warm,
@@ -236,7 +236,8 @@ set the field budgets and office-to-practice links, and can remove any visit.
   free AI reads the total into the cost box for the agent to check.
 - **On site**: when a visit is saved, the phone's location is recorded once (if allowed) and the
   visit is marked *on site* when it's within 0.2 mi of the office. Nothing is tracked in between.
-- **Field page**: visits by day, week or month, filtered by agent or practice, with a map of the
+- **Field page**: each person sees only their own visits, spend, follow-ups and export;
+  admins see everyone's and can filter by agent. Visits by day, week or month, filtered by practice, with a map of the
   day's stops in order, follow-ups due, an Excel export, and spend against monthly budgets per
   practice and per agent (same pacing bar as the ads). A visit counts against the practice of
   our nearest office; matches are suggested from the names and can be changed under

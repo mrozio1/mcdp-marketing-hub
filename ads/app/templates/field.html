@@ -4,7 +4,7 @@
 {% block content %}
 {% set qs = {'period': period, 'd': day.isoformat(), 'who': who or '', 'practice': practice or ''} %}
 <div class="title-row">
-  <h1>Field visits</h1>
+  <h1>{{ 'Field visits' if see_all else 'Your field visits' }}</h1>
   <div class="title-actions">
     {% if can_log %}<a class="btn" href="/field/log?back=/field">Log a visit</a>{% endif %}
     <a class="btn btn-quiet" href="/map#route">Plan a route</a>
@@ -24,11 +24,13 @@
     {% if not (start <= today < end) %}<a class="small" href="/field?{{ dict(qs, d=today.isoformat())|urlencode }}">Today</a>{% endif %}
   </div>
   <input type="hidden" name="period" value="{{ period }}"><input type="hidden" name="d" value="{{ day.isoformat() }}">
+  {% if see_all %}
   <label>Agent
     <select name="who" onchange="this.form.submit()"><option value="">Everyone</option>
       {% for t in team %}<option value="{{ t.id }}" {% if who == t.id %}selected{% endif %}>{{ t.name }}{% if t.id == my_id %} (you){% endif %}</option>{% endfor %}
     </select>
   </label>
+  {% endif %}
   <label>Practice
     <select name="practice" onchange="this.form.submit()"><option value="">All</option>
       {% for p in practices %}<option value="{{ p.id }}" {% if practice == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
@@ -80,7 +82,7 @@
     {% endfor %}
   </ul>
   {% else %}
-  <p class="empty">No visits {{ 'that day' if period == 'day' else 'in this ' ~ period }}{% if who or practice %} for this filter{% endif %}.</p>
+  <p class="empty">No visits {{ 'that day' if period == 'day' else 'in this ' ~ period }}{% if (see_all and who) or practice %} for this filter{% endif %}.</p>
   {% endfor %}
 </section>
 
@@ -104,21 +106,25 @@
 </section>
 
 <section aria-labelledby="budget-h" id="budgets">
-  <h2 id="budget-h">Spend against budget · {{ month_label }}</h2>
+  <h2 id="budget-h">{{ 'Spend against budget' if see_all else 'Your spend against budget' }} · {{ month_label }}</h2>
+  {% if not see_all %}
+  {% for b in budgets.agents %}{{ ruler(b.pacing, 'Your field spend') }}{% else %}<p class="muted small">No field spend this month.</p>{% endfor %}
+  {% else %}
   <div class="two">
     <div>
       <h3>By practice</h3>
       {% for b in budgets.practices %}{{ ruler(b.pacing, b.name) }}{% else %}<p class="muted small">No practice has a field budget or spend yet.</p>{% endfor %}
-      {% if budgets.unlinked %}<p class="small muted">{{ budgets.unlinked|money }} was spent at offices not linked to a practice{% if can_edit %} (see “Offices and practices” below){% endif %}.</p>{% endif %}
+      {% if budgets.unlinked %}<p class="small muted">{{ budgets.unlinked|money }} was spent at offices not linked to a practice (see “Offices and practices” below).</p>{% endif %}
     </div>
     <div>
       <h3>By agent</h3>
       {% for b in budgets.agents %}{{ ruler(b.pacing, b.name) }}{% else %}<p class="muted small">Nobody has field visits switched on yet. Turn them on for someone on the Team page.</p>{% endfor %}
     </div>
   </div>
+  {% endif %}
 </section>
 
-{% if can_edit %}
+{% if is_admin %}
 <p class="eyebrow">Field setup</p>
 <details class="drawer" id="budget-setup">
   <summary><span class="drawer-title">Field budgets</span><span class="drawer-hint">Monthly, per practice and per agent</span></summary>

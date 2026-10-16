@@ -49,7 +49,7 @@ def needed_role(method, path):
     if any(rx.match(path) for rx in ADMIN_ONLY):
         return "admin"
     if FIELD_SETTINGS.match(path):
-        return "editor"
+        return "admin"
     if FIELD_DELETE.match(path):
         return "viewer"
     if FIELD_WORK.match(path):
@@ -1424,18 +1424,24 @@ def field_page(request: Request):
     if (r := guard(request)):
         return r
     period, day, who, prac = _field_args(request)
+    u = me(request)
+    see_all = u["role"] == "admin"
+    if not see_all:   # everyone except admins sees only their own visits, spend and follow-ups
+        who = u["id"]
     start, end, label, prev_d, next_d = field.period_bounds(period, day)
     rows = field.visits_between(start, end, who, prac)
     m_start, m_end, *_ = field.period_bounds("month", day)
-    month_rows = field.visits_between(m_start, m_end)
+    month_rows = field.visits_between(m_start, m_end, None if see_all else u["id"])
     team = users.all_users()
     links = field.practice_links()
-    u = me(request)
+    budgets = field.budgets(m_start, month_rows)
+    if not see_all:
+        budgets = {"practices": [], "agents": [b for b in budgets["agents"] if b["id"] == u["id"]], "unlinked": 0}
     return page(request, "field.html", period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
                 today=date.today(), start=start, end=end, rows=rows, days=field.by_day(rows), sums=field.summary(rows),
-                budgets=field.budgets(m_start, month_rows), month_label=m_start.strftime("%B %Y"),
+                budgets=budgets, see_all=see_all, month_label=m_start.strftime("%B %Y"),
                 who=who, practice=prac, team=team, practices=db.practices(), ratings=field.RATING_LABELS,
-                follow=field.followups(), offices=places.offices(), links=links,
+                follow=field.followups(user_id=None if see_all else u["id"]), offices=places.offices(), links=links,
                 agents=[t for t in team if t["active"] and t.get("field")], browser_key=places.browser_key(), map_id=places.map_id(),
                 my_id=(u or {}).get("id"))
 
@@ -1445,9 +1451,12 @@ def field_export(request: Request):
     if (r := guard(request)):
         return r
     period, day, who, prac = _field_args(request)
+    u = me(request)
+    if u["role"] != "admin":
+        who = u["id"]
     start, end, label, *_ = field.period_bounds(period, day)
     rows = field.visits_between(start, end, who, prac)
-    data = field.export_xlsx(rows, f"Field visits · {label}")
+    data = field.export_xlsx(rows, f"Field visits · {label}" + ("" if u["role"] == "admin" else f" · {u['name']}"))
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="field-visits-{start.isoformat()}.xlsx"'})
 

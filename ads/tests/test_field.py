@@ -178,8 +178,10 @@ def test_followups_and_map_overlay(env):
     v = data["visits"]["ChIJ_dentist_maple001"]
     assert v["rating"] == "warm" and v["overdue"] and v["n"] >= 3
     assert any(x["name"] == "Riverside Dental" for x in data["visited_offices"])
-    html = env["viewer"].get("/field").text
+    html = env["agent"].get("/field").text
     assert "Follow-ups due" in html and "Overdue" in html
+    assert "Overdue" not in env["viewer"].get("/field").text                    # the viewer has none of their own
+    assert "Overdue" in env["admin"].get("/field").text                         # admins see everyone's
 
 
 def test_route_ordering_and_links(env):
@@ -247,3 +249,28 @@ def test_social_switch_shows_or_hides_the_link(env):
     assert admin.post(f"/team/{vid}/switch/nonsense", data={"on": "1"}).status_code == 200   # ignored
     r = admin.post("/team/add", data={"name": "No Social", "email": "nos@example.com", "role": "viewer"})
     assert users.by_email("nos@example.com")["social"] == 0                       # unticked when adding
+
+
+def test_people_see_only_their_own_field_data_unless_admin(env):
+    from fastapi.testclient import TestClient
+    admin, a = env["admin"], env["agent"]
+    r = admin.post("/team/add", data={"name": "Cy Second", "email": "cy@example.com", "role": "editor",
+                                      "field_on": "1", "social_on": "1"})
+    tok = re.search(r"/setup/([\w-]+)", r.text).group(1)
+    cy = TestClient(env["main"].app)
+    cy.post(f"/setup/{tok}", data={"password": "long-password-1", "confirm": "long-password-1"})
+    log(cy, name="Cy's Secret Dental", phone_lat="41.31", phone_lng="-84.33", cost="77")
+    abe = env["users"].by_email("abe@example.com")["id"]
+    mine = a.get("/field?period=month").text
+    assert "Your field visits" in mine and "Secret Dental" not in mine and "Riverside Dental" in mine
+    assert 'name="who"' not in mine and "By practice" not in mine and "Your field spend" in mine
+    cy_id = env["users"].by_email("cy@example.com")["id"]
+    assert "Riverside Dental" not in cy.get(f"/field?period=month&who={abe}").text   # can't peek with ?who=
+    assert "Field budgets" not in cy.get("/field").text                             # setup is admin-only now
+    assert cy.post("/field/settings/budgets", data={}, follow_redirects=False).status_code == 303
+    import openpyxl
+    ws = openpyxl.load_workbook(io.BytesIO(cy.get(f"/field.xlsx?period=month&who={abe}").content)).active
+    offices = {ws.cell(r, 4).value for r in range(3, ws.max_row + 1)}
+    assert "Cy's Secret Dental" in offices and "Riverside Dental" not in offices
+    every = admin.get("/field?period=month").text
+    assert "Cy&#39;s Secret Dental" in every and "Riverside Dental" in every and 'name="who"' in every
