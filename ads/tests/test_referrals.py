@@ -39,7 +39,7 @@ NPI = {
     "43512": [
         rec("1", "org", "SMILE FAMILY DENTISTRY PC", "100 MAIN STREET", "SUITE 2", "435121234", [GP]),
         rec("2", "ind", ("JOHN", "DOE", "D.D.S."), "100 MAIN ST", "#2", "43512", [GP]),
-        rec("3", "ind", ("ANN", "BRACE", "DMD"), "200 OAK AVE", "", "43512", [ORTHO]),            # ortho only: out
+        rec("3", "ind", ("ANN", "BRACE", "DMD"), "200 OAK AVE", "", "43512", [ORTHO]),            # ortho only: competition
         rec("4", "ind", ("BOB", "MIX", "DDS"), "300 ELM DR", "", "43512", [GP]),
         rec("5", "ind", ("CAT", "MIX", "DMD"), "300 ELM DRIVE", "", "43512", [ORTHO, GP]),        # mixed: in, flagged
         rec("6", "ind", ("HAL", "HYG", "RDH"), "400 PINE RD", "", "43512", [HYG]),                # hygienist: out
@@ -157,6 +157,10 @@ def test_build_list(env):
     assert kid["geo"] == "zip" and kid["specialties"] == "Pediatric Dentistry"     # placed at the ZIP centroid
     assert [r["name"] for r in referrals.listing()][0] == "Dr. Kid Smiles"           # nearest first (0 mi)
     assert all(r["office"] == "Heights – Defiance" for r in rows.values())
+    comp = referrals.listing(kind="competitor")
+    assert [r["name"] for r in comp] == ["Dr. Ann Brace"]                          # orthodontist-only practice
+    assert comp[0]["specialties"] == "Orthodontics and Dentofacial Orthopedics" and comp[0]["geo"] == "exact"
+    assert "Heights Orthodontics Dental" not in {r["name"] for r in comp}          # ours is in neither list
 
 
 def test_marks_and_export(env):
@@ -175,6 +179,10 @@ def test_marks_and_export(env):
     assert "includes orthodontics" in body[1][5]
     data, n = referrals.export_xlsx(starred_only=True)
     assert n == 1
+    data, n = referrals.export_xlsx(kind="competitor")
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    assert n == 1 and wb.active.title == "Competing practices" and wb.active.cell(row=2, column=4).value == "Dr. Ann Brace"
+    assert "includes orthodontics" not in (wb.active.cell(row=2, column=6).value or "")
     # marks survive a rebuild
     referrals.refresh()
     again = {r["name"]: r for r in referrals.listing()}
@@ -203,7 +211,15 @@ def test_routes(env):
         assert cl.get("/map/referrals.xlsx", follow_redirects=False).status_code == 303
         cl.post("/login", data={"password": "pw"})
         html = cl.get("/map").text
-        assert "Referral list (NPI Registry)" in html and 'id="ref-rows"' in html and "Update list" in html
+        assert 'href="/map/list">Export Map List' in html and "ref-rows" not in html     # the list has its own page
+        html = cl.get("/map/list").text
+        office_id = places.offices()[0]["id"]
+        assert 'id="ref-rows"' in html and "Update lists" in html and 'value="competitor"' in html
+        assert f'<option value="{office_id}" selected>' in html                       # our practice first, not "All"
+        assert '<option value="all" selected>' in cl.get("/map/list?office=all").text
+        assert 'value="competitor" checked' in cl.get("/map/list?kind=competitor").text
+        jc = cl.get(f"/map/referrals.json?office={office_id}&kind=competitor").json()
+        assert jc["kind"] == "competitor" and [r["name"] for r in jc["rows"]] == ["Dr. Ann Brace"]
         j = cl.get("/map/referrals.json").json()
         assert j["radius"] == 15 and len(j["rows"]) == 3
         key = next(r["key"] for r in j["rows"] if r["name"] == "Dr. Bob Mix + 1 more")
@@ -211,6 +227,9 @@ def test_routes(env):
         r = cl.get("/map/referrals.xlsx?office=&starred=1")
         assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats")
         assert "Referral-practices-all-offices" in r.headers["content-disposition"]
-        office_id = places.offices()[0]["id"]
         r = cl.get(f"/map/referrals.xlsx?office={office_id}")
-        assert "Heights-Defiance" in r.headers["content-disposition"]
+        assert "Referral-practices-Heights-Defiance" in r.headers["content-disposition"]
+        r = cl.get(f"/map/referrals.xlsx?office={office_id}&kind=competitor")
+        assert "Competing-practices-Heights-Defiance" in r.headers["content-disposition"]
+        r = cl.post("/map/referrals/refresh", data={"back": "https://evil.example"}, follow_redirects=False)
+        assert r.headers["location"] == "/map/list"

@@ -190,15 +190,15 @@ a month; a lookup limit per refresh (default 3,000) keeps it inside Google's mon
 allowance (5,000 new-place lookups, 10,000 location renewals). Names and addresses from Google
 are never stored or exported.
 
-**Referral list.** Google's data can't be exported, so the exportable list of referring
-practices comes from the **NPI Registry** (CMS's public registry of licensed providers): every
-general dental practice within the radius of each office, with practice name, dentists,
-specialties, address and phone, placed with the Census Bureau geocoder (ZIP centroid when an
-address can't be placed). Dentists registered at the same address are grouped into one practice;
-orthodontic-only practices and our own offices are left out. Turn on **Referral list** in the
-map's layer list to see it as pins and as a table: untick practices to leave them out, star them,
-add notes, then **Export to Excel** (one office or all; starred only optional). Rows that line up
-with a Google pin get a Google Maps link to it. The list updates itself monthly.
+**Export Map List.** Google's data can't be exported, so the exportable lists come from the
+**NPI Registry** (CMS's public registry of licensed providers), placed with the Census Bureau
+geocoder (ZIP centroid when an address can't be placed). The **Export Map List** button on the
+Map page opens its own page: pick one of our practices (or All offices) and **Referral** (general
+dental practices: potential referrers) or **Competition** (orthodontic-only practices that aren't
+ours), all within the map radius, nearest first. Dentists registered at the same address are
+grouped into one practice. Untick practices to leave them out, star them, add notes, then
+**Export to Excel** (starred only optional). Rows that line up with a pin on our map get a Google
+Maps link to that listing. The lists update themselves monthly.
 
 Setup (Google Cloud project `mcdp-ads`): link a billing account, enable **Places API (New)**
 and **Maps JavaScript API**, create a **browser key** (restricted to `https://ads.mcdp.com/*`,

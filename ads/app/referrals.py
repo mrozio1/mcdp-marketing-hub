@@ -1,4 +1,5 @@
-"""Referral list: general dental practices near our offices, from public government data.
+"""Map lists: dental practices (referral) and orthodontic practices (competition) near our offices,
+from public government data.
 
 Google's terms don't allow exporting names/addresses from the Places API, so the exportable list
 comes from the NPI Registry (CMS's public registry of every licensed provider, free API, no
@@ -76,9 +77,14 @@ class RefError(RuntimeError):
     pass
 
 
+KINDS = {"referrer": "Referral", "competitor": "Competition"}
+
+
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        if "kind" not in {r["name"] for r in c.execute("PRAGMA table_info(ref_practices)")}:
+            c.execute("ALTER TABLE ref_practices ADD COLUMN kind TEXT DEFAULT 'referrer'")
 
 
 def status():
@@ -238,8 +244,7 @@ def group_records(records):
         has_general = any(c != ORTHO_CODE for c in primary_codes if c.startswith("1223") or c == DENTAL_ORG_CODE)
         has_ortho = ORTHO_CODE in primary_codes or any(
             t.get("code") == ORTHO_CODE for r in g["recs"] for t in r.get("taxonomies") or [])
-        if not has_general:
-            continue   # an orthodontic practice: a competitor, not a referrer
+        kind = "referrer" if has_general else "competitor"   # orthodontists only: a competing practice
         if orgs:
             name = sorted(set(orgs), key=len)[0]
         elif people:
@@ -251,7 +256,7 @@ def group_records(records):
         out[key] = {"key": key, "name": name, "dentists": json.dumps(people), "specialties": ", ".join(sorted(specs)),
                     "address": addr, "city": _title(loc.get("city", "")), "state": loc.get("state", ""),
                     "zip": g["zip"], "phone": phones.most_common(1)[0][0] if phones else "",
-                    "npis": " ".join(sorted(set(npis))), "has_ortho": int(has_ortho)}
+                    "npis": " ".join(sorted(set(npis))), "has_ortho": int(has_ortho), "kind": kind}
     return out
 
 
@@ -316,7 +321,7 @@ def refresh(now=None):
         _set_status(busy=True, started=began, step=f"Placing {len(to_geo):,} addresses on the map (Census geocoder)")
         pts = geocode(to_geo) if to_geo else {}
         brands = places.brand_terms()
-        refs = [p for p in places.places() if p["layer"] == "referrer" and p["lat"] is not None]
+        pins = {kind: [p for p in places.places() if p["layer"] == kind and p["lat"] is not None] for kind in KINDS}
         rows = []
         for k, p in practices.items():
             if k in pts:
@@ -329,17 +334,22 @@ def refresh(now=None):
             ours = int(any(b in p["name"].lower() for b in brands) or (geo == "exact" and any(
                 places.miles_between(o["lat"], o["lng"], lat, lng) <= OUR_OFFICE_MILES for o in offs)))
             pid = ""
+            refs = pins[p["kind"]]
             if geo == "exact" and refs:
                 near = min(refs, key=lambda r: places.miles_between(r["lat"], r["lng"], lat, lng))
                 if places.miles_between(near["lat"], near["lng"], lat, lng) <= SAME_PLACE_MILES:
                     pid = near["place_id"]
             rows.append((k, p["name"], p["dentists"], p["specialties"], p["address"], p["city"], p["state"], p["zip"],
-                         p["phone"], p["npis"], lat, lng, geo, p["has_ortho"], ours, pid, stamp))
+                         p["phone"], p["npis"], lat, lng, geo, p["has_ortho"], ours, pid, stamp, p["kind"]))
         with db.conn() as c:
-            c.executemany("INSERT OR REPLACE INTO ref_practices VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            c.executemany("INSERT OR REPLACE INTO ref_practices(key, name, dentists, specialties, address, city, state, "
+                          "zip, phone, npis, lat, lng, geo, has_ortho, ours, place_id, seen_at, kind) "
+                          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             c.execute("DELETE FROM ref_practices WHERE seen_at < ?", (stamp,))   # no longer registered there
         db.set_setting("ref_last_refresh", stamp)
         res = {"busy": False, "ok": True, "at": stamp, "practices": len(rows), "zips": len(zips),
+               "referrers": sum(1 for r in rows if r[17] == "referrer" and not r[14]),
+               "competitors": sum(1 for r in rows if r[17] == "competitor" and not r[14]),
                "exact": sum(1 for r in rows if r[12] == "exact"), "matched": sum(1 for r in rows if r[15])}
         _set_status(**res)
         return res
@@ -379,7 +389,7 @@ def mark(key, omitted=None, starred=None, note=None):
     return True
 
 
-def listing(office_id=None, include_omitted=True):
+def listing(office_id=None, include_omitted=True, kind="referrer"):
     """Practices within the radius of one office (or of any office), nearest first, with our marks."""
     offs = [o for o in places.offices() if o["lat"] is not None]
     if office_id:
@@ -389,7 +399,7 @@ def listing(office_id=None, include_omitted=True):
         rows = [dict(r) for r in c.execute(
             "SELECT p.*, COALESCE(m.omitted,0) AS omitted, COALESCE(m.starred,0) AS starred, "
             "COALESCE(m.note,'') AS note FROM ref_practices p LEFT JOIN ref_marks m ON m.key=p.key "
-            "WHERE p.lat IS NOT NULL AND p.ours=0")]
+            "WHERE p.lat IS NOT NULL AND p.ours=0 AND COALESCE(p.kind,'referrer')=?", (kind,))]
     out = []
     for r in rows:
         if r["omitted"] and not include_omitted:
@@ -415,13 +425,13 @@ def maps_url(r):
     return "https://www.google.com/maps/search/?" + urllib.parse.urlencode(q)
 
 
-def export_xlsx(office_id=None, starred_only=False):
+def export_xlsx(office_id=None, starred_only=False, kind="referrer"):
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
-    rows = [r for r in listing(office_id, include_omitted=False) if r["starred"] or not starred_only]
+    rows = [r for r in listing(office_id, include_omitted=False, kind=kind) if r["starred"] or not starred_only]
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Referral practices"
+    ws.title = "Referral practices" if kind == "referrer" else "Competing practices"
     head = ["Nearest office", "Miles", "Star", "Practice", "Dentists", "Specialties", "Address", "City", "State",
             "ZIP", "Phone", "Note", "Google Maps", "On our map", "NPI numbers", "Location"]
     ws.append(head)
@@ -430,7 +440,7 @@ def export_xlsx(office_id=None, starred_only=False):
         cell.fill = PatternFill("solid", fgColor="0F7471")
     for r in rows:
         ws.append([r["office"], r["miles"], "★" if r["starred"] else "", r["name"], "; ".join(r["dentists"]),
-                   r["specialties"] + (" (includes orthodontics)" if r["has_ortho"] else ""), r["address"], r["city"],
+                   r["specialties"] + (" (includes orthodontics)" if r["has_ortho"] and kind == "referrer" else ""), r["address"], r["city"],
                    r["state"], r["zip"], r["phone"], r["note"], "Open in Google Maps", "Yes" if r["place_id"] else "",
                    r["npis"], "Address" if r["geo"] == "exact" else "ZIP code area (approximate)"])
         link = ws.cell(row=ws.max_row, column=13)
@@ -446,7 +456,9 @@ def export_xlsx(office_id=None, starred_only=False):
     ws.auto_filter.ref = ws.dimensions
     src = wb.create_sheet("About")
     for line in ("Source: NPI Registry (CMS, public data), placed with the U.S. Census Bureau geocoder.",
-                 f"Practices within {places.radius():g} miles of our offices; omitted practices are left out.",
+                 ("General dental practices (potential referrers)" if kind == "referrer" else
+                  "Orthodontic practices (competition)") +
+                 f" within {places.radius():g} miles of our offices; practices left out on the list page are excluded.",
                  "Names and addresses are as registered with the NPI Registry and may be out of date.",
                  f"Exported {datetime.now():%Y-%m-%d %H:%M}."):
         src.append([line])

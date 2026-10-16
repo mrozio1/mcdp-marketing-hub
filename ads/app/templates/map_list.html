@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Export map list{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/map">Market map</a></p>
+<div class="title-row">
+  <h1>Export map list</h1>
+  <form method="post" action="/map/referrals/refresh" data-busy="Starting…">
+    <input type="hidden" name="back" value="/map/list">
+    <button class="btn {{ 'btn-quiet' if ref_last else '' }}" type="submit" {% if ref_status.busy or not offices %}disabled{% endif %}>
+      {{ 'Updating…' if ref_status.busy else ('Update lists' if ref_last else 'Build the lists') }}</button>
+  </form>
+</div>
+
+{% if ref_status.busy %}
+<p class="flash" role="status">Building since {{ ref_status.started[11:16] }}{% if ref_status.step %}: {{ ref_status.step }}{% endif %}. This takes a few minutes; reload to see progress. You can leave the page.</p>
+{% elif ref_status and ref_status.ok is false %}
+<p class="flash flash-error" role="status">Last update stopped: {{ ref_status.error }}</p>
+{% endif %}
+
+{% if not offices %}
+<p class="empty">Add our offices on the <a href="/map">Map page</a> first; the lists are built around them.</p>
+{% elif not ref_last %}
+<section class="panel">
+  <p>The lists come from the <a href="https://npiregistry.cms.hhs.gov/" target="_blank" rel="noopener">NPI Registry</a> (public government data, so they can be exported): every dental and orthodontic practice within {{ radius|round(0)|int }} miles of our offices. Click <strong>Build the lists</strong> to pull them; it takes a few minutes and then updates itself monthly.</p>
+</section>
+{% else %}
+<section class="panel referrals">
+  <div class="list-head">
+    <label class="office-pick">Our practice
+      <select id="ref-office">
+        {% for o in offices %}<option value="{{ o.id }}" {% if o.id == office_id %}selected{% endif %}>{{ o.label }}</option>{% endfor %}
+        <option value="all" {% if office_id is none %}selected{% endif %}>All offices</option>
+      </select>
+    </label>
+    <fieldset class="list-kind">
+      <legend class="sr-only">List</legend>
+      {% for k, label in kinds.items() %}
+      <label><input type="radio" name="kind" value="{{ k }}" {% if k == kind %}checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </fieldset>
+  </div>
+  <p class="small muted" id="ref-about"></p>
+
+  <div class="ref-controls">
+    <label>Search <input type="search" id="ref-search" placeholder="Practice, dentist, city or note"></label>
+    <label class="check"><input type="checkbox" id="ref-starred"> Starred only</label>
+    <label class="check"><input type="checkbox" id="ref-show-omitted"> Show left-out practices</label>
+  </div>
+  <div class="ref-summary">
+    <p class="small" id="ref-count" aria-live="polite">Loading…</p>
+    <a class="btn" id="ref-export" href="/map/referrals.xlsx">Export to Excel</a>
+  </div>
+  <div class="table-scroll">
+    <table class="ref-table">
+      <thead><tr><th class="ref-inc" title="In the export">Include</th><th></th><th>Practice</th><th>Address</th><th class="num">Miles</th><th>Note</th><th></th></tr></thead>
+      <tbody id="ref-rows"></tbody>
+    </table>
+  </div>
+  <button class="btn btn-quiet" type="button" id="ref-more" hidden>Show more</button>
+  <p class="small muted">From the NPI Registry, updated {{ ref_last[:10] }}; updates itself monthly. Names and addresses are as registered with the government and can be out of date. “Google Maps” opens the practice's listing on Google when it lines up with a pin on our map, otherwise a Google search for it.</p>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const RADIUS = {{ radius|round(0)|int }};
+  const ABOUT = {
+    referrer: `General dental practices within ${RADIUS} miles: potential referrers. Orthodontic-only practices and our own offices are left out.`,
+    competitor: `Orthodontic practices within ${RADIUS} miles that aren't ours: the competition.`,
+  };
+  const body = $("ref-rows"), more = $("ref-more");
+  let rows = [], shown = 200;
+  const state = { office: $("ref-office").value, kind: document.querySelector("input[name=kind]:checked").value,
+                  q: "", starred: false, omitted: false };
+
+  function filtered() {
+    const q = state.q.toLowerCase();
+    return rows.filter(r => (state.omitted || !r.omitted) && (!state.starred || r.starred) && (!q ||
+      [r.name, r.city, r.address, r.note, r.specialties, ...(r.dentists || [])].join(" ").toLowerCase().includes(q)));
+  }
+  function save(r, patch) {
+    Object.assign(r, patch);
+    return fetch("/map/referrals/mark", { method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: r.key, ...patch }) });
+  }
+  function render() {
+    const list = filtered();
+    const live = rows.filter(r => !r.omitted);
+    const out = live.filter(r => !state.starred || r.starred);
+    const noun = state.kind === "referrer" ? "practices" : "competitors";
+    $("ref-count").textContent = `${list.length.toLocaleString()} shown · ${live.length.toLocaleString()} ${noun} in the list` +
+      ` · ${rows.filter(r => r.starred && !r.omitted).length} starred · ${rows.filter(r => r.omitted).length} left out`;
+    const exp = $("ref-export");
+    exp.href = "/map/referrals.xlsx?" + new URLSearchParams({ office: state.office === "all" ? "" : state.office,
+                                                             kind: state.kind, starred: state.starred ? "1" : "" });
+    exp.textContent = `Export ${out.length.toLocaleString()} to Excel`;
+    body.replaceChildren();
+    if (!list.length) {
+      const tr = el("tr"), td = el("td", "muted", rows.length ? "Nothing matches the filters." :
+        `No ${noun} found within ${RADIUS} miles of this office.`);
+      td.colSpan = 7; tr.append(td); body.append(tr);
+    }
+    for (const r of list.slice(0, shown)) {
+      const tr = el("tr", r.omitted ? "ref-omitted" : "");
+      const inc = el("input"); inc.type = "checkbox"; inc.checked = !r.omitted; inc.title = "Include in the export";
+      inc.setAttribute("aria-label", `Include ${r.name}`);
+      inc.onchange = () => { save(r, { omitted: !inc.checked }); render(); };
+      const star = el("button", "ref-star" + (r.starred ? " on" : ""), r.starred ? "★" : "☆");
+      star.type = "button"; star.title = r.starred ? "Unstar" : "Star"; star.setAttribute("aria-pressed", r.starred);
+      star.onclick = () => { save(r, { starred: !r.starred }); render(); };
+      const who = el("td");
+      who.append(el("strong", null, r.name));
+      if (r.dentists && r.dentists.length) who.append(el("span", "small muted ref-sub", r.dentists.slice(0, 4).join("; ") + (r.dentists.length > 4 ? ` +${r.dentists.length - 4}` : "")));
+      if (r.specialties) who.append(el("span", "small muted ref-sub", r.specialties + (r.has_ortho && state.kind === "referrer" ? " · has an orthodontist" : "")));
+      const where = el("td");
+      where.append(el("span", null, r.address), el("span", "small muted ref-sub", `${r.city}, ${r.state} ${r.zip}` + (r.geo === "zip" ? " (approx.)" : "")));
+      if (r.phone) where.append(el("span", "small ref-sub", r.phone));
+      const dist = el("td", "num"); dist.append(el("span", null, r.miles));
+      if (state.office === "all") dist.append(el("span", "small muted ref-sub", r.office));
+      const note = el("textarea", "ref-note"); note.rows = 1; note.value = r.note || ""; note.placeholder = "Add a note";
+      note.setAttribute("aria-label", `Note for ${r.name}`);
+      note.onchange = () => { save(r, { note: note.value }).then(() => { note.classList.add("saved"); setTimeout(() => note.classList.remove("saved"), 1200); }); };
+      const links = el("td", "ref-links");
+      const a = el("a", "small", "Google Maps"); a.href = r.maps_url; a.target = "_blank"; a.rel = "noopener"; links.append(a);
+      if (r.place_id) links.append(el("span", "small muted ref-sub", "on our map"));
+      const c1 = el("td", "ref-inc"); c1.append(inc);
+      const c2 = el("td"); c2.append(star);
+      const c6 = el("td"); c6.append(note);
+      tr.append(c1, c2, who, where, dist, c6, links);
+      body.append(tr);
+    }
+    more.hidden = list.length <= shown;
+    more.textContent = `Show more (${(list.length - shown).toLocaleString()} left)`;
+  }
+  async function load() {
+    $("ref-about").textContent = ABOUT[state.kind];
+    $("ref-count").textContent = "Loading…";
+    const office = state.office === "all" ? "" : state.office;
+    history.replaceState(null, "", "/map/list?" + new URLSearchParams({ office: state.office, kind: state.kind }));
+    const j = await (await fetch("/map/referrals.json?" + new URLSearchParams({ office, kind: state.kind }),
+                                 { credentials: "same-origin" })).json();
+    rows = j.rows; shown = 200; render();
+  }
+  $("ref-office").onchange = e => { state.office = e.target.value; load(); };
+  document.querySelectorAll("input[name=kind]").forEach(i => i.addEventListener("change", () => { state.kind = i.value; load(); }));
+  let t; $("ref-search").oninput = e => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value; shown = 200; render(); }, 200); };
+  $("ref-starred").onchange = e => { state.starred = e.target.checked; render(); };
+  $("ref-show-omitted").onchange = e => { state.omitted = e.target.checked; render(); };
+  more.onclick = () => { shown += 200; render(); };
+  load().catch(e => { $("ref-count").textContent = "The list couldn't load: " + e.message; });
+})();
+</script>
+{% endif %}
+{% endblock %}

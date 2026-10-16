@@ -3,12 +3,15 @@
 {% block content %}
 <div class="title-row">
   <h1>Market map</h1>
+  <div class="title-actions">
+  {% if offices %}<a class="btn btn-quiet" href="/map/list">Export Map List</a>{% endif %}
   {% if server_key_set and offices %}
   <form method="post" action="/map/refresh" data-busy="Starting…">
     <button class="btn {{ 'btn-quiet' if last else '' }}" type="submit" {% if status.busy %}disabled{% endif %}>
       {{ 'Refreshing…' if status.busy else ('Refresh map' if last else 'Build the map') }}</button>
   </form>
   {% endif %}
+  </div>
 </div>
 <p class="lede">Our offices, {% if per_office %}the {{ per_office }} closest general dental practices to each office{% else %}every general dental practice{% endif %} within {{ radius|round(0)|int }} miles (potential referrers), and every orthodontist within {{ radius|round(0)|int }} miles that isn't ours (competitors), from Google. Click a pin for its name, address and link.</p>
 
@@ -34,7 +37,6 @@
       <label><input type="checkbox" data-gone><span class="dot dot-gone"></span> No longer listed on Google <span class="muted" data-count="gone"></span></label>
       <label><input type="checkbox" data-only-new><span class="dot dot-new"></span> Only new since the last refresh <span class="muted" data-count="new"></span></label>
       <label><input type="checkbox" data-circles checked> {{ radius|round(0)|int }}-mile rings</label>
-      <label class="reflist-toggle"><input type="checkbox" data-reflist><span class="dot dot-npi"></span> Referral list (NPI Registry) <span class="muted" data-count="npi"></span></label>
     </fieldset>
     <label class="map-office">Around
       <select data-office>
@@ -46,48 +48,6 @@
   <div id="map" class="map-canvas" role="region" aria-label="Map of offices, dental practices and orthodontists"></div>
   <p class="small muted map-foot">{% if not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>
-</section>
-{% endif %}
-
-{% if offices %}
-<section class="panel referrals" id="referrals" {% if browser_key %}hidden{% endif %}>
-  <div class="title-row">
-    <h2>Referral list</h2>
-    <form method="post" action="/map/referrals/refresh" data-busy="Starting…">
-      <button class="btn {{ 'btn-quiet' if ref_last else '' }}" type="submit" {% if ref_status.busy %}disabled{% endif %}>
-        {{ 'Updating…' if ref_status.busy else ('Update list' if ref_last else 'Build the referral list') }}</button>
-    </form>
-  </div>
-  <p class="small muted">General dental practices within {{ radius|round(0)|int }} miles of our offices, from the <a href="https://npiregistry.cms.hhs.gov/" target="_blank" rel="noopener">NPI Registry</a> (public government data, so it can be exported). Orthodontic-only practices and our own offices are left out. Untick a practice to leave it out of the export; stars and notes go into the export too.{% if ref_last %} Updated {{ ref_last[:10] }}; updates itself monthly.{% endif %}</p>
-  {% if ref_status.busy %}
-  <p class="flash" role="status">Building since {{ ref_status.started[11:16] }}{% if ref_status.step %}: {{ ref_status.step }}{% endif %}. Reload to see progress.</p>
-  {% elif ref_status and ref_status.ok is false %}
-  <p class="flash flash-error" role="status">Last update stopped: {{ ref_status.error }}</p>
-  {% endif %}
-  {% if ref_last %}
-  <div class="ref-controls">
-    <label>Office
-      <select id="ref-office">
-        <option value="">All offices</option>
-        {% for o in offices %}{% if o.lat is not none %}<option value="{{ o.id }}">{{ o.label }}</option>{% endif %}{% endfor %}
-      </select>
-    </label>
-    <label>Search <input type="search" id="ref-search" placeholder="Practice, dentist, city or note"></label>
-    <label class="check"><input type="checkbox" id="ref-starred"> Starred only</label>
-    <label class="check"><input type="checkbox" id="ref-show-omitted"> Show left-out practices</label>
-  </div>
-  <div class="ref-summary">
-    <p class="small" id="ref-count" aria-live="polite">Loading…</p>
-    <a class="btn" id="ref-export" href="/map/referrals.xlsx">Export to Excel</a>
-  </div>
-  <div class="table-scroll">
-    <table class="ref-table">
-      <thead><tr><th class="ref-inc" title="In the export">Include</th><th></th><th>Practice</th><th>Address</th><th class="num">Miles</th><th>Note</th><th></th></tr></thead>
-      <tbody id="ref-rows"></tbody>
-    </table>
-  </div>
-  <button class="btn btn-quiet" type="button" id="ref-more" hidden>Show more</button>
-  {% endif %}
 </section>
 {% endif %}
 
@@ -217,96 +177,6 @@
   </details>
 </section>
 
-{% if offices and ref_last %}
-<script>
-(() => {
-  const $ = id => document.getElementById(id);
-  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-  const panel = $("referrals"), body = $("ref-rows"), more = $("ref-more");
-  let rows = [], shown = 200;
-  const state = { office: "", q: "", starred: false, omitted: false };
-
-  function filtered() {
-    const q = state.q.toLowerCase();
-    return rows.filter(r => (state.omitted || !r.omitted) && (!state.starred || r.starred) && (!q ||
-      [r.name, r.city, r.address, r.note, r.specialties, ...(r.dentists || [])].join(" ").toLowerCase().includes(q)));
-  }
-  function save(r, patch) {
-    Object.assign(r, patch);
-    return fetch("/map/referrals/mark", { method: "POST", credentials: "same-origin",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: r.key, ...patch }) });
-  }
-  function render() {
-    const list = filtered();
-    const live = rows.filter(r => !r.omitted);
-    const out = live.filter(r => !state.starred || r.starred);
-    $("ref-count").textContent = `${list.length.toLocaleString()} shown · ${live.length.toLocaleString()} practices in the list` +
-      ` · ${rows.filter(r => r.starred && !r.omitted).length} starred · ${rows.filter(r => r.omitted).length} left out`;
-    const exp = $("ref-export");
-    exp.href = "/map/referrals.xlsx?" + new URLSearchParams({ office: state.office, starred: state.starred ? "1" : "" });
-    exp.textContent = `Export ${out.length.toLocaleString()} to Excel`;
-    body.replaceChildren();
-    for (const r of list.slice(0, shown)) {
-      const tr = el("tr", r.omitted ? "ref-omitted" : "");
-      const inc = el("input"); inc.type = "checkbox"; inc.checked = !r.omitted; inc.title = "Include in the export";
-      inc.setAttribute("aria-label", `Include ${r.name}`);
-      inc.onchange = () => { save(r, { omitted: !inc.checked }); tr.classList.toggle("ref-omitted", !inc.checked); render(); };
-      const star = el("button", "ref-star" + (r.starred ? " on" : ""), r.starred ? "★" : "☆");
-      star.type = "button"; star.title = r.starred ? "Unstar" : "Star"; star.setAttribute("aria-pressed", r.starred);
-      star.onclick = () => { save(r, { starred: !r.starred }); render(); };
-      const who = el("td");
-      who.append(el("strong", null, r.name));
-      if (r.dentists && r.dentists.length) who.append(el("span", "small muted ref-sub", r.dentists.slice(0, 4).join("; ") + (r.dentists.length > 4 ? ` +${r.dentists.length - 4}` : "")));
-      if (r.specialties) who.append(el("span", "small muted ref-sub", r.specialties + (r.has_ortho ? " · has an orthodontist" : "")));
-      const where = el("td");
-      where.append(el("span", null, r.address), el("span", "small muted ref-sub", `${r.city}, ${r.state} ${r.zip}` + (r.geo === "zip" ? " (approx.)" : "")));
-      if (r.phone) where.append(el("span", "small ref-sub", r.phone));
-      const dist = el("td", "num"); dist.append(el("span", null, r.miles), el("span", "small muted ref-sub", r.office));
-      const note = el("textarea", "ref-note"); note.rows = 1; note.value = r.note || ""; note.placeholder = "Add a note";
-      note.setAttribute("aria-label", `Note for ${r.name}`);
-      note.onchange = () => { save(r, { note: note.value }).then(() => { note.classList.add("saved"); setTimeout(() => note.classList.remove("saved"), 1200); }); };
-      const links = el("td", "ref-links");
-      if (window.refFocus) { const b = el("button", "linklike small", "Show on map"); b.type = "button"; b.onclick = () => window.refFocus(r); links.append(b, el("br")); }
-      const a = el("a", "small", "Google Maps"); a.href = r.maps_url; a.target = "_blank"; a.rel = "noopener"; links.append(a);
-      const c1 = el("td", "ref-inc"); c1.append(inc);
-      const c2 = el("td"); c2.append(star);
-      const c6 = el("td"); c6.append(note);
-      tr.append(c1, c2, who, where, dist, c6, links);
-      body.append(tr);
-    }
-    more.hidden = list.length <= shown;
-    more.textContent = `Show more (${(list.length - shown).toLocaleString()} left)`;
-    window.__refRows = list;
-    document.dispatchEvent(new CustomEvent("reflist:rows", { detail: list }));
-  }
-  async function load() {
-    $("ref-count").textContent = "Loading…";
-    const j = await (await fetch("/map/referrals.json?office=" + state.office, { credentials: "same-origin" })).json();
-    rows = j.rows; shown = 200; render();
-  }
-  $("ref-office").onchange = e => { state.office = e.target.value; load();
-    const m = document.querySelector("[data-office]"); if (m && m.value !== state.office) { m.value = state.office; m.dispatchEvent(new Event("change")); } };
-  const mapOffice = document.querySelector("[data-office]");
-  if (mapOffice) mapOffice.addEventListener("change", () => { if ($("ref-office").value !== mapOffice.value) { $("ref-office").value = mapOffice.value; state.office = mapOffice.value; load(); } });
-  let t; $("ref-search").oninput = e => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value; shown = 200; render(); }, 200); };
-  $("ref-starred").onchange = e => { state.starred = e.target.checked; render(); };
-  $("ref-show-omitted").onchange = e => { state.omitted = e.target.checked; render(); };
-  more.onclick = () => { shown += 200; render(); };
-  const toggle = document.querySelector("[data-reflist]");
-  const showPanel = on => { panel.hidden = !on; if (on && !rows.length) load(); document.dispatchEvent(new CustomEvent("reflist:toggle", { detail: on })); };
-  if (toggle) {
-    toggle.addEventListener("change", () => showPanel(toggle.checked));
-    if (location.hash === "#referrals") { toggle.checked = true; showPanel(true); }
-  } else { load(); }
-})();
-</script>
-{% elif offices and browser_key %}
-<script>
-  (() => { const t = document.querySelector("[data-reflist]"), p = document.getElementById("referrals");
-    if (t && p) { t.addEventListener("change", () => { p.hidden = !t.checked; }); if (location.hash === "#referrals") { t.checked = true; p.hidden = false; } } })();
-</script>
-{% endif %}
-
 {% if browser_key %}
 <script>
   (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})
@@ -434,46 +304,6 @@
     });
     if (fit && !bounds.isEmpty()) map.fitBounds(bounds, 40);
   }
-  // ---- referral list pins (our NPI data, not Google's) ----
-  let npiPins = [], npiOn = false, npiRows = [];
-  const npiCount = document.querySelector('[data-count="npi"]');
-  function npiCard(r) {
-    const wrap = el("div", "pin-card");
-    wrap.append(el("p", "pin-layer", "Referral list (NPI Registry)"), el("h4", null, (r.starred ? "★ " : "") + r.name));
-    if (r.dentists && r.dentists.length) wrap.append(el("p", "small muted", r.dentists.slice(0, 4).join("; ")));
-    wrap.append(el("p", "small", `${r.address}, ${r.city}, ${r.state} ${r.zip}`));
-    if (r.phone) wrap.append(el("p", "small", r.phone));
-    wrap.append(el("p", "small", `${r.miles} mi from ${r.office}` + (r.geo === "zip" ? " · location approximate (ZIP code)" : "")));
-    if (r.note) wrap.append(el("p", "small", "Note: " + r.note));
-    const a = el("a", "small", "Open in Google Maps"); a.href = r.maps_url; a.target = "_blank"; a.rel = "noopener"; wrap.append(a);
-    return wrap;
-  }
-  function drawNpi() {
-    npiPins.forEach(p => { p.map = null; });
-    npiPins = [];
-    if (!npiOn) { if (npiCount) npiCount.textContent = ""; return; }
-    for (const r of npiRows.filter(r => !r.omitted).slice(0, 2000)) {
-      const d = el("div", "pin pin-npi" + (r.starred ? " pin-star" : "")); d.setAttribute("aria-hidden", "true");
-      const m = new AdvancedMarkerElement({ map, position: { lat: r.lat, lng: r.lng }, content: d, zIndex: r.starred ? 700 : 300 });
-      m.addListener("gmp-click", () => { info.setContent(npiCard(r)); info.open({ map, anchor: m }); });
-      m._key = r.key;
-      npiPins.push(m);
-    }
-    if (npiCount) npiCount.textContent = `(${npiPins.length.toLocaleString()})`;
-  }
-  document.addEventListener("reflist:rows", e => { npiRows = e.detail; drawNpi(); });
-  npiRows = window.__refRows || [];
-  npiOn = !!(document.querySelector("[data-reflist]") || {}).checked;
-  document.addEventListener("reflist:toggle", e => { npiOn = e.detail; drawNpi(); });
-  window.refFocus = r => {
-    canvas.scrollIntoView({ behavior: "smooth", block: "center" });
-    map.panTo({ lat: r.lat, lng: r.lng }); map.setZoom(15);
-    const pin = npiPins.find(p => p._key === r.key);
-    info.setContent(npiCard(r)); info.open(pin ? { map, anchor: pin } : { map });
-    if (!pin) info.setPosition({ lat: r.lat, lng: r.lng });
-  };
-
-  drawNpi();
   ui.layers.forEach(i => i.addEventListener("change", () => apply(false)));
   ui.onlyOrtho.addEventListener("change", () => { if (ui.onlyOrtho.checked) ui.layers.find(i => i.dataset.layer === "referrer").checked = true; apply(false); });
   ui.circles.addEventListener("change", () => apply(false));

@@ -427,3 +427,11 @@ tr.muted td { color: var(--ink-soft); }
 .ref-note.saved { border-color: var(--green); }
 .ref-links { white-space: nowrap; }
 #ref-more { margin-top: 0.75rem; }
+.title-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.list-kind { border: 0; margin: 0; padding: 0; display: flex; gap: 0.25rem; }
+.list-kind label { display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.85rem; border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--paper); cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+.list-kind input { width: 1rem; height: 1rem; min-height: 0; margin: 0; padding: 0; accent-color: var(--teal); }
+.list-kind label:has(input:checked) { border-color: var(--teal); background: color-mix(in srgb, var(--teal) 8%, var(--paper)); color: var(--teal-deep); }
+.list-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 1rem 1.5rem; margin-bottom: 0.5rem; }
+.list-head label.office-pick { display: grid; gap: 0.25rem; font-weight: 600; }
+.list-head label.office-pick select { min-width: 20rem; font-size: 1rem; }
