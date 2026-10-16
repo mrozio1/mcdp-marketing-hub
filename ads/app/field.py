@@ -494,7 +494,7 @@ def budgets(month_start, rows_month, today=None):
     people = {u["id"]: u for u in users.all_users()}
     for uid, u in people.items():
         b = u.get("field_budget") or 0
-        if b or by_agent.get(uid) or u["role"] == "agent":
+        if b or by_agent.get(uid) or (u.get("field") and u["active"]):
             agents_out.append({"id": uid, "name": u["name"], "pacing": pacing(by_agent.get(uid, 0), b, month_start, today)})
     for key, spend in by_agent.items():
         if isinstance(key, str):   # visits by someone no longer on the team

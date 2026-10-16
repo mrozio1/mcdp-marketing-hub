@@ -24,8 +24,8 @@ def env(tmp_path_factory):
     importlib.reload(main)
     from fastapi.testclient import TestClient
 
-    def person(admin, name, email, role):
-        r = admin.post("/team/add", data={"name": name, "email": email, "role": role})
+    def person(admin, name, email, role, field_on=False):
+        r = admin.post("/team/add", data={"name": name, "email": email, "role": role, "field_on": "1" if field_on else ""})
         tok = re.search(r"/setup/([\w-]+)", r.text).group(1)
         c = TestClient(main.app)
         c.post(f"/setup/{tok}", data={"password": "long-password-1", "confirm": "long-password-1"})
@@ -34,7 +34,7 @@ def env(tmp_path_factory):
     with TestClient(main.app) as boss:
         boss.post("/login", data={"password": "shared-pw"})
         admin = person(boss, "Ann Admin", "ann@example.com", "admin")
-        agent = person(admin, "Abe Agent", "abe@example.com", "agent")
+        agent = person(admin, "Abe Agent", "abe@example.com", "viewer", field_on=True)   # a viewer with field visits on
         viewer = person(admin, "Vi Viewer", "vi@example.com", "viewer")
         # Our office, a Google dental pin near it, and an NPI practice.
         heights = db.add_practice("Heights Orthodontics", 1000, 500)
@@ -70,10 +70,22 @@ def test_who_can_log(env):
     r = v.get("/field/log?place=ChIJ_dentist_maple001", follow_redirects=False)
     assert r.status_code == 303                                                # viewers can't log
     assert a.get("/field/log?place=ChIJ_dentist_maple001").status_code == 200
-    assert "view only" not in a.get("/").text and 'href="/field"' in a.get("/").text
-    # Agents can't do editor things.
+    assert "view + field" in a.get("/").text and 'href="/field"' in a.get("/").text
+    # Field visits don't add editing rights: still a viewer otherwise.
     r = a.post("/practices", data={"name": "X"}, follow_redirects=True)
-    assert "That needs editor access" in r.text
+    assert "view-only access" in r.text
+    # The switch: off stops logging straight away, on brings it back; any access level can have it.
+    uid = env["users"].by_email("abe@example.com")["id"]
+    env["admin"].post(f"/team/{uid}/field", data={"on": ""})
+    r = a.get("/field/log?place=ChIJ_dentist_maple001", follow_redirects=True)
+    assert "Field visits aren" in r.text
+    env["admin"].post(f"/team/{uid}/field", data={"on": "1"})
+    assert a.get("/field/log?place=ChIJ_dentist_maple001").status_code == 200
+    ann = env["users"].by_email("ann@example.com")["id"]
+    assert env["admin"].get("/field/log", follow_redirects=False).status_code == 303   # admins too need it on
+    env["admin"].post(f"/team/{ann}/field", data={"on": "1"})
+    assert env["admin"].get("/field/log").status_code == 200
+    env["admin"].post(f"/team/{ann}/field", data={"on": ""})
 
 
 def test_log_from_a_map_pin_uses_npi_name_not_google(env):
@@ -204,10 +216,19 @@ def test_only_own_visits_removable_by_agents(env):
         vid = c.execute("SELECT id FROM visits WHERE user_name='Abe Agent' LIMIT 1").fetchone()[0]
     # A second agent can't remove Abe's visit; Abe can.
     from fastapi.testclient import TestClient
-    r = env["admin"].post("/team/add", data={"name": "Bea", "email": "bea@example.com", "role": "agent"})
+    r = env["admin"].post("/team/add", data={"name": "Bea", "email": "bea@example.com", "role": "viewer", "field_on": "1"})
     tok = re.search(r"/setup/([\w-]+)", r.text).group(1)
     bea = TestClient(env["main"].app)
     bea.post(f"/setup/{tok}", data={"password": "long-password-1", "confirm": "long-password-1"})
     assert "Only the person" in bea.post(f"/field/visits/{vid}/delete", follow_redirects=True).text
     env["agent"].post(f"/field/visits/{vid}/delete")
     assert env["field"].visit(vid) is None
+
+
+def test_old_field_agent_level_becomes_viewer_with_switch(env):
+    db, users = env["db"], env["users"]
+    with db.conn() as c:
+        c.execute("INSERT INTO users(email, name, role, created_at) VALUES ('old@example.com','Old Agent','agent',?)", (db.now(),))
+    users.init()
+    u = users.by_email("old@example.com")
+    assert u["role"] == "viewer" and u["field"] == 1

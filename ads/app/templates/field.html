@@ -113,7 +113,7 @@
     </div>
     <div>
       <h3>By agent</h3>
-      {% for b in budgets.agents %}{{ ruler(b.pacing, b.name) }}{% else %}<p class="muted small">No agents yet. Give someone Field agent access on the Team page.</p>{% endfor %}
+      {% for b in budgets.agents %}{{ ruler(b.pacing, b.name) }}{% else %}<p class="muted small">Nobody has field visits switched on yet. Turn them on for someone on the Team page.</p>{% endfor %}
     </div>
   </div>
 </section>
@@ -129,7 +129,7 @@
         {% for p in practices %}<label>{{ p.name }}<span class="money-in"><span aria-hidden="true">$</span><input name="pb_{{ p.id }}" inputmode="decimal" value="{{ '%g'|format(p.field_budget or 0) }}"></span></label>{% endfor %}
       </fieldset>
       <fieldset class="budget-grid"><legend>Agents</legend>
-        {% for t in agents %}<label>{{ t.name }} <span class="muted small">{{ t.role|replace('agent', 'field agent') }}</span><span class="money-in"><span aria-hidden="true">$</span><input name="ab_{{ t.id }}" inputmode="decimal" value="{{ '%g'|format(t.field_budget or 0) }}"></span></label>{% endfor %}
+        {% for t in agents %}<label>{{ t.name }} <span class="money-in"><span aria-hidden="true">$</span><input name="ab_{{ t.id }}" inputmode="decimal" value="{{ '%g'|format(t.field_budget or 0) }}"></span></label>{% endfor %}
       </fieldset>
     </div>
     <button class="btn btn-quiet" type="submit">Save budgets</button>

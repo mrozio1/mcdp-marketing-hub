@@ -36,7 +36,8 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
 PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
-AGENT = re.compile(r"^/field/(log|visits|receipt)(/|$)")          # logging visits: field agents and up
+FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!.*/delete$)")   # logging visits: field visits switched on
+FIELD_DELETE = re.compile(r"^/field/visits/\d+/delete$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
 ADMIN_ONLY = (re.compile(r"^/(connections|google|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/p/\d+/delete$"))
@@ -49,8 +50,10 @@ def needed_role(method, path):
         return "admin"
     if FIELD_SETTINGS.match(path):
         return "editor"
-    if AGENT.match(path):
-        return "agent"
+    if FIELD_DELETE.match(path):
+        return "viewer"
+    if FIELD_WORK.match(path):
+        return "field"
     if method in ("GET", "HEAD") or path.startswith(ANY_SIGNED_IN_POST):
         return "viewer"
     return "editor"
@@ -59,8 +62,12 @@ def needed_role(method, path):
 async def role_gate(request: Request, call_next):
     need = needed_role(request.method, request.url.path)
     request.state.user = current_user(request)
-    if need and request.state.user and users.rank(request.state.user["role"]) < users.rank(need):
-        if request.state.user["role"] == "viewer":
+    u = request.state.user
+    refused = u and (not u.get("field") if need == "field" else users.rank(u["role"]) < users.rank(need))
+    if need and refused:
+        if need == "field":
+            msg = "Field visits aren't switched on for you. Ask an admin to turn them on on the Team page."
+        elif request.state.user["role"] == "viewer":
             msg = "You have view-only access, so you can look and export but not change things. Ask an editor."
         elif need == "admin":
             msg = "That needs admin access. Ask an admin."
@@ -183,7 +190,7 @@ def page(request, name, **ctx):
     ctx["me"] = u
     ctx["can_edit"] = bool(u) and users.rank(u["role"]) >= users.rank("editor")
     ctx["is_admin"] = bool(u) and u["role"] == "admin"
-    ctx["can_log"] = bool(u) and users.rank(u["role"]) >= users.rank("agent")
+    ctx["can_log"] = bool(u) and bool(u.get("field"))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -364,11 +371,12 @@ def team(request: Request):
 
 
 @app.post("/team/add")
-def team_add(request: Request, name: str = Form(""), email: str = Form(""), role: str = Form("viewer")):
+def team_add(request: Request, name: str = Form(""), email: str = Form(""), role: str = Form("viewer"),
+             field_on: str = Form("")):
     if (r := guard(request)):
         return r
     try:
-        u, token = users.add(name, email, role)
+        u, token = users.add(name, email, role, bool(field_on))
     except ValueError as e:
         flash(request, str(e), "error")
         return RedirectResponse("/team#add", status_code=303)
@@ -410,6 +418,17 @@ def team_active(request: Request, uid: int, active: str = Form("")):
         flash(request, "Access switched back on." if active else "Access switched off; they've been signed out.")
     except ValueError as e:
         flash(request, str(e), "error")
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/field")
+def team_field(request: Request, uid: int, on: str = Form("")):
+    if (r := guard(request)):
+        return r
+    u = users.get(uid)
+    if u:
+        users.set_field(uid, bool(on))
+        flash(request, f"Field visits {'on' if on else 'off'} for {u['name']}.")
     return RedirectResponse("/team", status_code=303)
 
 
@@ -1416,7 +1435,7 @@ def field_page(request: Request):
                 budgets=field.budgets(m_start, month_rows), month_label=m_start.strftime("%B %Y"),
                 who=who, practice=prac, team=team, practices=db.practices(), ratings=field.RATING_LABELS,
                 follow=field.followups(), offices=places.offices(), links=links,
-                agents=[t for t in team if t["active"]], browser_key=places.browser_key(), map_id=places.map_id(),
+                agents=[t for t in team if t["active"] and t.get("field")], browser_key=places.browser_key(), map_id=places.map_id(),
                 my_id=(u or {}).get("id"))
 
 
@@ -1480,7 +1499,7 @@ def field_delete(request: Request, vid: int):
     if (r := guard(request)):
         return r
     v, u = field.visit(vid), me(request)
-    if v and (v["user_id"] == u["id"] or users.rank(u["role"]) >= users.rank("editor")):
+    if v and ((v["user_id"] == u["id"] and u.get("field")) or users.rank(u["role"]) >= users.rank("editor")):
         field.delete_visit(vid)
         flash(request, "Visit removed.")
     else:

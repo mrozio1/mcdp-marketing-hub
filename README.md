@@ -195,6 +195,9 @@ Everyone signs in with their own email and password, and has one of three levels
 | **Editor** | Also upload exports, prepare / apply / undo fixes, write AI write-ups, sync, refresh the map, add and rename offices, build lists and star / note / leave out practices. |
 | **Admin** | Also keys and connections (Connections page), map setup, deleting practices, and the **Team** page. |
 
+**Field visits** is a separate on/off switch per person on the Team page, so anyone (viewer,
+editor or admin) can be given it: it lets them log office visits, receipts and routes.
+
 The checks are made on the server for every click, so hiding a button is only a convenience;
 a role change or switching someone off applies on their next click. The fixes history shows
 who applied or undid each change.
@@ -218,8 +221,9 @@ Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 
 ### Field visits (agents in the field)
 
-Give field marketers **Field agent** access on the Team page: they see everything a viewer does,
-and can log visits, attach receipts and plan routes. Editors and admins can log visits too.
+Switch **Field visits** on for field marketers on the Team page (it works with any access level;
+a viewer with it on can log visits but still can't change anything else). Editors and admins
+set the field budgets and office-to-practice links, and can remove any visit.
 
 - **Log a visit** from a dental pin on the map, from a practice on the Export Map List, or for a
   new office on the spot. They record who they met and their role, the relationship (Cold, Warm,

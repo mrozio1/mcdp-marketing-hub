@@ -1,6 +1,6 @@
 """People who can sign in, and what each role may do.
 
-Roles: viewer (look and export), agent (a viewer who also logs field visits), editor (also uploads, fixes, map refresh, offices, lists),
+Roles: viewer (look and export), editor (also uploads, fixes, map refresh, offices, lists),
 admin (also keys and connections, people, deleting practices, map setup).
 
 New people get a one-time setup link (no email needed: the admin copies it to them) and pick
@@ -19,10 +19,9 @@ from datetime import datetime, timedelta
 
 from . import db
 
-ROLES = ("viewer", "agent", "editor", "admin")
-ROLE_LABELS = {"viewer": "Viewer", "agent": "Field agent", "editor": "Editor", "admin": "Admin"}
+ROLES = ("viewer", "editor", "admin")
+ROLE_LABELS = {"viewer": "Viewer", "editor": "Editor", "admin": "Admin"}
 ROLE_HELP = {"viewer": "Sees everything and exports; can't change anything.",
-             "agent": "A viewer who also logs office visits, receipts and routes.",
              "editor": "Also uploads, fixes, map refresh, offices and list stars/notes.",
              "admin": "Also keys and connections, people, map setup and deleting practices."}
 LINK_DAYS = 7
@@ -52,7 +51,8 @@ CREATE TABLE IF NOT EXISTS users (
 COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", "gen": "INTEGER NOT NULL DEFAULT 1",
            "active": "INTEGER NOT NULL DEFAULT 1", "ever_set": "INTEGER NOT NULL DEFAULT 0",
            "last_login": "TEXT DEFAULT ''", "field_budget": "REAL DEFAULT 0", "home_address": "TEXT DEFAULT ''",
-           "home_lat": "REAL", "home_lng": "REAL"}
+           "home_lat": "REAL", "home_lng": "REAL",
+           "field": "INTEGER NOT NULL DEFAULT 0"}   # field visits switched on for this person (any access level)
 
 
 def init():
@@ -71,6 +71,13 @@ def init():
                 for r in c.execute("SELECT id, setup_token FROM users WHERE setup_token!=''").fetchall():
                     c.execute("UPDATE users SET setup_hash=?, setup_token='' WHERE id=?",
                               (_token_hash(r["setup_token"]), r["id"]))
+        # Anyone given the short-lived "Field agent" level becomes a viewer with field visits on.
+        c.execute("UPDATE users SET role='viewer', field=1 WHERE role='agent'")
+
+
+def set_field(uid, on):
+    with db.conn() as c:
+        c.execute("UPDATE users SET field=? WHERE id=?", (1 if on else 0, uid))
 
 
 def rank(role):
@@ -144,7 +151,7 @@ def any_admin():
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def add(name, email, role):
+def add(name, email, role, field=False):
     """Returns (user, setup_token) or raises ValueError with a message for the page."""
     name, email = (name or "").strip(), (email or "").strip().lower()
     if not name:
@@ -156,8 +163,8 @@ def add(name, email, role):
     if by_email(email):
         raise ValueError(f"{email} already has an account.")
     with db.conn() as c:
-        cur = c.execute("INSERT INTO users(email, name, role, created_at) VALUES (?,?,?,?)",
-                        (email, name[:80], role, db.now()))
+        cur = c.execute("INSERT INTO users(email, name, role, created_at, field) VALUES (?,?,?,?,?)",
+                        (email, name[:80], role, db.now(), 1 if field else 0))
         uid = cur.lastrowid
     return get(uid), new_link(uid)
 
