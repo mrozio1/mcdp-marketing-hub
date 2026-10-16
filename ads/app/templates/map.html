@@ -429,7 +429,9 @@
       if (show) bounds.extend(x.m.position);
     }
     circles.forEach((c, i) => c.setMap(ui.circles.checked && (off === null || data.offices[i].id === off) ? map : null));
-    document.querySelectorAll("[data-count]").forEach(s => { s.textContent = `(${counts[s.dataset.count].toLocaleString()})`; });
+    document.querySelectorAll("[data-count]").forEach(s => {
+      if (counts[s.dataset.count] !== undefined) s.textContent = `(${counts[s.dataset.count].toLocaleString()})`;
+    });
     if (fit && !bounds.isEmpty()) map.fitBounds(bounds, 40);
   }
   // ---- referral list pins (our NPI data, not Google's) ----
