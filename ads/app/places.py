@@ -83,6 +83,7 @@ MIGRATIONS = {
 }
 
 _lock = threading.Lock()
+_started_at = datetime.now().isoformat(timespec="seconds")   # when this app process started
 
 
 class MapError(RuntimeError):
@@ -150,14 +151,30 @@ def brands_key(brands):
     return hashlib.sha1("|".join(sorted(brands)).encode()).hexdigest()[:12]
 
 
+STALE_MINUTES = 20   # a running job updates its status at least every few minutes
+
+
 def status():
     try:
-        return json.loads(db.get_setting("map_status") or "{}")
+        st = json.loads(db.get_setting("map_status") or "{}")
     except ValueError:
         return {}
+    if st.get("busy") and not _lock.locked():
+        # Marked running, but nothing in this app is running it: the app restarted mid-way (an
+        # update or reboot) or the work stopped without saying why. Clear it so it can be restarted.
+        beat = st.get("beat") or st.get("started") or ""
+        if not beat or beat < (datetime.now() - timedelta(minutes=STALE_MINUTES)).isoformat(timespec="seconds") \
+                or _started_at > beat:
+            st = {"busy": False, "ok": False, "at": db.now(),
+                   "error": "It stopped part-way, most likely because the app restarted (an update or a reboot). "
+                            "Everything found so far is kept; click Refresh map to carry on."}
+            db.set_setting("map_status", json.dumps(st))
+    return st
 
 
 def _set_status(**kw):
+    if kw.get("busy"):
+        kw["beat"] = db.now()
     db.set_setting("map_status", json.dumps(kw))
 
 

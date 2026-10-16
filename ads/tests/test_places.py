@@ -450,3 +450,29 @@ def test_closest_n_per_office(env):
     far = [p for p in places.places() if p["place_id"].startswith("ChIJ_dent_ring_") and p["gone_at"]]
     assert far == []
     assert defiance
+
+
+def test_stuck_running_status_clears_after_a_restart(env):
+    """An update restarts the app mid-refresh; the page mustn't say 'Refreshing…' forever."""
+    db, places = env
+    from app import referrals
+    try:
+        long_ago = "2026-10-16T00:24:00"
+        for mod, key in ((places, "map_status"), (referrals, "ref_status")):
+            db.set_setting(key, json.dumps({"busy": True, "started": long_ago, "beat": long_ago, "step": "Looked up 257"}))
+            st = mod.status()
+            assert st["busy"] is False and st["ok"] is False and "restarted" in st["error"]
+            assert json.loads(db.get_setting(key))["busy"] is False          # saved, so the button works again
+        # A refresh genuinely running in this app (lock held) is left alone, however long it takes.
+        places._lock.acquire()
+        db.set_setting("map_status", json.dumps({"busy": True, "started": long_ago, "beat": long_ago}))
+        assert places.status()["busy"] is True
+        places._lock.release()
+        # Busy since after this app started, and recently active: still treated as running.
+        fresh = db.now()
+        places._started_at = "2000-01-01T00:00:00"
+        db.set_setting("map_status", json.dumps({"busy": True, "started": fresh, "beat": fresh}))
+        assert places.status()["busy"] is True
+    finally:
+        db.set_setting("map_status", None)
+        db.set_setting("ref_status", None)

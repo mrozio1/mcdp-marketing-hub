@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS ref_marks (
 """
 
 _lock = threading.Lock()
+_started_at = datetime.now().isoformat(timespec="seconds")   # when this app process started
 _sleep = time.sleep
 _last = [0.0]
 
@@ -87,14 +88,30 @@ def init():
             c.execute("ALTER TABLE ref_practices ADD COLUMN kind TEXT DEFAULT 'referrer'")
 
 
+STALE_MINUTES = 20   # a running job updates its status at least every few minutes
+
+
 def status():
     try:
-        return json.loads(db.get_setting("ref_status") or "{}")
+        st = json.loads(db.get_setting("ref_status") or "{}")
     except ValueError:
         return {}
+    if st.get("busy") and not _lock.locked():
+        # Marked running, but nothing in this app is running it: the app restarted mid-way (an
+        # update or reboot) or the work stopped without saying why. Clear it so it can be restarted.
+        beat = st.get("beat") or st.get("started") or ""
+        if not beat or beat < (datetime.now() - timedelta(minutes=STALE_MINUTES)).isoformat(timespec="seconds") \
+                or _started_at > beat:
+            st = {"busy": False, "ok": False, "at": db.now(),
+                   "error": "It stopped part-way, most likely because the app restarted (an update or a reboot). "
+                            "Everything found so far is kept; click Update lists to carry on."}
+            db.set_setting("ref_status", json.dumps(st))
+    return st
 
 
 def _set_status(**kw):
+    if kw.get("busy"):
+        kw["beat"] = db.now()
     db.set_setting("ref_status", json.dumps(kw))
 
 
