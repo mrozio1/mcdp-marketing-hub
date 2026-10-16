@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="{% block bodyclass %}{% endblock %}">
+<body class="{% block bodyclass %}{% endblock %}{% if me %} role-{{ me.role }}{% endif %}">
 {% block chrome %}
 {% set here = request.url.path %}
 <header class="topbar">
@@ -18,7 +18,11 @@
     <a href="/practices" {% if here == '/practices' or here.startswith('/p/') %}aria-current="page"{% endif %}>Practices</a>
     <a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>
     <a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>
+    {% if is_admin %}
     <a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>
+    <a href="/team" {% if here.startswith('/team') %}aria-current="page"{% endif %}>Team</a>
+    {% endif %}
+    {% if me %}<a href="/account" class="nav-me" {% if here.startswith('/account') %}aria-current="page"{% endif %} title="{{ me.name }} · {{ me.role|capitalize }}">{{ me.name.split(' ')[0] }}{% if not can_edit %} <span class="role-chip">view only</span>{% endif %}</a>{% endif %}
     <form method="post" action="/logout"><button class="linklike" type="submit">Sign out</button></form>
   </nav>
 </header>

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Team{% endblock %}
+{% block content %}
+<h1>Team</h1>
+<p class="lede muted">Who can sign in, and what they can do.</p>
+
+{% if shared %}
+<p class="flash" role="status">You're signed in with the shared team password. Add yourself below as an <strong>Admin</strong>, open your setup link and pick a password. After that the shared password stops working, so everyone signs in as themselves.</p>
+{% endif %}
+
+{% if link %}
+<section class="panel link-box" aria-labelledby="link-h">
+  <h2 id="link-h">Setup link for {{ link.name }}</h2>
+  <p class="small">Send this to {{ link.name.split(' ')[0] }} (email, Teams, text). It works once, for {{ link_days }} days, and lets them pick their own password. Nobody else ever sees it.</p>
+  <div class="copy-row"><input id="setup-link" value="{{ link.url }}" readonly aria-label="Setup link"><button class="btn" type="button" id="copy-link">Copy link</button></div>
+</section>
+{% endif %}
+
+<dl class="roles">
+  {% for r in roles %}<div><dt>{{ labels[r] }}</dt><dd>{{ help[r] }}</dd></div>{% endfor %}
+</dl>
+
+{% if people %}
+<div class="table-scroll">
+<table class="data team-table">
+  <thead><tr><th>Person</th><th>Access</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for u in people %}
+    <tr class="{{ '' if u.active else 'muted' }}">
+      <td><strong>{{ u.name }}</strong>{% if me and u.id == me.id %} <span class="muted small">(you)</span>{% endif %}<br><span class="small muted">{{ u.email }}</span></td>
+      <td>
+        <form method="post" action="/team/{{ u.id }}/role" class="inline-form">
+          <select name="role" aria-label="Access for {{ u.name }}" onchange="this.form.requestSubmit()">
+            {% for r in roles %}<option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ labels[r] }}</option>{% endfor %}
+          </select>
+          <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
+        </form>
+      </td>
+      <td class="small">
+        {% if not u.active %}Switched off
+        {% elif not u.pw_hash %}{% if u.setup_expires and u.setup_expires > now %}Hasn't set a password yet{% else %}Setup link expired{% endif %}
+        {% elif u.last_login %}Last signed in {{ u.last_login.replace('T', ' ')[:16] }}
+        {% else %}Ready{% endif %}
+      </td>
+      <td class="team-actions">
+        <form method="post" action="/team/{{ u.id }}/link"><button class="linklike small" type="submit">{{ 'New setup link' if not u.pw_hash else 'Reset password' }}</button></form>
+        {% if not (me and u.id == me.id) %}
+        <form method="post" action="/team/{{ u.id }}/active"><input type="hidden" name="active" value="{{ '' if u.active else '1' }}"><button class="linklike small" type="submit">{{ 'Switch off' if u.active else 'Switch on' }}</button></form>
+        <form method="post" action="/team/{{ u.id }}/remove" data-confirm="Remove {{ u.name }}? Fixes they applied keep their name."><button class="linklike small danger" type="submit">Remove</button></form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">Nobody yet. Start with yourself.</p>
+{% endif %}
+
+<details class="drawer" id="add" {% if not people or shared %}open{% endif %}>
+  <summary><span class="drawer-title">Add a person</span><span class="drawer-hint">They get a link to set their own password</span></summary>
+  <div class="drawer-body">
+  <form method="post" action="/team/add" class="stack narrow">
+    <label>Name<input name="name" required maxlength="80" autocomplete="off"></label>
+    <label>Email<input name="email" type="email" required autocomplete="off"></label>
+    <label>Access
+      <select name="role">{% for r in roles %}<option value="{{ r }}" {% if (shared and r == 'admin') or (not shared and r == 'viewer') %}selected{% endif %}>{{ labels[r] }}</option>{% endfor %}</select>
+    </label>
+    <button class="btn" type="submit">Add and make a setup link</button>
+  </form>
+  <details class="how">
+    <summary>Locked out?</summary>
+    <p>If every admin forgets their password, run this on the server to get a fresh setup link:<br>
+    <code>docker exec postiz-ads python -m app.users reset you@example.com</code></p>
+  </details>
+  </div>
+</details>
+<script>
+  const cb = document.getElementById("copy-link");
+  if (cb) cb.onclick = async () => {
+    const i = document.getElementById("setup-link");
+    try { await navigator.clipboard.writeText(i.value); } catch { i.select(); document.execCommand("copy"); }
+    cb.textContent = "Copied";
+  };
+</script>
+{% endblock %}

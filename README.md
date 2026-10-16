@@ -185,6 +185,34 @@ sh enable-ads.sh NEW_PASSWORD     # change it
 sh enable-ads.sh off
 ```
 
+### People and access (Team page)
+
+Everyone signs in with their own email and password, and has one of three levels:
+
+| Access | Can |
+|---|---|
+| **Viewer** | See every page, open reports and the email version, use the map, export map lists to Excel. Changes nothing. |
+| **Editor** | Also upload exports, prepare / apply / undo fixes, write AI write-ups, sync, refresh the map, add and rename offices, build lists and star / note / leave out practices. |
+| **Admin** | Also keys and connections (Connections page), map setup, deleting practices, and the **Team** page. |
+
+The checks are made on the server for every click, so hiding a button is only a convenience;
+a role change or switching someone off applies on their next click. The fixes history shows
+who applied or undid each change.
+
+Adding someone: **Team → Add a person** makes a one-time setup link (valid 7 days). Send it to
+them however you like; they pick their own password, so nobody else knows it. **Reset password**
+makes a new link and clears the old password. There's no email service, so links are copied by hand.
+
+First time: sign in with the shared team password (leave the email blank), add yourself as an
+**Admin** on the Team page and open your link. From then on the shared password stops working.
+If every admin is ever locked out, run on the server:
+
+```sh
+docker exec postiz-ads python -m app.users reset you@example.com
+```
+
+which prints a fresh setup link.
+
 Public address: add a public hostname to the same Cloudflare tunnel, e.g.
 `ads.<mcdp-domain>` → `http://ads:8000`.
 

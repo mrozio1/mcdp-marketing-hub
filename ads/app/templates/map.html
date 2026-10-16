@@ -5,7 +5,7 @@
   <h1>Market map</h1>
   <div class="title-actions">
   {% if offices %}<a class="btn btn-quiet" href="/map/list">Export Map List</a>{% endif %}
-  {% if server_key_set and offices %}
+  {% if server_key_set and offices and can_edit %}
   <form method="post" action="/map/refresh" data-busy="Starting…">
     <button class="btn {{ 'btn-quiet' if last else '' }}" type="submit" {% if status.busy %}disabled{% endif %}>
       {{ 'Refreshing…' if status.busy else ('Refresh map' if last else 'Build the map') }}</button>
@@ -46,14 +46,14 @@
     </label>
   </div>
   <div id="map" class="map-canvas" role="region" aria-label="Map of offices, dental practices and orthodontists"></div>
-  <p class="small muted map-foot">{% if not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
+  <p class="small muted map-foot">{% if not offices and not can_edit %}No offices yet.{% elif not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>
 </section>
 {% endif %}
 
-<p class="eyebrow">Manage the map</p>
-<details class="drawer" id="offices" {% if not offices or preview %}open{% endif %}>
-  <summary><span class="drawer-title">Our offices</span><span class="drawer-hint">{% if offices %}{{ offices|length }} offices · counts per office, upload a list, add one{% else %}None yet: start here{% endif %}</span></summary>
+<p class="eyebrow">{{ 'Manage the map' if can_edit else 'Offices' }}</p>
+<details class="drawer" id="offices" {% if (not offices and can_edit) or preview %}open{% endif %}>
+  <summary><span class="drawer-title">Our offices</span><span class="drawer-hint">{% if offices %}{{ offices|length }} offices · counts per office{% if can_edit %}, upload a list, add one{% endif %}{% elif can_edit %}None yet: start here{% else %}None yet{% endif %}</span></summary>
   <div class="drawer-body">
   {% if offices %}
   <div class="table-scroll">
@@ -62,18 +62,18 @@
     <tbody>
     {% for o in offices %}{% set c = counts.get(o.id, {}) %}
       <tr>
-        <td><form method="post" action="/map/offices/{{ o.id }}/rename" class="rename-form">
+        <td>{% if can_edit %}<form method="post" action="/map/offices/{{ o.id }}/rename" class="rename-form">
           <input name="label" value="{{ o.label }}" aria-label="Office name" maxlength="120">
-          <button class="btn btn-small btn-quiet" type="submit">Rename</button></form>
+          <button class="btn btn-small btn-quiet" type="submit">Rename</button></form>{% else %}<strong>{{ o.label }}</strong>{% endif %}
           {% if o.address %}<span class="small muted">{{ o.address }}</span>{% endif %}
-          {% if o.match_note %}<span class="small danger">{{ o.match_note }} Rename it to clear this note.</span>{% endif %}
+          {% if o.match_note and can_edit %}<span class="small danger">{{ o.match_note }} Rename it to clear this note.</span>{% endif %}
           {% if o.lat is none %}<span class="small danger">Location expired; refresh the map.</span>{% endif %}</td>
         <td class="num">{{ c.referrer or 0 }}</td>
         <td class="num">{{ c.offers_ortho or 0 }}</td>
         <td class="num">{{ c.competitor or 0 }}</td>
         {% if prev %}<td class="num">{{ c.new or 0 }}</td><td class="num">{{ c.gone or 0 }}</td>{% endif %}
-        <td><form method="post" action="/map/offices/{{ o.id }}/delete" data-confirm="Remove {{ o.label }} from the map?">
-          <button class="linklike danger" type="submit">Remove</button></form></td>
+        <td>{% if can_edit %}<form method="post" action="/map/offices/{{ o.id }}/delete" data-confirm="Remove {{ o.label }} from the map?">
+          <button class="linklike danger" type="submit">Remove</button></form>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -81,9 +81,10 @@
   </div>
   <p class="small muted">Each practice is counted once, under its nearest office.{% if prev %} “New” means it showed up at the last refresh ({{ last[:10] }}) and wasn't there at the one before ({{ prev[:10] }}).{% endif %}</p>
   {% else %}
-  <p class="empty">No offices yet. Add each of our locations below; the map searches around them.</p>
+  <p class="empty">No offices yet.{% if can_edit %} Add each of our locations below; the map searches around them.{% endif %}</p>
   {% endif %}
 
+  {% if can_edit %}
   {% if preview %}
   <form method="post" action="/map/import/confirm" class="import-preview" id="import" data-busy="Finding them on Google…">
     <h3>Which of these are our offices?</h3>
@@ -138,9 +139,11 @@
   {% else %}
   <p class="small muted">Add the browser key in Map setup to search for offices.</p>
   {% endif %}
+  {% endif %}{# end can_edit #}
   </div>
 </details>
 
+{% if is_admin %}
 <details class="drawer" id="setup" {% if not browser_key or not server_key_set %}open{% endif %}>
   <summary><span class="drawer-title">Map setup</span><span class="drawer-hint">Google keys, radius, brand names, limits</span></summary>
   <div class="drawer-body">
@@ -181,6 +184,9 @@
   </details>
   </div>
 </details>
+{% elif not browser_key %}
+<p class="small muted">The map hasn't been set up yet; an admin adds the Google keys.</p>
+{% endif %}
 
 {% if browser_key %}
 <script>

@@ -515,3 +515,22 @@ details.drawer > summary:focus-visible { outline-offset: 4px; }
 .look a { color: var(--teal-deep); }
 @media (max-width: 640px) { .door-title { flex-basis: 100%; } .door-arrow { display: none; } }
 details:not([open]) > :not(summary) { display: none; }
+
+/* ---- people and access ---- */
+.role-chip { font-size: 12px; color: var(--soft, #5B5852); border: 1px solid var(--hair, #E3DED4); border-radius: 999px; padding: 1px 8px; margin-left: 4px; white-space: nowrap; }
+.roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 32px; margin: 8px 0 28px; }
+.roles dt { font-family: "Newsreader", Georgia, serif; font-size: 20px; }
+.roles dd { margin: 2px 0 0; color: var(--soft, #5B5852); font-size: 15px; }
+.team-table td { vertical-align: top; }
+.team-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.team-actions form, .inline-form { display: inline; margin: 0; }
+.link-box { border-left: 3px solid #0F7471; }
+.copy-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.copy-row input { flex: 1 1 320px; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+.facts { display: grid; gap: 10px; margin: 0; }
+.facts dt { font-size: 14px; color: var(--soft, #5B5852); }
+.facts dd { margin: 2px 0 0; }
+.narrow { max-width: 520px; }
+.fix-list-readonly ul { list-style: none; padding: 0; }
+.ref-table input:disabled, .ref-star:disabled { cursor: default; opacity: .6; }
+.ref-note[readonly] { background: transparent; border-color: transparent; resize: none; }

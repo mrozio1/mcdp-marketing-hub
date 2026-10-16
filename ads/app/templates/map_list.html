@@ -4,11 +4,11 @@
 <p class="crumb"><a href="/map">Market map</a></p>
 <div class="title-row">
   <h1>Export map list</h1>
-  <form method="post" action="/map/referrals/refresh" data-busy="Starting…">
+  {% if can_edit %}<form method="post" action="/map/referrals/refresh" data-busy="Starting…">
     <input type="hidden" name="back" value="/map/list">
     <button class="btn {{ 'btn-quiet' if ref_last else '' }}" type="submit" {% if ref_status.busy or not offices %}disabled{% endif %}>
       {{ 'Updating…' if ref_status.busy else ('Update lists' if ref_last else 'Build the lists') }}</button>
-  </form>
+  </form>{% endif %}
 </div>
 
 {% if ref_status.busy %}
@@ -21,7 +21,7 @@
 <p class="empty">Add our offices on the <a href="/map">Map page</a> first; the lists are built around them.</p>
 {% elif not ref_last %}
 <section class="panel">
-  <p>The lists come from the <a href="https://npiregistry.cms.hhs.gov/" target="_blank" rel="noopener">NPI Registry</a> (public government data, so they can be exported): every dental and orthodontic practice within {{ radius|round(0)|int }} miles of our offices. Click <strong>Build the lists</strong> to pull them; it takes a few minutes and then updates itself monthly.</p>
+  <p>The lists come from the <a href="https://npiregistry.cms.hhs.gov/" target="_blank" rel="noopener">NPI Registry</a> (public government data, so they can be exported): every dental and orthodontic practice within {{ radius|round(0)|int }} miles of our offices. {% if can_edit %}Click <strong>Build the lists</strong> to pull them; it takes a few minutes and then updates itself monthly.{% else %}They haven't been built yet; ask an editor to build them.{% endif %}</p>
 </section>
 {% else %}
 <section class="panel referrals">
@@ -65,6 +65,7 @@
   const $ = id => document.getElementById(id);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const RADIUS = {{ radius|round(0)|int }};
+  const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
   const ABOUT = {
     referrer: `General dental practices within ${RADIUS} miles: potential referrers. Orthodontic-only practices and our own offices are left out.`,
     competitor: `Orthodontic practices within ${RADIUS} miles that aren't ours: the competition.`,
@@ -106,9 +107,11 @@
       const inc = el("input"); inc.type = "checkbox"; inc.checked = !r.omitted; inc.title = "Include in the export";
       inc.setAttribute("aria-label", `Include ${r.name}`);
       inc.onchange = () => { save(r, { omitted: !inc.checked }); render(); };
+      inc.disabled = !CAN_EDIT;
       const star = el("button", "ref-star" + (r.starred ? " on" : ""), r.starred ? "★" : "☆");
       star.type = "button"; star.title = r.starred ? "Unstar" : "Star"; star.setAttribute("aria-pressed", r.starred);
       star.onclick = () => { save(r, { starred: !r.starred }); render(); };
+      star.disabled = !CAN_EDIT;
       const who = el("td");
       who.append(el("strong", null, r.name));
       if (r.dentists && r.dentists.length) who.append(el("span", "small muted ref-sub", r.dentists.slice(0, 4).join("; ") + (r.dentists.length > 4 ? ` +${r.dentists.length - 4}` : "")));
@@ -118,7 +121,7 @@
       if (r.phone) where.append(el("span", "small ref-sub", r.phone));
       const dist = el("td", "num"); dist.append(el("span", null, r.miles));
       if (state.office === "all") dist.append(el("span", "small muted ref-sub", r.office));
-      const note = el("textarea", "ref-note"); note.rows = 1; note.value = r.note || ""; note.placeholder = "Add a note";
+      const note = el("textarea", "ref-note"); note.rows = 1; note.value = r.note || ""; note.placeholder = CAN_EDIT ? "Add a note" : ""; note.readOnly = !CAN_EDIT;
       note.setAttribute("aria-label", `Note for ${r.name}`);
       note.onchange = () => { save(r, { note: note.value }).then(() => { note.classList.add("saved"); setTimeout(() => note.classList.remove("saved"), 1200); }); };
       const links = el("td", "ref-links");

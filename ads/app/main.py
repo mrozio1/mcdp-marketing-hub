@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, organic, places, referrals, scope, sync
+from . import actions, ai, db, emailfmt, organic, places, referrals, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -28,6 +28,48 @@ MAX_UPLOAD = 20 * 1024 * 1024
 PLATFORMS = (("google", "Google Ads"), ("meta", "Meta Ads"))
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+# ---------- who may do what ----------
+# Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
+# need an admin whatever the method: keys and connections, people, map setup, deleting practices.
+PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/")
+ANY_SIGNED_IN_POST = ("/account",)
+ADMIN_ONLY = (re.compile(r"^/(connections|google|team)(/|$)"), re.compile(r"^/map/setup$"),
+              re.compile(r"^/p/\d+/delete$"))
+
+
+def needed_role(method, path):
+    if path.startswith(PUBLIC) or path == "/setup":
+        return None
+    if any(rx.match(path) for rx in ADMIN_ONLY):
+        return "admin"
+    if method in ("GET", "HEAD") or path.startswith(ANY_SIGNED_IN_POST):
+        return "viewer"
+    return "editor"
+
+
+async def role_gate(request: Request, call_next):
+    need = needed_role(request.method, request.url.path)
+    request.state.user = current_user(request)
+    if need and request.state.user and users.rank(request.state.user["role"]) < users.rank(need):
+        if request.state.user["role"] == "viewer":
+            msg = "You have view-only access, so you can look and export but not change things. Ask an editor."
+        else:
+            msg = "That needs admin access. Ask an admin."
+        if "application/json" in (request.headers.get("content-type", "") + request.headers.get("accept", "")):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": msg}, status_code=403)
+        flash(request, msg, "error")
+        back = request.headers.get("referer") or "/"
+        if request.method in ("GET", "HEAD") or not back.startswith(str(request.base_url)):
+            back = "/"
+        return RedirectResponse(back, status_code=303)
+    return await call_next(request)
+
+
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+app.add_middleware(BaseHTTPMiddleware, dispatch=role_gate)   # runs inside the session middleware below
 app.add_middleware(SessionMiddleware, secret_key=SECRET, same_site="lax", https_only=False,
                    max_age=60 * 60 * 24 * 14, session_cookie="mcdp_ads")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -66,6 +108,7 @@ PUBLIC_URL = os.environ.get("ADS_PUBLIC_URL", "").rstrip("/")
 @app.on_event("startup")
 def _startup():
     db.init()
+    users.init()
     places.init()
     places.purge_old()
     referrals.init()
@@ -75,8 +118,38 @@ def _startup():
         referrals.start_scheduler()
 
 
+SHARED = {"id": 0, "name": "Team password", "email": "", "role": "admin"}
+
+
+def current_user(request: Request):
+    """The signed-in person (fresh from the database, so role changes and removals apply at once).
+    The old shared team password signs in as a temporary admin only until someone has set up an
+    admin account."""
+    try:
+        s = request.session
+    except AssertionError:
+        return None
+    uid = s.get("uid")
+    if uid == 0:
+        return SHARED if s.get("ok") is True and PASSWORD and not users.any_admin() else None
+    if uid:
+        u = users.get(uid)
+        if u and u["active"] and u["pw_hash"] and u["gen"] == s.get("gen"):
+            return u
+    return None
+
+
+def me(request: Request):
+    return getattr(request.state, "user", None) or current_user(request)
+
+
 def authed(request: Request):
-    return request.session.get("ok") is True
+    return me(request) is not None
+
+
+def actor(request: Request):
+    u = me(request)
+    return (u or {}).get("name") or ""
 
 
 def guard(request: Request):
@@ -95,6 +168,10 @@ def page(request, name, **ctx):
     ctx["last_sync"] = sync.last_sync()
     ctx["any_connection"] = cx.meta_configured() or cx.google_configured()
     ctx.setdefault("social_url", SOCIAL_URL)
+    u = me(request)
+    ctx["me"] = u
+    ctx["can_edit"] = bool(u) and users.rank(u["role"]) >= users.rank("editor")
+    ctx["is_admin"] = bool(u) and u["role"] == "admin"
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -161,27 +238,182 @@ def is_master(p, practices):
 
 
 # ---------- auth ----------
+def _login_page(request, error=None, email=""):
+    shared = bool(PASSWORD) and not users.any_admin()
+    return page(request, "login.html", error=error, shared=shared, email=email,
+                configured=shared or users.any_admin())
+
+
+def _sign_in(request, u):
+    request.session.clear()
+    request.session["uid"] = u["id"]
+    request.session["gen"] = u.get("gen")
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     if authed(request):
         return RedirectResponse("/", status_code=303)
-    return page(request, "login.html", error=None, configured=bool(PASSWORD))
+    return _login_page(request)
 
 
 @app.post("/login", response_class=HTMLResponse)
-async def login(request: Request, password: str = Form("")):
-    if PASSWORD and hmac.compare_digest(password.encode(), PASSWORD.encode()):
+async def login(request: Request, email: str = Form(""), password: str = Form("")):
+    email = email.strip()
+    if email:
+        u = users.check_login(email, password)
+        if u:
+            _sign_in(request, u)
+            return RedirectResponse("/", status_code=303)
+    elif PASSWORD and not users.any_admin() and hmac.compare_digest(password.encode(), PASSWORD.encode()):
         request.session.clear()
+        request.session["uid"] = 0
         request.session["ok"] = True
-        return RedirectResponse("/", status_code=303)
+        flash(request, "Signed in with the shared team password. Set up your own admin account on the "
+                       "Team page; the shared password stops working once you have.")
+        return RedirectResponse("/team", status_code=303)
     await asyncio.sleep(1.5)  # slow down guessing
-    return page(request, "login.html", error="That password isn't right.", configured=bool(PASSWORD))
+    return _login_page(request, "That email and password don't match." if email else "That password isn't right.", email)
 
 
 @app.post("/logout")
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+# ---------- setting a password from a link ----------
+@app.get("/setup/{token}", response_class=HTMLResponse)
+def setup_form(request: Request, token: str):
+    u = users.by_token(token)
+    return page(request, "setup.html", person=u, token=token, error=None,
+                min_len=users.MIN_PASSWORD)
+
+
+@app.post("/setup/{token}", response_class=HTMLResponse)
+async def setup_save(request: Request, token: str, password: str = Form(""), confirm: str = Form("")):
+    u = users.by_token(token)
+    problem = users.password_problem(password, confirm) if u else None
+    if not u or problem:
+        if not u:
+            await asyncio.sleep(1)
+        return page(request, "setup.html", person=u, token=token, error=problem,
+                    min_len=users.MIN_PASSWORD)
+    u = users.finish_setup(token, password)
+    _sign_in(request, u)
+    flash(request, f"Welcome, {u['name'].split(' ')[0]}. You're signed in.")
+    return RedirectResponse("/", status_code=303)
+
+
+# ---------- your own account ----------
+@app.get("/account", response_class=HTMLResponse)
+def account(request: Request):
+    if (r := guard(request)):
+        return r
+    return page(request, "account.html", error=None, labels=users.ROLE_LABELS, help=users.ROLE_HELP,
+                min_len=users.MIN_PASSWORD)
+
+
+@app.post("/account/password", response_class=HTMLResponse)
+def account_password(request: Request, current: str = Form(""), password: str = Form(""), confirm: str = Form("")):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if not u["id"]:
+        return RedirectResponse("/team", status_code=303)
+    full = users.get(u["id"])
+    problem = None if users._check_pw(current, full["pw_hash"]) else "Your current password isn't right."
+    problem = problem or users.password_problem(password, confirm)
+    if problem:
+        return page(request, "account.html", error=problem, labels=users.ROLE_LABELS, help=users.ROLE_HELP,
+                    min_len=users.MIN_PASSWORD)
+    _sign_in(request, users.set_password(u["id"], password))
+    flash(request, "Password changed. Other devices have been signed out.")
+    return RedirectResponse("/account", status_code=303)
+
+
+# ---------- people (admins) ----------
+def _setup_url(request, token):
+    base = PUBLIC_URL
+    if not base:   # behind the Cloudflare tunnel the app itself sees plain http
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+        base = f"{proto}://{request.headers.get('host') or request.url.netloc}"
+    return f"{base}/setup/{token}"
+
+
+@app.get("/team", response_class=HTMLResponse)
+def team(request: Request):
+    if (r := guard(request)):
+        return r
+    link = request.session.pop("team_link", None)
+    return page(request, "team.html", people=users.all_users(), roles=users.ROLES, labels=users.ROLE_LABELS,
+                help=users.ROLE_HELP, link=link, link_days=users.LINK_DAYS, shared=me(request)["id"] == 0,
+                now=db.now())
+
+
+@app.post("/team/add")
+def team_add(request: Request, name: str = Form(""), email: str = Form(""), role: str = Form("viewer")):
+    if (r := guard(request)):
+        return r
+    try:
+        u, token = users.add(name, email, role)
+    except ValueError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse("/team#add", status_code=303)
+    request.session["team_link"] = {"name": u["name"], "url": _setup_url(request, token)}
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/link")
+def team_link(request: Request, uid: int):
+    if (r := guard(request)):
+        return r
+    u = users.get(uid)
+    if u:
+        request.session["team_link"] = {"name": u["name"], "url": _setup_url(request, users.new_link(uid))}
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/role")
+def team_role(request: Request, uid: int, role: str = Form("")):
+    if (r := guard(request)):
+        return r
+    try:
+        users.set_role(uid, role)
+        flash(request, "Access updated.")
+    except ValueError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/active")
+def team_active(request: Request, uid: int, active: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if uid == me(request)["id"] and not active:
+        flash(request, "You can't switch off your own access.", "error")
+        return RedirectResponse("/team", status_code=303)
+    try:
+        users.set_active(uid, bool(active))
+        flash(request, "Access switched back on." if active else "Access switched off; they've been signed out.")
+    except ValueError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/remove")
+def team_remove(request: Request, uid: int):
+    if (r := guard(request)):
+        return r
+    if uid == me(request)["id"]:
+        flash(request, "You can't remove yourself.", "error")
+        return RedirectResponse("/team", status_code=303)
+    try:
+        users.remove(uid)
+        flash(request, "Removed.")
+    except ValueError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/team", status_code=303)
 
 
 @app.get("/health")
@@ -215,7 +447,7 @@ def _ad_totals(allp):
     return {"spend": spend, "leads": leads, "since": since, "until": until}
 
 
-def _worth_a_look(allp):
+def _worth_a_look(allp, role="admin"):
     items = []
     waiting = [(p, len(db.changes(p["id"], ["proposed"]))) for p in allp]
     waiting = [(p, n) for p, n in waiting if n]
@@ -223,7 +455,8 @@ def _worth_a_look(allp):
         total = sum(n for _, n in waiting)
         first = waiting[0][0]
         where = first["name"] if len(waiting) == 1 else f"{len(waiting)} practices"
-        items.append({"text": f"{total} fix{'es' if total != 1 else ''} waiting for your approval ({where})",
+        whose = "your" if users.rank(role) >= users.rank("editor") else "an editor's"
+        items.append({"text": f"{total} fix{'es' if total != 1 else ''} waiting for {whose} approval ({where})",
                       "href": f"/p/{first['id']}#fixes"})
     st = places.status()
     if st.get("busy"):
@@ -239,7 +472,7 @@ def _worth_a_look(allp):
         day = "today" if t.date() == _dt.now().date() else t.strftime("%A")
         items.append({"text": f"Ads synced {day} at {t.strftime('%-I:%M %p')}", "href": None})
     elif cx.meta_configured() or cx.google_configured():
-        items.append({"text": "Ads haven't synced yet", "href": "/connections"})
+        items.append({"text": "Ads haven't synced yet", "href": "/connections" if role == "admin" else None})
     return items[:3]
 
 
@@ -249,7 +482,7 @@ def welcome(request: Request):
         return r
     allp = db.practices()
     mapped = sum(c.get("referrer", 0) for c in places.counts().values())
-    return page(request, "welcome.html", ads=_ad_totals(allp), mapped=mapped, look=_worth_a_look(allp),
+    return page(request, "welcome.html", ads=_ad_totals(allp), mapped=mapped, look=_worth_a_look(allp, me(request)["role"]),
                 social_url=SOCIAL_URL, practice_count=len(allp))
 
 
@@ -513,7 +746,7 @@ async def fixes_apply(request: Request, pid: int):
         ch = db.change(cid)
         if not ch or ch["practice_id"] != pid:
             continue
-        ok, msg = await asyncio.to_thread(actions.apply_change, ch)
+        ok, msg = await asyncio.to_thread(actions.apply_change, ch, actor(request))
         if ok:
             done += 1
         else:
@@ -531,7 +764,7 @@ async def fixes_undo(request: Request, pid: int, cid: int):
         return r
     ch = db.change(cid)
     if ch and ch["practice_id"] == pid:
-        ok, msg = await asyncio.to_thread(actions.undo_change, ch)
+        ok, msg = await asyncio.to_thread(actions.undo_change, ch, actor(request))
         flash(request, f"Undone: {ch['title']}." if ok else f"Couldn't undo: {msg}", "ok" if ok else "error")
     return _fix_back(pid)
 

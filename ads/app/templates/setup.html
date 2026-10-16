@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Set your password{% endblock %}
+{% block chrome %}{% endblock %}
+{% block mainclass %}login{% endblock %}
+{% block content %}
+<h1 class="brand-big">MCDP Hub</h1>
+{% if not person %}
+<p>This link has expired or has already been used.</p>
+<p class="muted">Ask an admin for a new one; each link works once and for {{ 7 }} days.</p>
+<p><a href="/login">Go to sign in</a></p>
+{% else %}
+<p>Hi {{ person.name.split(' ')[0] }}. Pick a password to finish setting up your account (<strong>{{ person.email }}</strong>).</p>
+<form method="post" action="/setup/{{ token }}" class="stack">
+  <input type="email" name="email" value="{{ person.email }}" autocomplete="username" hidden>
+  <label for="pw">Password <span class="muted small">(at least {{ min_len }} characters)</span></label>
+  <input id="pw" name="password" type="password" autocomplete="new-password" minlength="{{ min_len }}" required autofocus>
+  <label for="pw2">Type it again</label>
+  <input id="pw2" name="confirm" type="password" autocomplete="new-password" minlength="{{ min_len }}" required>
+  {% if error %}<p class="field-error" role="alert">{{ error }}</p>{% endif %}
+  <button type="submit" class="btn">Save and sign in</button>
+</form>
+{% endif %}
+{% endblock %}

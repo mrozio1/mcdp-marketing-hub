@@ -99,6 +99,7 @@ MIGRATIONS = {
                   "campaign_filter": "TEXT DEFAULT ''", "campaign_list": "TEXT DEFAULT '[]'",
                   "fb_page_id": "TEXT DEFAULT ''", "ig_account_id": "TEXT DEFAULT ''"},
     "uploads": {"source": "TEXT DEFAULT 'upload'"},
+    "changes": {"applied_by": "TEXT DEFAULT ''", "undone_by": "TEXT DEFAULT ''"},
 }
 
 

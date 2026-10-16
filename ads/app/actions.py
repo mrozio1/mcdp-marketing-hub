@@ -493,7 +493,7 @@ def _undo_meta(ch):
             pass
 
 
-def apply_change(ch):
+def apply_change(ch, by=""):
     """Returns (ok, message)."""
     if ch["status"] not in ("proposed", "failed"):
         return False, "That change was already handled."
@@ -505,11 +505,11 @@ def apply_change(ch):
     except cx.ConnectorError as e:
         db.update_change(ch["id"], status="failed", error=str(e))
         return False, str(e)
-    db.update_change(ch["id"], status="applied", result=result, error="", applied_at=db.now())
+    db.update_change(ch["id"], status="applied", result=result, error="", applied_at=db.now(), applied_by=by)
     return True, ""
 
 
-def undo_change(ch):
+def undo_change(ch, by=""):
     if ch["status"] != "applied":
         return False, "Only applied changes can be undone."
     try:
@@ -517,5 +517,5 @@ def undo_change(ch):
     except (ActionError, cx.ConnectorError) as e:
         db.update_change(ch["id"], error=str(e))
         return False, str(e)
-    db.update_change(ch["id"], status="undone", error="", undone_at=db.now())
+    db.update_change(ch["id"], status="undone", error="", undone_at=db.now(), undone_by=by)
     return True, ""
