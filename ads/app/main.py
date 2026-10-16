@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, organic, places, scope, sync
+from . import actions, ai, db, emailfmt, organic, places, referrals, scope, sync
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -68,9 +68,11 @@ def _startup():
     db.init()
     places.init()
     places.purge_old()
+    referrals.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
         places.start_scheduler()
+        referrals.start_scheduler()
 
 
 def authed(request: Request):
@@ -840,7 +842,8 @@ def market_map(request: Request):
                 radius=places.radius(), brands=db.get_setting("map_brand_terms") or "",
                 max_requests=places.max_requests(), per_office=places.per_office(), layers=places.LAYERS,
                 last=db.get_setting("map_last_refresh"), prev=db.get_setting("map_prev_refresh"),
-                preview=_import_preview())
+                preview=_import_preview(), ref_status=referrals.status(),
+                ref_last=db.get_setting("ref_last_refresh"))
 
 
 @app.get("/map/data.json")
@@ -999,3 +1002,59 @@ def market_map_import_cancel(request: Request):
         return r
     db.set_setting("map_import_preview", None)
     return _map_back("#offices")
+
+
+# ---------- referral list (NPI Registry): view, omit / star / note, export ----------
+def _office_param(office):
+    return int(office) if str(office).isdigit() else None
+
+
+@app.get("/map/referrals.json")
+def referral_list(request: Request, office: str = ""):
+    if not authed(request):
+        return Response(status_code=401)
+    keep = ("key", "name", "dentists", "specialties", "address", "city", "state", "zip", "phone", "lat", "lng", "geo",
+            "has_ortho", "place_id", "omitted", "starred", "note", "office_id", "office", "miles", "maps_url")
+    return {"radius": places.radius(), "status": referrals.status(),
+            "rows": [{k: r[k] for k in keep} for r in referrals.listing(_office_param(office))]}
+
+
+@app.post("/map/referrals/mark")
+async def referral_mark(request: Request):
+    if not authed(request):
+        return Response(status_code=401)
+    try:
+        body = await request.json()
+    except ValueError:
+        return Response(status_code=400)
+    ok = referrals.mark(str(body.get("key", ""))[:32], omitted=body.get("omitted"), starred=body.get("starred"),
+                        note=body.get("note") if isinstance(body.get("note"), str) else None)
+    return {"ok": ok}
+
+
+@app.post("/map/referrals/refresh")
+def referral_refresh(request: Request):
+    if (r := guard(request)):
+        return r
+    if referrals.status().get("busy"):
+        flash(request, "The referral list is already being updated. Reload in a few minutes.", "error")
+    elif not [o for o in places.offices() if o["lat"] is not None]:
+        flash(request, "Add our offices first, so the list knows where to look.", "error")
+    else:
+        referrals.refresh_in_background()
+        flash(request, "Building the referral list from the NPI Registry. This takes a few minutes; reload to see "
+                       "progress.")
+    return _map_back("#referrals")
+
+
+@app.get("/map/referrals.xlsx")
+def referral_export(request: Request, office: str = "", starred: str = ""):
+    if (r := guard(request)):
+        return r
+    oid = _office_param(office)
+    data, n = referrals.export_xlsx(oid, starred_only=starred == "1")
+    label = next((o["label"] for o in places.offices() if o["id"] == oid), "all offices")
+    from datetime import date as _date
+    fname = re.sub(r"[^A-Za-z0-9]+", "-", f"Referral practices {label} {_date.today()}").strip("-")
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.xlsx"'})

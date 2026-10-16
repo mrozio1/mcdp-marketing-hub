@@ -402,3 +402,28 @@ tr.muted td { color: var(--ink-soft); }
 .import-preview fieldset { border: 0; padding: 0; margin: 0 0 0.75rem; display: grid; gap: 0.25rem; }
 .import-preview legend { margin-bottom: 0.3rem; }
 .import-preview input[type=checkbox] { width: 1rem; height: 1rem; min-height: 0; padding: 0; margin: 0 0.4rem 0 0; vertical-align: -2px; accent-color: var(--teal); }
+
+/* ---- referral list ---- */
+.dot-npi, .pin-npi { background: #6B4FA0; border-radius: 3px; width: 10px; height: 10px; }
+.pin-star { box-shadow: 0 0 0 2px #E0A100; width: 13px; height: 13px; }
+.map-layers label.reflist-toggle { margin-top: 0.35rem; padding-top: 0.45rem; border-top: 1px solid var(--line); font-weight: 600; }
+.ref-controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: flex-end; margin: 0.75rem 0; }
+.ref-controls label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.ref-controls label.check { display: flex; align-items: center; gap: 0.4rem; }
+.ref-controls select, .ref-controls input[type=search] { min-width: 16rem; }
+.ref-controls input[type=checkbox], .ref-table input[type=checkbox] { width: 1rem; height: 1rem; min-height: 0; padding: 0; margin: 0; accent-color: var(--teal); }
+.ref-summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+.ref-summary p { margin: 0; }
+.ref-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.ref-table th { text-align: left; font-size: 0.8rem; color: var(--ink-soft); font-weight: 600; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); }
+.ref-table td { padding: 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ref-table .ref-inc { text-align: center; width: 4.5rem; }
+.ref-sub { display: block; }
+.ref-omitted td { opacity: 0.5; }
+.ref-omitted td.ref-inc { opacity: 1; }
+.ref-star { background: none; border: 0; font-size: 1.25rem; line-height: 1; cursor: pointer; color: #B9C7CA; padding: 0 0.15rem; }
+.ref-star.on { color: #E0A100; }
+.ref-note { width: 100%; min-width: 12rem; font: inherit; font-size: 0.85rem; padding: 0.3rem 0.4rem; resize: vertical; border: 1px solid var(--line); border-radius: var(--radius-s); }
+.ref-note.saved { border-color: var(--green); }
+.ref-links { white-space: nowrap; }
+#ref-more { margin-top: 0.75rem; }
