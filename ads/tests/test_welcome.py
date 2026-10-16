@@ -8,6 +8,8 @@ import pytest
 
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
+    for k in [k for k in os.environ if k.startswith(("META_", "GOOGLE_"))]:   # other test files set these
+        os.environ.pop(k)
     os.environ.update({"ADS_DB": str(tmp_path_factory.mktemp("db") / "ads.db"), "ADS_PASSWORD": "pw",
                        "ADS_DISABLE_SCHEDULER": "1"})
     from app import connectors, db, places, referrals
