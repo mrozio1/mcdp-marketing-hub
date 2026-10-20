@@ -288,3 +288,23 @@ def test_several_locations_merge_into_one_practice(hub):
     c.post(f"/p/{pid}/accounts", data={"meta_account_id": "", "google_customer_id": "", "social": "1"})
     p = db.practice(pid)
     assert db.social_ids(p, "fb") == [] and db.social_ids(p, "ig") == []
+
+
+def test_instagram_connected_with_an_instagram_login_is_read_from_instagram(monkeypatch):
+    """Social can connect Instagram directly (no Facebook Page). Those accounts must show up and be read
+    from graph.instagram.com with their own token."""
+    from app import connectors as cx, postiz
+    ch = postiz.from_rows([("instagram-standalone", "1789", "Hartland Orthodontics", "IGAAtoken"),
+                           ("instagram", "1790", "Heights Ortho", "EAApage___EAAuser"),
+                           ("instagram-standalone", "1790", "Heights Ortho (direct)", "IGAAother"),
+                           ("x-twitter", "55", "Nope", "tok")])
+    assert ch["instagram"]["1789"] == {"name": "Hartland Orthodontics", "token": "IGAAtoken"}
+    assert ch["instagram"]["1790"]["token"] == "EAApage"          # connected both ways: the Page way wins
+    assert "55" not in ch["instagram"] and "55" not in ch["facebook"]
+    seen = []
+    monkeypatch.setattr(cx, "_http", lambda url, **kw: seen.append(url) or {"data": []})
+    cx._meta_get("1789/media", {"fields": "id"}, token="IGAAtoken")
+    cx._meta_get("1790/media", {"fields": "id"}, token="EAApage")
+    cx._meta_post("123/replies", {"message": "Thanks!"}, token="IGAAtoken")
+    assert seen[0].startswith("https://graph.instagram.com/") and seen[1].startswith(cx.META_BASE + "/")
+    assert seen[2].startswith("https://graph.instagram.com/")

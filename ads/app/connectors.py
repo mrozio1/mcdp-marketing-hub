@@ -18,6 +18,13 @@ from datetime import date
 
 META_VERSION = os.environ.get("META_API_VERSION", "v25.0")
 META_BASE = os.environ.get("META_GRAPH_BASE", "https://graph.facebook.com").rstrip("/")
+# Instagram accounts connected in Social with an Instagram login (not through a Facebook Page) have
+# Instagram tokens ("IG…"), which only work on Instagram's own Graph API host.
+IG_BASE = os.environ.get("IG_GRAPH_BASE", "https://graph.instagram.com").rstrip("/")
+
+
+def _base(token):
+    return IG_BASE if (token or "").startswith("IG") else META_BASE
 GOOGLE_VERSION = os.environ.get("GOOGLE_ADS_API_VERSION", "v25")
 GOOGLE_BASE = os.environ.get("GOOGLE_ADS_BASE", "https://googleads.googleapis.com").rstrip("/")
 GOOGLE_TOKEN_URL = os.environ.get("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
@@ -120,7 +127,7 @@ def _meta_get(path, params, token=None):
     if not token:
         raise ConnectorError("No Meta token saved yet.")
     q = urllib.parse.urlencode({**params, "access_token": token})
-    return _http(f"{META_BASE}/{META_VERSION}/{path}?{q}")
+    return _http(f"{_base(token)}/{META_VERSION}/{path}?{q}")
 
 
 def _meta_paged(path, params, limit_pages=50, token=None, stop=None):
@@ -506,7 +513,7 @@ def instagram_comments(ig_id, username, tokens, since: date):
 
 def _meta_post(path, params, token):
     body = urllib.parse.urlencode({**params, "access_token": token}).encode()
-    return _http(f"{META_BASE}/{META_VERSION}/{path}", data=body, method="POST",
+    return _http(f"{_base(token)}/{META_VERSION}/{path}", data=body, method="POST",
                  headers={"Content-Type": "application/x-www-form-urlencoded"})
 
 

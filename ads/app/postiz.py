@@ -26,13 +26,23 @@ def channels():
             rows = c.execute(
                 'SELECT "providerIdentifier", "internalId", COALESCE("customName", "name"), "token" '
                 'FROM "Integration" WHERE "deletedAt" IS NULL AND "disabled" = false '
-                "AND \"providerIdentifier\" IN ('facebook', 'instagram')").fetchall()
+                "AND \"providerIdentifier\" IN ('facebook', 'instagram', 'instagram-standalone')").fetchall()
     except Exception:
         return {"facebook": {}, "instagram": {}}
+    return from_rows(rows)
+
+
+def from_rows(rows):
+    """Integration rows -> channels. Instagram comes in two kinds:
+    'instagram' (connected through a Facebook Page; token "pageToken___userToken", the Page token reads it)
+    and 'instagram-standalone' (connected with an Instagram login; an Instagram token for graph.instagram.com)."""
     out = {"facebook": {}, "instagram": {}}
     for provider, internal_id, name, token in rows:
-        # Instagram (via Facebook login) stores "pageToken___userToken"; the Page token is what reads insights.
         tok = (token or "").split("___")[0]
-        if internal_id and tok:
-            out[provider][str(internal_id)] = {"name": name or str(internal_id), "token": tok}
+        kind = "instagram" if provider.startswith("instagram") else provider
+        if internal_id and tok and kind in out:
+            prev = out[kind].get(str(internal_id))
+            if prev and provider == "instagram-standalone":
+                continue                  # the same account connected both ways: the Facebook-Page one reads more
+            out[kind][str(internal_id)] = {"name": name or str(internal_id), "token": tok}
     return out
