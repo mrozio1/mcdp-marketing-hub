@@ -54,7 +54,7 @@ def refresh_account_lists():
     if cx.meta_configured():
         try:
             pages, igs = cx.meta_pages()
-            strip = lambda items: [{**{k: v for k, v in it.items() if k != "token"}, "access": bool(it.get("token"))}
+            strip = lambda items: [{**{k: v for k, v in it.items() if k not in ("token", "tokens")}, "access": bool(it.get("token"))}
                                    for it in items]                     # tokens are never stored
             db.set_setting("fb_pages", json.dumps(strip(pages)))
             db.set_setting("ig_accounts", json.dumps(strip(igs)))

@@ -285,7 +285,7 @@ def meta_pages():
     def add(rows, via):
         for r in rows:
             pg = seen.setdefault(r["id"], {"id": r["id"], "name": r.get("name") or r["id"], "token": None,
-                                           "via": via, "ig": None})
+                                           "via": via, "ig": None, "pz": None})
             if r.get("access_token") and not pg["token"]:
                 pg["token"], pg["via"] = r["access_token"], via
             if r.get("instagram_business_account") and not pg["ig"]:
@@ -300,12 +300,15 @@ def meta_pages():
                 continue
     pz = postiz.channels()
     for pid, ch in pz["facebook"].items():
-        pg = seen.setdefault(pid, {"id": pid, "name": ch["name"], "token": None, "via": "Postiz", "ig": None})
+        pg = seen.setdefault(pid, {"id": pid, "name": ch["name"], "token": None, "via": "Postiz", "ig": None, "pz": None})
+        pg["pz"] = ch["token"]
         if not pg["token"]:
             pg["token"], pg["via"] = ch["token"], "Postiz"
     pages, igs, ig_seen = [], [], set()
     for pg in seen.values():
-        pages.append({"id": pg["id"], "name": pg["name"], "token": pg["token"], "via": pg["via"]})
+        # "tokens": every way in, best first (used for comments, where one may have permissions the other lacks)
+        pages.append({"id": pg["id"], "name": pg["name"], "token": pg["token"], "via": pg["via"],
+                      "tokens": [t for t in dict.fromkeys([pg["token"], pg["pz"]]) if t]})
         ig = pg["ig"]
         if ig and ig.get("id"):
             # Postiz's *Facebook* connection has no Instagram permissions, so for Instagram use the
@@ -315,11 +318,13 @@ def meta_pages():
             tok = own or pz_ig
             igs.append({"id": ig["id"], "name": "@" + ig["username"] if ig.get("username") else ig.get("name") or ig["id"],
                         "page_id": pg["id"], "token": tok,
-                        "via": pg["via"] if own else ("Postiz" if pz_ig else pg["via"])})
+                        "via": pg["via"] if own else ("Postiz" if pz_ig else pg["via"]),
+                        "tokens": [t for t in dict.fromkeys([own, pz_ig]) if t]})
             ig_seen.add(ig["id"])
     for iid, ch in pz["instagram"].items():
         if iid not in ig_seen:
-            igs.append({"id": iid, "name": ch["name"], "page_id": None, "token": ch["token"], "via": "Postiz"})
+            igs.append({"id": iid, "name": ch["name"], "page_id": None, "token": ch["token"], "via": "Postiz",
+                        "tokens": [ch["token"]] if ch["token"] else []})
     pages.sort(key=lambda x: x["name"].lower())
     igs.sort(key=lambda x: x["name"].lower())
     return pages, igs
@@ -414,6 +419,232 @@ def instagram_posts(ig_id, token, since: date):
                     "interactions": inter})
     note = f"stats not available yet for {failed} post{'s' if failed != 1 else ''} ({last_err[:160]})" if failed else ""
     return out, note
+
+
+# ------------------------------------------------------------------ comments (Reviews & comments inbox)
+# Reading comments needs pages_read_engagement + pages_read_user_content (Facebook) or
+# instagram_manage_comments (Instagram); replying, liking and hiding need pages_manage_engagement /
+# instagram_manage_comments. Each Page can have two ways in (system user, Social), so callers pass a
+# list of tokens and the first that works is used.
+FB_COMMENT_FIELDS = "id,message,created_time,permalink_url,is_hidden,from{id,name},comments.limit(10){from{id}}"
+FB_COMMENT_FIELDS_NO_FROM = "id,message,created_time,permalink_url,is_hidden,comments.limit(10){from{id}}"
+IG_COMMENT_FIELDS = "id,text,timestamp,username,hidden,replies.limit(10){username}"
+
+
+def _first_working(tokens, fn):
+    """Try fn(token) with each token; return (result, token). Raises the last error if none works."""
+    last = ConnectorError("No access to this account yet.")
+    for t in [t for t in tokens if t]:
+        try:
+            return fn(t), t
+        except ConnectorError as e:
+            last = e
+    raise last
+
+
+def facebook_comments(page_id, tokens, since: date):
+    """Top-level comments on the Page's recent posts (newest 25 per post).
+    Returns (comments, token_used). Each comment: id, post_id, post_text, post_link, author, text,
+    created, link, hidden, page_replied."""
+    from datetime import datetime, timezone
+    since_ts = int(datetime(since.year, since.month, since.day, tzinfo=timezone.utc).timestamp())
+
+    def fetch(token):
+        last = None
+        for cf in (FB_COMMENT_FIELDS, FB_COMMENT_FIELDS_NO_FROM):   # "from" needs pages_read_user_content
+            fields = (f"id,message,created_time,permalink_url,"
+                      f"comments.filter(toplevel).order(reverse_chronological).limit(25){{{cf}}}")
+            try:
+                return _meta_paged(f"{page_id}/published_posts", {"fields": fields, "since": since_ts, "limit": 25},
+                                   limit_pages=4, token=token)
+            except ConnectorError as e:
+                last = e
+        raise last
+
+    posts, token = _first_working(tokens, fetch)
+    out = []
+    for p in posts:
+        for c in (p.get("comments") or {}).get("data", []):
+            who = c.get("from") or {}
+            if who.get("id") == page_id:
+                continue                         # the Page's own comment
+            replies = (c.get("comments") or {}).get("data", [])
+            out.append({"id": c["id"], "post_id": p["id"], "post_text": (p.get("message") or "")[:300],
+                        "post_link": p.get("permalink_url") or "", "author": who.get("name") or "Facebook user",
+                        "text": c.get("message") or "", "created": _ts(c["created_time"]).isoformat(timespec="seconds"),
+                        "link": c.get("permalink_url") or p.get("permalink_url") or "",
+                        "hidden": bool(c.get("is_hidden")),
+                        "page_replied": any((r.get("from") or {}).get("id") == page_id for r in replies)})
+    return out, token
+
+
+def instagram_comments(ig_id, username, tokens, since: date):
+    """Comments on the account's recent posts. username: the account's own @handle (to spot its replies)."""
+    own = (username or "").lstrip("@").lower()
+
+    def fetch(token):
+        return _meta_paged(f"{ig_id}/media", {
+            "fields": f"id,caption,permalink,timestamp,comments.limit(25){{{IG_COMMENT_FIELDS}}}", "limit": 25},
+            limit_pages=3, token=token, stop=lambda r: _ts(r["timestamp"]).date() < since)
+
+    media, token = _first_working(tokens, fetch)
+    out = []
+    for m in media:
+        if _ts(m["timestamp"]).date() < since:
+            continue
+        for c in (m.get("comments") or {}).get("data", []):
+            if own and (c.get("username") or "").lower() == own:
+                continue
+            replies = (c.get("replies") or {}).get("data", [])
+            out.append({"id": c["id"], "post_id": m["id"], "post_text": (m.get("caption") or "")[:300],
+                        "post_link": m.get("permalink") or "", "author": "@" + (c.get("username") or "instagram user"),
+                        "text": c.get("text") or "", "created": _ts(c["timestamp"]).isoformat(timespec="seconds"),
+                        "link": m.get("permalink") or "", "hidden": bool(c.get("hidden")),
+                        "page_replied": bool(own) and any((r.get("username") or "").lower() == own for r in replies)})
+    return out, token
+
+
+def _meta_post(path, params, token):
+    body = urllib.parse.urlencode({**params, "access_token": token}).encode()
+    return _http(f"{META_BASE}/{META_VERSION}/{path}", data=body, method="POST",
+                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+
+
+def _comment_hint(msg, network):
+    low = msg.lower()
+    if "permission" in low or "(#200)" in low or "(#10)" in low or "(#3)" in low:
+        need = "pages_manage_engagement" if network == "facebook" else "instagram_manage_comments"
+        return (f"Meta refused: this account's access can read but not answer comments. Give the MCDP_Ads_Reader "
+                f"system user the {need} permission (or reconnect the account in Social), then try again. ({msg})")
+    return msg
+
+
+def comment_action(network, comment_id, action, tokens, message=""):
+    """Reply to, like or hide one comment. network: facebook | instagram."""
+    if action == "reply":
+        edge, params = (f"{comment_id}/comments" if network == "facebook" else f"{comment_id}/replies"), {"message": message}
+    elif action == "like" and network == "facebook":
+        edge, params = f"{comment_id}/likes", {}
+    elif action == "hide":
+        edge, params = comment_id, ({"is_hidden": "true"} if network == "facebook" else {"hide": "true"})
+    else:
+        raise ConnectorError("That action isn't available for this comment.")
+    try:
+        res, _ = _first_working(tokens, lambda t: _meta_post(edge, params, t))
+        return res
+    except ConnectorError as e:
+        raise ConnectorError(_comment_hint(str(e), network)) from None
+
+
+# ------------------------------------------------------------------ Google Business Profile (reviews)
+# Reviews and owner replies. Needs Google's approval for the Business Profile APIs and a person's
+# sign-in (service accounts can't manage Business Profiles): an OAuth client in the Cloud project,
+# signed in once by someone who manages the practices' profiles.
+GBP_SCOPE = "https://www.googleapis.com/auth/business.manage"
+GBP_ACCOUNTS = os.environ.get("GBP_ACCOUNTS_BASE", "https://mybusinessaccountmanagement.googleapis.com").rstrip("/")
+GBP_INFO = os.environ.get("GBP_INFO_BASE", "https://mybusinessbusinessinformation.googleapis.com").rstrip("/")
+GBP_V4 = os.environ.get("GBP_V4_BASE", "https://mybusiness.googleapis.com").rstrip("/")
+STARS = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5}
+
+
+def gbp_client():
+    return setting("GBP_CLIENT_ID"), setting("GBP_CLIENT_SECRET")
+
+
+def gbp_auth_url(redirect_uri, state):
+    cid, _ = gbp_client()
+    return GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode({
+        "client_id": cid, "redirect_uri": redirect_uri, "response_type": "code", "scope": GBP_SCOPE,
+        "access_type": "offline", "prompt": "consent", "state": state})
+
+
+def gbp_exchange_code(code, redirect_uri):
+    cid, secret = gbp_client()
+    data = urllib.parse.urlencode({"code": code, "client_id": cid, "client_secret": secret,
+                                   "redirect_uri": redirect_uri, "grant_type": "authorization_code"}).encode()
+    tok = _http(GOOGLE_TOKEN_URL, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    if not tok.get("refresh_token"):
+        raise ConnectorError("Google didn't return a long-term sign-in. Remove the app's access at "
+                             "myaccount.google.com/permissions and connect again.")
+    return tok["refresh_token"]
+
+
+class GBPClient:
+    def __init__(self, refresh_token):
+        cid, secret = gbp_client()
+        if not (cid and secret and refresh_token):
+            raise ConnectorError("Google Business Profile isn't connected yet.")
+        data = urllib.parse.urlencode({"refresh_token": refresh_token, "client_id": cid, "client_secret": secret,
+                                       "grant_type": "refresh_token"}).encode()
+        self.token = _http(GOOGLE_TOKEN_URL, data=data,
+                           headers={"Content-Type": "application/x-www-form-urlencoded"})["access_token"]
+
+    def _get(self, url, params=None):
+        q = ("?" + urllib.parse.urlencode(params)) if params else ""
+        try:
+            return _http(url + q, headers={"Authorization": f"Bearer {self.token}"})
+        except ConnectorError as e:
+            raise ConnectorError(self._hint(str(e))) from None
+
+    @staticmethod
+    def _hint(msg):
+        low = msg.lower()
+        if "has not been used" in low or "is disabled" in low or "service_disabled" in low:
+            return ("Google hasn't switched on the Business Profile APIs for this Cloud project yet. Apply for "
+                    "access (Google's Business Profile API access form), then enable the 'My Business Account "
+                    "Management', 'My Business Business Information' and 'Google My Business' APIs. (" + msg + ")")
+        return msg
+
+    def locations(self):
+        """Every location the signed-in person manages: [{'name','title','address','account'}]."""
+        out = []
+        accounts = self._get(f"{GBP_ACCOUNTS}/v1/accounts", {"pageSize": 20}).get("accounts", [])
+        for a in accounts:
+            token = None
+            for _ in range(20):
+                params = {"readMask": "name,title,storefrontAddress", "pageSize": 100}
+                if token:
+                    params["pageToken"] = token
+                j = self._get(f"{GBP_INFO}/v1/{a['name']}/locations", params)
+                for loc in j.get("locations", []):
+                    addr = loc.get("storefrontAddress") or {}
+                    line = ", ".join(x for x in [" ".join(addr.get("addressLines") or []), addr.get("locality", ""),
+                                                 addr.get("administrativeArea", "")] if x)
+                    out.append({"name": f"{a['name']}/{loc['name']}", "title": loc.get("title") or loc["name"],
+                                "address": line, "account": a.get("accountName") or a["name"]})
+                token = j.get("nextPageToken")
+                if not token:
+                    break
+        return out
+
+    def reviews(self, location, all_pages=False):
+        """(reviews, average rating, total count). Newest-updated first; one page unless all_pages."""
+        out, token, avg, total = [], None, None, None
+        for _ in range(200 if all_pages else 1):
+            params = {"pageSize": 50, "orderBy": "updateTime desc"}
+            if token:
+                params["pageToken"] = token
+            j = self._get(f"{GBP_V4}/v4/{location}/reviews", params)
+            avg = j.get("averageRating", avg)
+            total = j.get("totalReviewCount", total)
+            for r in j.get("reviews", []):
+                rev = r.get("reviewer") or {}
+                reply = r.get("reviewReply") or {}
+                out.append({"id": r["name"], "author": "A Google user" if rev.get("isAnonymous") else (rev.get("displayName") or "A Google user"),
+                            "stars": STARS.get(r.get("starRating"), 0), "text": r.get("comment") or "",
+                            "created": r.get("createTime", "")[:19], "updated": r.get("updateTime", "")[:19],
+                            "reply": reply.get("comment") or "", "reply_at": (reply.get("updateTime") or "")[:19]})
+            token = j.get("nextPageToken")
+            if not token:
+                break
+        return out, avg, total
+
+    def reply(self, review_name, comment):
+        try:
+            return _http(f"{GBP_V4}/v4/{review_name}/reply", data={"comment": comment}, method="PUT",
+                         headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
+        except ConnectorError as e:
+            raise ConnectorError(self._hint(str(e))) from None
 
 
 # ------------------------------------------------------------------ Google

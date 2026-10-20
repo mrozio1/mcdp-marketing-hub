@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+{% block title %}Reviews & comments{% endblock %}
+{% block content %}
+{% set base_q = {'practice': qs.practice} %}
+<div class="title-row rv-head">
+  <div>
+    <h1>{{ practice.name if practice else 'Reviews & comments' }}</h1>
+    <p class="lede rv-lede">Google reviews and Facebook and Instagram comments in one place, so nothing goes unanswered.</p>
+  </div>
+  <form method="get" action="/reviews" class="rv-scope">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <label>Showing
+      <select name="practice" onchange="this.form.submit()">
+        <option value="">All practices</option>
+        {% for p in plist %}<option value="{{ p.id }}" {% if pid == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+  </form>
+</div>
+
+<nav class="rv-tabs" aria-label="Reviews sections">
+  <a href="/reviews?{{ dict(base_q, tab='inbox')|urlencode }}" {% if tab == 'inbox' %}aria-current="page"{% endif %}>Inbox ({{ stats.open }})</a>
+  <a href="/reviews?{{ dict(base_q, tab='score')|urlencode }}" {% if tab == 'score' %}aria-current="page"{% endif %}>Google scoreboard</a>
+</nav>
+
+{% if tab == 'inbox' %}
+{# ================================================================ INBOX #}
+<dl class="glance rv-glance">
+  <div><dt>Needs a reply</dt><dd>{{ stats.open }}</dd>
+    <p class="small muted">{{ stats.by_source.google }} Google · {{ stats.by_source.facebook }} Facebook · {{ stats.by_source.instagram }} Instagram</p></div>
+  <div><dt>Oldest waiting</dt><dd>{{ duration(stats.oldest) if stats.open else '—' }}</dd>
+    <p class="small {{ 'rv-warn' if stats.overdue else 'muted' }}">{% if stats.overdue %}{{ stats.overdue }} overdue (over {{ overdue }}h){% else %}Nothing overdue{% endif %}</p></div>
+  <div><dt>Handled this week</dt><dd>{{ stats.handled }}</dd>
+    <p class="small muted">{{ stats.replies }} repl{{ 'y' if stats.replies == 1 else 'ies' }} · {{ stats.likes }} like{{ '' if stats.likes == 1 else 's' }} · {{ stats.hidden }} hidden{% if stats.marked %} · {{ stats.marked }} no reply needed{% endif %}</p></div>
+  <div><dt>Typical response time</dt><dd>{{ duration(stats.median_hours) }}</dd>
+    <p class="small muted">Replies in the last 30 days</p></div>
+</dl>
+
+<div class="rv-controls">
+  <nav class="view-switch rv-sources" aria-label="Source">
+    {% for k, l in [('all', 'Everything')] + sources|list %}
+    <a href="/reviews?{{ dict(qs, src=k)|urlencode }}" {% if src == k %}class="on" aria-current="page"{% endif %}>{{ l }} <span class="rv-count">{{ counts[k] }}</span></a>
+    {% endfor %}
+  </nav>
+  <nav class="seg" aria-label="Status">
+    <a href="/reviews?{{ dict(qs, status='open')|urlencode }}" {% if status == 'open' %}aria-current="page"{% endif %}>Needs reply</a>
+    <a href="/reviews?{{ dict(qs, status='done')|urlencode }}" {% if status == 'done' %}aria-current="page"{% endif %}>Done</a>
+  </nav>
+</div>
+<div class="small muted rv-checked">
+  {% if inbox_status.at %}Last checked {{ inbox_status.at[11:16] }} on {{ inbox_status.at[:10] }}{% if inbox_status.error_count %} · <span class="rv-warn">{{ inbox_status.error_count }} account{{ '' if inbox_status.error_count == 1 else 's' }} couldn't be read</span>{% endif %} · checks every {{ every }} minutes{% else %}Not checked yet{% endif %}
+  {% if can_edit %}<form method="post" action="/reviews/sync" class="inline-form" data-busy="Checking…"><input type="hidden" name="back" value="/reviews?{{ qs|urlencode }}"><button class="linklike small" type="submit">Check now</button></form>{% endif %}
+</div>
+
+{% if not items %}
+<p class="empty">{% if status == 'open' %}All caught up — nothing waiting here.{% else %}Nothing handled here yet.{% endif %}
+  {% if not inbox_status.at and status == 'open' %}<br><span class="small">Once Google reviews or Facebook and Instagram are set up (below), new reviews and comments land here.</span>{% endif %}</p>
+{% else %}
+<div class="rv-inbox">
+  <div class="rv-list">
+    <p class="small muted">{{ 'Unhappy first, then oldest first, so nothing slips' if status == 'open' else 'Most recently handled first' }}</p>
+    <ul>
+      {% for it in items %}
+      <li><a class="rv-item{% if cur and it.id == cur.id %} on{% endif %}" href="/reviews?{{ dict(qs, item=it.id)|urlencode }}#detail" {% if cur and it.id == cur.id %}aria-current="true"{% endif %}>
+        <span class="rv-item-top">
+          <span class="rv-tags"><span class="tag rv-src-{{ it.source }}">{{ it.source_label }}</span>
+            {% if it.stars %}<span class="rv-stars{% if it.stars <= 2 %} low{% endif %}" aria-label="{{ it.stars }} of 5 stars">{{ '★' * it.stars }}{{ '☆' * (5 - it.stars) }}</span>{% endif %}
+            {% if it.flag %}<span class="tag rv-flag rv-flag-{{ it.flag }}">{{ flag_text[it.flag] }}</span>{% endif %}</span>
+          <span class="muted">{{ it.ago }}</span>
+        </span>
+        <span class="rv-who"><strong>{{ it.author }}</strong> · <span class="muted">{{ it.account_name }}</span></span>
+        <span class="rv-snippet">{{ it.text|truncate(110) if it.text else '(rating only, no text)' }}</span>
+        {% if it.status == 'done' %}<span class="small rv-handled">{{ {'replied': 'Replied', 'liked': 'Liked', 'hidden': 'Hidden', 'done': 'Marked done', 'outside': ''}[it.outcome] }}{% if it.outcome != 'outside' %} by {% endif %}{{ it.handled_by }} · {{ it.handled_ago }}</span>{% endif %}
+      </a></li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  {% if cur %}
+  <section class="rv-detail panel" id="detail" aria-label="Selected item">
+    <p class="rv-detail-top small muted"><span><span class="tag rv-src-{{ cur.source }}">{{ cur.source_label }}</span> {{ cur.account_name }}{% if cur.practice_name != cur.account_name %} · {{ cur.practice_name }}{% endif %}</span><span>{{ cur.ago }}</span></p>
+    {% if cur.source != 'google' %}
+    <div class="rv-post">
+      <span class="small muted">Comment on our post</span>
+      <span>{{ cur.post_text|truncate(160) if cur.post_text else '(post without text)' }}</span>
+      {% if cur.link %}<a class="small" href="{{ cur.link }}" target="_blank" rel="noopener">Open on {{ 'Facebook' if cur.source == 'facebook' else 'Instagram' }}</a>{% endif %}
+    </div>
+    {% endif %}
+    <p class="rv-author"><strong>{{ cur.author }}</strong>{% if cur.stars %} <span class="rv-stars{% if cur.stars <= 2 %} low{% endif %}" aria-label="{{ cur.stars }} of 5 stars">{{ '★' * cur.stars }}{{ '☆' * (5 - cur.stars) }}</span>{% endif %}</p>
+    <p class="rv-text">{{ cur.text or '(They left a rating without words.)' }}</p>
+
+    {% set back = '/reviews?' ~ (qs|urlencode) %}
+    {% if cur.status == 'done' %}
+      <p class="rv-done-note">{% if cur.outcome == 'outside' %}{{ cur.handled_by }}{% else %}{{ {'replied': 'Replied', 'liked': 'Liked', 'hidden': 'Hidden', 'done': 'Marked done'}[cur.outcome] }} by {{ cur.handled_by }}{% endif %} · {{ cur.handled_ago }}</p>
+      {% if cur.reply %}<blockquote class="rv-reply">{{ cur.reply }}</blockquote>{% endif %}
+      {% if can_edit %}<form method="post" action="/reviews/items/{{ cur.id }}/reopen"><input type="hidden" name="back" value="{{ back }}"><button class="btn btn-quiet" type="submit">Move back to Needs reply</button></form>{% endif %}
+    {% elif not can_edit %}
+      <p class="small muted">You have view-only access. An editor can reply to this.</p>
+    {% elif cur.flag == 'spam' %}
+      <p class="rv-spam-note">This looks like spam. Hiding it removes it from public view; the person who wrote it and their friends can still see it.</p>
+      <div class="rv-actions">
+        <form method="post" action="/reviews/items/{{ cur.id }}/hide"><input type="hidden" name="back" value="{{ back }}"><button class="btn" type="submit">Hide comment</button></form>
+        <form method="post" action="/reviews/items/{{ cur.id }}/done"><input type="hidden" name="back" value="{{ back }}"><button class="btn btn-quiet" type="submit">Not spam — done</button></form>
+      </div>
+    {% else %}
+      {% if cur.no_reply_hint %}<p class="rv-hint small">Tagging a friend usually doesn't need a reply.{% if cur.source == 'facebook' %} A like is enough.{% endif %}</p>{% endif %}
+      <form method="post" action="/reviews/items/{{ cur.id }}/reply" class="stack rv-reply-form" data-busy="Working…">
+        <input type="hidden" name="back" value="{{ back }}">
+        <label for="reply-text">Reply <span class="small muted" id="draft-status">{% if not cur.draft and ai_on %}Writing a draft…{% endif %}</span></label>
+        <textarea id="reply-text" name="message" rows="5" maxlength="4000">{{ cur.draft }}</textarea>
+        <p class="rv-posts-as small"><span class="rv-m" aria-hidden="true">M</span><span>{{ cur.posts_as }}</span></p>
+        <p class="small muted">Drafts never confirm someone is a patient or mention treatment. Complaints get an offer to talk privately. Read it before posting.</p>
+        <div class="rv-actions">
+          <button class="btn" type="submit">Post reply</button>
+          {% if cur.source == 'facebook' %}<button class="btn btn-quiet" type="submit" formaction="/reviews/items/{{ cur.id }}/like" formnovalidate>Like only</button>{% endif %}
+          {% if ai_on %}<button class="btn btn-quiet" type="button" id="new-draft">New draft</button>{% endif %}
+          <button class="btn btn-quiet" type="submit" formaction="/reviews/items/{{ cur.id }}/done" formnovalidate>Done, no reply needed</button>
+          {% if cur.source != 'google' %}<button class="linklike small danger" type="submit" formaction="/reviews/items/{{ cur.id }}/hide" formnovalidate>Hide comment</button>{% endif %}
+        </div>
+      </form>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endif %}
+
+<p class="eyebrow">Inbox setup</p>
+<details class="drawer" id="google-setup">
+  <summary><span class="drawer-title">Google reviews</span><span class="drawer-hint">{% if gbp_on %}Connected · {{ locations|selectattr('practice_id')|list|length }} location{{ '' if (locations|selectattr('practice_id')|list|length) == 1 else 's' }} linked{% else %}Not connected yet{% endif %}</span></summary>
+  <div class="drawer-body">
+    {% if gbp_on %}
+      {% if locations %}
+      <form method="post" action="/reviews/locations" class="stack">
+        <p class="small muted">Each Google location's reviews count toward the practice next to it. Matches were suggested from the names.</p>
+        <div class="table-scroll"><table class="data"><thead><tr><th>Google location</th><th>Practice</th><th class="num">Rating</th></tr></thead><tbody>
+        {% for l in locations %}
+          <tr><td>{{ l.title }}<span class="small muted rv-sub">{{ l.address }}</span></td>
+            <td><select name="loc::{{ l.name }}" aria-label="Practice for {{ l.title }}" {% if not can_edit %}disabled{% endif %}><option value="">Not linked</option>
+              {% for p in plist %}<option value="{{ p.id }}" {% if l.practice_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></td>
+            <td class="num">{% if l.rating %}{{ '%.1f'|format(l.rating) }} <span class="muted">({{ l.total }})</span>{% else %}—{% endif %}</td></tr>
+        {% endfor %}
+        </tbody></table></div>
+        {% if can_edit %}<button class="btn btn-quiet" type="submit">Save links</button>{% endif %}
+      </form>
+      {% else %}<p class="muted">No locations yet.</p>{% endif %}
+      <div class="conn-actions">
+        {% if can_edit %}<form method="post" action="/reviews/locations/refresh" data-busy="Looking…"><button class="btn btn-quiet btn-small" type="submit">Look for new locations</button></form>{% endif %}
+        {% if is_admin %}<form method="post" action="/google/business/disconnect" data-confirm="Disconnect Google reviews? Reviews already pulled are kept."><button class="linklike small danger" type="submit">Disconnect</button></form>{% endif %}
+      </div>
+    {% elif is_admin %}
+      <ol class="rv-steps">
+        <li>Google must approve the Business Profile APIs for the Cloud project first: apply through Google's “Business Profile API access” form (approval usually takes a few days to a few weeks). Then, in the project, enable the <em>My Business Account Management</em>, <em>My Business Business Information</em> and <em>Google My Business</em> APIs.</li>
+        <li>In Google Cloud → APIs &amp; Services → Credentials, create an <em>OAuth client ID</em> (type: Web application) with this redirect URI:<br><code class="break-all">{{ gbp_redirect }}</code></li>
+        <li>Paste the client ID and secret below, then sign in with a Google account that manages the practices' Business Profiles.</li>
+      </ol>
+      <form method="post" action="/connections/gbp" class="stack narrow">
+        <label>Client ID<input name="client_id" autocomplete="off" placeholder="…apps.googleusercontent.com"></label>
+        <label>Client secret<input name="client_secret" type="password" autocomplete="off" placeholder="{{ 'Saved — paste again to replace' if gbp_client else '' }}"></label>
+        <button class="btn btn-quiet" type="submit">Save client</button>
+      </form>
+      {% if gbp_client %}<p><a class="btn" href="/google/business/connect">Sign in with Google</a></p>{% endif %}
+      <p class="small muted">Until Google approves, type each month's review counts on the Google scoreboard tab so the history starts now.</p>
+    {% else %}
+      <p class="muted">An admin can connect Google reviews here. Until then, monthly counts can be typed in on the Google scoreboard tab.</p>
+    {% endif %}
+  </div>
+</details>
+<details class="drawer" id="meta-setup">
+  <summary><span class="drawer-title">Facebook and Instagram comments</span><span class="drawer-hint">{% if meta_on and fb_linked %}Using the Pages and Instagram accounts linked to each practice{% else %}Not set up yet{% endif %}</span></summary>
+  <div class="drawer-body prose">
+    <p>Comments come from the Facebook Pages and Instagram accounts linked on each practice's page (Linked accounts), on posts from the last {{ 60 }} days.</p>
+    <p>Meta needs these permissions on the access the hub uses (the MCDP_Ads_Reader system user, or the account connected in Social):</p>
+    <ul>
+      <li>Reading: <code>pages_read_engagement</code> and <code>pages_read_user_content</code> (Facebook), <code>instagram_manage_comments</code> (Instagram).</li>
+      <li>Replying, liking and hiding: <code>pages_manage_engagement</code> (Facebook), <code>instagram_manage_comments</code> (Instagram).</li>
+    </ul>
+    <p class="small muted">While the MCDP Social app is in Development mode, Meta may leave out commenters' names (they show as “Facebook user”). Switching the app to Live can need Meta's app review.</p>
+  </div>
+</details>
+<details class="drawer" id="inbox-setup">
+  <summary><span class="drawer-title">Inbox settings</span><span class="drawer-hint">Overdue after {{ overdue }} hours · checks every {{ every }} minutes</span></summary>
+  <div class="drawer-body">
+    <form method="post" action="/reviews/settings" class="stack narrow">
+      <label>Mark as overdue after (hours)<input name="overdue" type="number" min="1" max="720" value="{{ overdue }}" {% if not can_edit %}disabled{% endif %}></label>
+      <label>Check for new reviews and comments every (minutes)<input name="every" type="number" min="10" max="1440" value="{{ every }}" {% if not can_edit %}disabled{% endif %}></label>
+      {% if can_edit %}<button class="btn btn-quiet" type="submit">Save</button>{% endif %}
+    </form>
+  </div>
+</details>
+
+{% else %}
+{# ================================================================ SCOREBOARD #}
+<dl class="glance rv-glance">
+  <div><dt>New reviews this month</dt><dd>{{ board.this if board.this is not none else '—' }} <span class="rv-of">of {{ board.this_goal }}</span></dd>
+    <p class="small muted">Last month: {{ board.last if board.last is not none else '—' }} of {{ board.last_goal }}</p></div>
+  {% if pid %}
+  <div><dt>Google rating</dt><dd>{{ '%.1f'|format(board.rating) if board.rating else '—' }}</dd>
+    <p class="small muted">{% if board.total %}{{ '{:,}'.format(board.total) }} reviews in total{% else %}Shows once Google is connected{% endif %}</p></div>
+  {% set r0 = rows[0] if rows else None %}
+  <div><dt>Last review</dt><dd class="rv-dd-small">{{ r0.last if r0 and r0.last else '—' }}</dd>
+    <p class="small {{ 'rv-warn' if r0 and r0.days is not none and r0.days > 30 else 'muted' }}">{% if r0 and r0.days is not none and r0.days > 30 %}Over 30 days — worth a call{% elif r0 and r0.last %}Recent{% else %}Shows once Google is connected{% endif %}</p></div>
+  <div><dt>Goal met</dt><dd>{{ board.met_count }} <span class="rv-of">of {{ board.full_months }}</span></dd>
+    <p class="small muted">Full months with a count</p></div>
+  {% else %}
+  <div><dt>Practices at goal</dt><dd>{{ board.at_goal }} <span class="rv-of">of {{ board.of }}</span></dd>
+    <p class="small muted">So far this month</p></div>
+  <div><dt>Average rating</dt><dd>{{ '%.1f'|format(board.rating) if board.rating else '—' }}</dd>
+    <p class="small muted">{% if board.total %}Across {{ '{:,}'.format(board.total) }} reviews{% else %}Shows once Google is connected{% endif %}</p></div>
+  <div><dt>Quiet practices</dt><dd>{{ board.quiet }}</dd>
+    <p class="small {{ 'rv-warn' if board.quiet else 'muted' }}">No review in 30 days</p></div>
+  {% endif %}
+</dl>
+
+<section aria-labelledby="mbm-h" class="rv-section">
+  <div class="section-head">
+    <h2 id="mbm-h">Google reviews, month by month</h2>
+    <p class="rv-legend small"><span><i class="rv-key met"></i>Goal met</span><span><i class="rv-key under"></i>Under goal</span><span><i class="rv-key goal"></i>Goal</span></p>
+  </div>
+  <div class="rv-mbm">
+    <div class="panel rv-chart-box">
+      <div class="rv-chart" role="img" aria-label="New Google reviews per month against goal, {{ board.bars[0].label }} to {{ board.bars[-1].label }}. The table next to the chart has the numbers.">
+        {% for b in board.bars %}
+        <div class="rv-col">
+          <span class="rv-val">{{ b.val if b.val is not none else '–' }}</span>
+          <div class="rv-plot">
+            {% if b.val is not none %}<div class="rv-bar {{ 'met' if b.met else 'under' }}{% if b.current %} current{% endif %}" style="height: {{ b.h }}%"></div>{% endif %}
+            <div class="rv-goal" style="bottom: {{ b.gh }}%"></div>
+          </div>
+          <span class="rv-month">{{ b.label }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="small muted">{{ board.current_label }} is the month so far. A dash means no count for that month.</p>
+    </div>
+    <div class="panel rv-history">
+      <table class="data">
+        <thead><tr><th>Month</th><th class="num">New</th><th class="num">Goal</th><th>Result</th></tr></thead>
+        <tbody>
+        {% for h in board.history %}
+          <tr><td>{{ h.month }}</td><td class="num"><strong>{{ h.got if h.got is not none else '—' }}</strong></td><td class="num">{{ h.goal }}</td>
+            <td class="rv-res rv-res-{{ h.kind }}">{{ h.result }}{% if h.partial %} <span class="small muted" title="Some practices have no count for this month">· partial</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="rv-history-foot">
+        <span class="small muted">Goal met in {{ board.met_count }} of the last {{ board.full_months }} full month{{ '' if board.full_months == 1 else 's' }} with a count</span>
+        <a class="btn btn-quiet btn-small" href="/reviews.xlsx">Download Excel</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% if not pid %}
+<section aria-labelledby="bp-h" class="rv-section">
+  <div class="section-head">
+    <div><h2 id="bp-h">By practice</h2><p class="small muted">{{ board.current_label }} · pick a practice to see only that practice</p></div>
+    <nav class="seg" aria-label="Filter">
+      {% for k, l in [('all', 'All'), ('under', 'Under goal'), ('quiet', 'No review in 30 days')] %}
+      <a href="/reviews?{{ {'tab': 'score', 'filter': k}|urlencode }}" {% if filt == k %}aria-current="page"{% endif %}>{{ l }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+  <div class="table-scroll"><table class="practices rv-table">
+    <thead><tr><th>Practice</th><th>Rating</th><th>This month</th><th>Goal met, last 6 mo.</th><th>Last review</th><th>Inbox</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <th scope="row"><a href="/reviews?{{ {'tab': 'score', 'practice': r.id}|urlencode }}">{{ r.name }}</a>{% if not r.source %}<span class="scope-sub small muted">No count yet</span>{% elif r.source == 'manual' %}<span class="scope-sub small muted">Typed in</span>{% endif %}</th>
+        <td>{% if r.rating %}{{ '%.1f'|format(r.rating) }} <span class="muted">({{ r.total }})</span>{% else %}—{% endif %}</td>
+        <td class="rv-prog-cell"><span>{{ r.got if r.got is not none else '—' }} of {{ r.goal }}</span>
+          <span class="rv-prog" aria-hidden="true"><span class="{{ 'met' if r.met else 'under' }}" style="width: {{ r.pct }}%"></span></span></td>
+        <td>{% if r.known6 %}{{ r.met6 }} of {{ r.known6 }}{% else %}—{% endif %}</td>
+        <td class="{{ 'rv-warn' if r.days is not none and r.days > 30 else '' }}">{{ r.last or '—' }}</td>
+        <td>{% if r.waiting %}<a href="/reviews?{{ {'practice': r.id}|urlencode }}">{{ r.waiting }} waiting</a>{% else %}—{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No practices match.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<p class="eyebrow">Scoreboard setup</p>
+<details class="drawer" id="goals">
+  <summary><span class="drawer-title">Goals</span><span class="drawer-hint">Monthly Google review goal for each practice</span></summary>
+  <div class="drawer-body">
+    <p class="small muted">A change applies from {{ board.current_label }} on. Past months keep the goal they had, so the history stays accurate.</p>
+    {% if can_edit %}
+    <form method="post" action="/reviews/goals" class="rv-all-goal">
+      <label>Same goal for every practice<input name="all_goal" type="number" min="0" max="1000" value="{{ board.default_goal }}"></label>
+      <button class="btn btn-quiet" type="submit" name="apply" value="all" data-confirm-all>Apply to all</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/reviews/goals" class="stack">
+      <div class="rv-goal-list">
+        {% for r in board.rows %}
+        <label class="rv-goal-row"><span>{{ r.name }}</span>
+          <span class="rv-goal-in"><span class="small muted">{% if r.avg6 is not none %}Avg {{ '%.1f'|format(r.avg6) }} over 6 mo.{% endif %}</span>
+            <input name="g_{{ r.id }}" type="number" min="0" max="1000" value="{{ r.goal }}" aria-label="Monthly goal for {{ r.name }}" {% if not can_edit %}disabled{% endif %}>
+            <span class="small muted">per month</span></span></label>
+        {% endfor %}
+      </div>
+      {% if can_edit %}<button class="btn btn-quiet" type="submit">Save goals</button>{% endif %}
+    </form>
+  </div>
+</details>
+<details class="drawer" id="manual">
+  <summary><span class="drawer-title">Monthly counts by hand</span><span class="drawer-hint">For practices whose Google reviews aren't connected yet</span></summary>
+  <div class="drawer-body">
+    <form method="get" action="/reviews" class="rv-month-pick">
+      <input type="hidden" name="tab" value="score">
+      <label>Month<select name="mm" onchange="this.form.submit()">{% for m in month_opts %}<option value="{{ m }}" {% if m == man_month %}selected{% endif %}>{{ month_label(m) }}</option>{% endfor %}</select></label>
+      <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+    </form>
+    {% set manual_rows = board.rows|selectattr('source', 'ne', 'google')|list %}
+    {% if manual_rows %}
+    <form method="post" action="/reviews/manual" class="stack">
+      <input type="hidden" name="month" value="{{ man_month }}">
+      <p class="small muted">New Google reviews each practice got in {{ month_label(man_month) }}. Leave blank if you don't know. Once a practice's Google location is linked, its counts come from Google instead.</p>
+      <div class="rv-goal-list">
+        {% for r in manual_rows %}
+        <label class="rv-goal-row"><span>{{ r.name }}</span>
+          <input name="m_{{ r.id }}" type="number" min="0" max="10000" value="{{ manual.get((r.id, man_month), '') }}" aria-label="New reviews for {{ r.name }} in {{ month_label(man_month) }}" {% if not can_edit %}disabled{% endif %}></label>
+        {% endfor %}
+      </div>
+      {% if can_edit %}<button class="btn btn-quiet" type="submit">Save counts</button>{% endif %}
+    </form>
+    {% else %}<p class="muted">Every practice's counts come from Google.</p>{% endif %}
+  </div>
+</details>
+{% endif %}
+
+<script>
+  // Apply-to-all asks first (it overwrites every practice's goal from this month on).
+  document.querySelectorAll("[data-confirm-all]").forEach(b => b.addEventListener("click", e => {
+    const n = b.form.querySelector("input[name=all_goal]").value;
+    if (!confirm(`Set every practice's goal to ${n} a month, from this month on?`)) e.preventDefault();
+  }));
+  // Reply drafts: write one automatically when an item without a draft is opened, and on "New draft".
+  (() => {
+    const box = document.getElementById("reply-text"), status = document.getElementById("draft-status");
+    if (!box) return;
+    const url = "/reviews/items/{{ cur.id if cur else 0 }}/draft";
+    const draft = async () => {
+      status.textContent = "Writing a draft…";
+      try {
+        const r = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+        const j = await r.json();
+        if (j.draft) { box.value = j.draft; status.textContent = "Draft ready — edit as needed."; }
+        else status.textContent = j.error || "Couldn't write a draft.";
+      } catch (e) { status.textContent = "Couldn't write a draft."; }
+    };
+    {% if ai_on and cur and cur.status == 'open' and can_edit and not cur.draft and cur.flag != 'spam' %}draft();{% endif %}
+    const again = document.getElementById("new-draft");
+    if (again) again.onclick = draft;
+  })();
+</script>
+{% endblock %}

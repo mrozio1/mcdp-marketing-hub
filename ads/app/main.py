@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, field, organic, places, referrals, scope, sync, users
+from . import actions, ai, db, emailfmt, field, organic, places, referrals, reviews, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -130,8 +130,10 @@ def _startup():
     places.purge_old()
     referrals.init()
     field.init()
+    reviews.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
+        reviews.start_scheduler()
         places.start_scheduler()
         referrals.start_scheduler()
 
@@ -192,6 +194,7 @@ def page(request, name, **ctx):
     ctx["is_admin"] = bool(u) and u["role"] == "admin"
     ctx["can_log"] = bool(u) and bool(u.get("field"))
     ctx["show_social"] = bool(u) and bool(u.get("social", 1))
+    ctx.setdefault("inbox_open", reviews.open_count() if u else 0)
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -497,6 +500,10 @@ def _worth_a_look(allp, role="admin"):
         items.append({"text": "The last map refresh stopped; have a look", "href": "/map"})
     elif places.offices() and not db.get_setting("ref_last_refresh"):
         items.append({"text": "Build the referral and competition lists once", "href": "/map/list"})
+    waiting = reviews.open_count()
+    if waiting:
+        items.insert(0, {"text": "1 review or comment waiting for a reply" if waiting == 1
+                         else f"{waiting} reviews and comments waiting for a reply", "href": "/reviews"})
     last = sync.last_sync().get("at")
     if last:
         from datetime import datetime as _dt
@@ -1621,3 +1628,275 @@ async def account_home(request: Request, address: str = Form("")):
         c.execute("UPDATE users SET home_address=?, home_lat=?, home_lng=? WHERE id=?", (address, lat, lng, u["id"]))
     flash(request, "Home address saved for routes." if address else "Home address removed.")
     return RedirectResponse("/account#home", status_code=303)
+
+
+# ---------- reviews & comments ----------
+def _num(v):
+    v = str(v or "").strip()
+    return int(v) if v.isdigit() else None
+
+
+def _safe_back(v, default="/reviews"):
+    v = str(v or "")
+    return v if v.startswith("/") and not v.startswith("//") else default
+
+
+POSTS_AS = {
+    "google": "Posts on Google as {acct}, labeled “Response from the owner.” No personal name shows publicly; the hub records that {me} sent it.",
+    "facebook": "Replies as the {acct} Facebook Page, not as you personally. The hub records that {me} sent it.",
+    "instagram": "Replies as {acct} on Instagram. The hub records that {me} sent it.",
+}
+
+
+@app.get("/reviews", response_class=HTMLResponse)
+def reviews_page(request: Request):
+    if (r := guard(request)):
+        return r
+    q = request.query_params
+    plist = reviews.practices()
+    pid = _num(q.get("practice"))
+    if pid not in {p["id"] for p in plist}:
+        pid = None
+    tab = "score" if q.get("tab") == "score" else "inbox"
+    src = q.get("src") if q.get("src") in ("google", "facebook", "instagram") else "all"
+    status = "done" if q.get("status") == "done" else "open"
+    filt = q.get("filter") if q.get("filter") in ("under", "quiet") else "all"
+    items, counts = reviews.inbox(pid, src, status, plist)
+    sel = _num(q.get("item"))
+    cur = next((i for i in items if i["id"] == sel), None) or (items[0] if items else None)
+    if cur:
+        cur["posts_as"] = POSTS_AS[cur["source"]].format(acct=cur["account_name"], me=(me(request) or {}).get("name", "you").split(" ")[0])
+        cur["no_reply_hint"] = reviews.no_reply_hint(cur)
+    board = reviews.scoreboard(pid, plist=plist)
+    rows = board["rows"]
+    if filt == "under":
+        rows = [x for x in rows if not x["met"]]
+    elif filt == "quiet":
+        rows = [x for x in rows if x["days"] is not None and x["days"] > 30]
+    qs = {"practice": pid or "", "tab": tab, "src": src, "status": status}
+    month_opts = reviews.months_back(13)[::-1][1:]
+    with db.conn() as c:
+        manual = {(m["practice_id"], m["month"]): m["count"] for m in c.execute("SELECT * FROM review_manual")}
+    man_month = q.get("mm") if q.get("mm") in month_opts else month_opts[0]
+    return page(request, "reviews.html", plist=plist, pid=pid, practice=next((p for p in plist if p["id"] == pid), None),
+                tab=tab, src=src, status=status, filt=filt, items=items, counts=counts, cur=cur,
+                stats=reviews.inbox_stats(pid, plist), board=board, rows=rows, qs=qs, sources=reviews.SOURCES,
+                flag_text=reviews.FLAG_TEXT, duration=reviews.duration, inbox_status=reviews.last_status(),
+                gbp_client=all(cx.gbp_client()), gbp_on=reviews.gbp_connected(), locations=reviews.locations(),
+                gbp_redirect=_gbp_redirect(request), overdue=reviews.overdue_hours(), every=reviews.check_minutes(),
+                month_opts=month_opts, man_month=man_month, manual=manual, month_label=reviews.month_label,
+                meta_on=cx.meta_configured(), fb_linked=any(db.social_ids(p, "fb") or db.social_ids(p, "ig") for p in plist))
+
+
+@app.get("/reviews.xlsx")
+def reviews_export(request: Request):
+    if (r := guard(request)):
+        return r
+    data = reviews.export_xlsx()
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="google-reviews-{date.today().isoformat()}.xlsx"'})
+
+
+DONE_MSG = {"reply": "Reply posted.", "like": "Liked. Marked done.", "hide": "Comment hidden. Marked done.",
+            "done": "Marked done.", "reopen": "Moved back to Needs reply."}
+
+
+@app.post("/reviews/items/{iid}/{action}")
+async def reviews_act(request: Request, iid: int, action: str):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    from fastapi.responses import JSONResponse
+    if action == "draft":
+        if not ai.available():
+            return JSONResponse({"error": "AI isn't switched on."}, status_code=422)
+        try:
+            return {"draft": await asyncio.to_thread(reviews.draft_reply, iid)}
+        except (reviews.ReviewsError, ai.AIError) as e:
+            return JSONResponse({"error": str(e)}, status_code=422)
+    back = _safe_back(form.get("back"))
+    message = str(form.get("message") or "")
+    if action not in DONE_MSG:
+        return RedirectResponse(back, status_code=303)
+    try:
+        await asyncio.to_thread(reviews.act, iid, action, actor(request), message)
+        flash(request, DONE_MSG[action])
+    except (reviews.ReviewsError, cx.ConnectorError) as e:
+        if action == "reply" and message.strip():
+            reviews.save_draft(iid, message)          # keep what they wrote
+        flash(request, str(e), "error")
+        sep = "&" if "?" in back else "?"
+        back = f"{back}{sep}item={iid}" if "item=" not in back else back
+    if action == "reopen":
+        back = back.replace("status=done", "status=open")
+        back = f"{back}{'&' if '?' in back else '?'}item={iid}"
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/reviews/sync")
+async def reviews_sync(request: Request, back: str = Form("/reviews")):
+    if (r := guard(request)):
+        return r
+    st = await asyncio.to_thread(reviews.sync_inbox)
+    if st.get("busy"):
+        flash(request, "A check is already running. Refresh in a minute.", "error")
+    elif not st.get("accounts"):
+        flash(request, "Nothing to check yet: link a Google location, Facebook Page or Instagram account to a practice first.",
+              "error")
+    else:
+        msg = f"Checked {st['accounts']} account{'s' if st['accounts'] != 1 else ''}: {st['new']} new."
+        if st.get("error_count"):
+            msg += f" {st['error_count']} couldn't be read — {st['errors'][0]}"
+        flash(request, msg, "error" if st.get("error_count") else "ok")
+    return RedirectResponse(_safe_back(back), status_code=303)
+
+
+@app.post("/reviews/goals")
+async def reviews_goals(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    plist = reviews.practices()
+    try:
+        if form.get("apply") == "all":
+            n = _num(form.get("all_goal"))
+            if n is None:
+                raise reviews.ReviewsError("Type a goal first.")
+            reviews.set_goals({0: n, **{p["id"]: n for p in plist}})
+            flash(request, f"Every practice's goal is now {n} a month, from {reviews.month_label(reviews.month_key(date.today()))} on.")
+        else:
+            cur = reviews.month_key(date.today())
+            changes = {}
+            for p in plist:
+                v = form.get(f"g_{p['id']}")
+                if v is None or str(v).strip() == "":
+                    continue
+                n = _num(v)
+                if n is None:
+                    raise reviews.ReviewsError(f"The goal for {p['name']} isn't a whole number.")
+                if n != reviews.goal_for(p["id"], cur):
+                    changes[p["id"]] = n
+            reviews.set_goals(changes)
+            flash(request, f"{len(changes)} goal{'s' if len(changes) != 1 else ''} changed." if changes else "No goals changed.")
+    except reviews.ReviewsError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/reviews?tab=score#goals", status_code=303)
+
+
+@app.post("/reviews/manual")
+async def reviews_manual(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    month = str(form.get("month") or "")
+    counts = {}
+    try:
+        for p in reviews.practices():
+            v = form.get(f"m_{p['id']}")
+            if v is None:
+                continue
+            v = str(v).strip()
+            if v and not v.isdigit():
+                raise reviews.ReviewsError(f"The count for {p['name']} isn't a whole number.")
+            counts[p["id"]] = int(v) if v else None
+        reviews.set_manual(month, counts)
+        flash(request, f"Counts for {reviews.month_label(month)} saved.")
+    except reviews.ReviewsError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/reviews?tab=score&mm={month}#manual", status_code=303)
+
+
+@app.post("/reviews/locations")
+async def reviews_locations(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    pairs = {k[5:]: _num(v) for k, v in form.items() if k.startswith("loc::")}
+    reviews.link_locations(pairs)
+    flash(request, "Google locations linked to practices. Their reviews come in on the next check.")
+    return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+@app.post("/reviews/locations/refresh")
+async def reviews_locations_refresh(request: Request):
+    if (r := guard(request)):
+        return r
+    try:
+        n = await asyncio.to_thread(reviews.refresh_locations)
+        flash(request, f"Found {n} Google location{'s' if n != 1 else ''}. Check the practice next to each, then save.")
+    except cx.ConnectorError as e:
+        flash(request, f"Couldn't list Google locations: {e}", "error")
+    return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+@app.post("/reviews/settings")
+async def reviews_settings(request: Request, overdue: str = Form(""), every: str = Form("")):
+    if (r := guard(request)):
+        return r
+    o, e = _num(overdue), _num(every)
+    if o is None or not 1 <= o <= 720 or e is None or not 10 <= e <= 1440:
+        flash(request, "Overdue time should be 1–720 hours and the check every 10–1440 minutes.", "error")
+    else:
+        db.set_setting("inbox_overdue_hours", str(o))
+        db.set_setting("inbox_check_minutes", str(e))
+        flash(request, "Inbox settings saved.")
+    return RedirectResponse("/reviews#inbox-setup", status_code=303)
+
+
+def _gbp_redirect(request: Request):
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    return base + "/google/business/callback"
+
+
+@app.post("/connections/gbp")
+async def save_gbp(request: Request, client_id: str = Form(""), client_secret: str = Form("")):
+    if (r := guard(request)):
+        return r
+    client_id, client_secret = client_id.strip(), client_secret.strip()
+    if not client_id.endswith(".apps.googleusercontent.com") or len(client_secret) < 10:
+        flash(request, "That doesn't look like a Google OAuth client. The client ID ends in .apps.googleusercontent.com.", "error")
+    else:
+        db.set_setting("gbp_client_id", client_id)
+        db.set_setting("gbp_client_secret", client_secret)
+        flash(request, "Saved. Now click “Sign in with Google” with an account that manages the practices' profiles.")
+    return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+@app.get("/google/business/connect")
+def gbp_connect(request: Request):
+    if (r := guard(request)):
+        return r
+    if not all(cx.gbp_client()):
+        flash(request, "Save the Google OAuth client first.", "error")
+        return RedirectResponse("/reviews#google-setup", status_code=303)
+    state = os.urandom(16).hex()
+    request.session["gbp_state"] = state
+    return RedirectResponse(cx.gbp_auth_url(_gbp_redirect(request), state), status_code=303)
+
+
+@app.get("/google/business/callback")
+async def gbp_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if (r := guard(request)):
+        return r
+    expected = request.session.pop("gbp_state", None)
+    if error:
+        flash(request, f"Google sign-in was cancelled ({error}).", "error")
+    elif not expected or not hmac.compare_digest(state, expected):
+        flash(request, "That Google sign-in link expired. Try again.", "error")
+    else:
+        try:
+            db.set_setting("gbp_refresh_token", await asyncio.to_thread(cx.gbp_exchange_code, code, _gbp_redirect(request)))
+            n = await asyncio.to_thread(reviews.refresh_locations)
+            flash(request, f"Google reviews connected. {n} location{'s' if n != 1 else ''} found; check which practice each belongs to.")
+        except cx.ConnectorError as e:
+            flash(request, f"Google sign-in worked, but listing locations failed: {e}", "error")
+    return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+@app.post("/google/business/disconnect")
+def gbp_disconnect(request: Request):
+    if (r := guard(request)):
+        return r
+    db.set_setting("gbp_refresh_token", None)
+    flash(request, "Google reviews disconnected. Reviews and counts already pulled are kept.")
+    return RedirectResponse("/reviews#google-setup", status_code=303)
