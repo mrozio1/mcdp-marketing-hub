@@ -231,6 +231,27 @@ def sync_all(today=None):
         _lock.release()
 
 
+def running():
+    return _lock.locked()
+
+
+def start_in_background():
+    """Start sync_all on its own thread (the web request answers at once; a full sync can take minutes,
+    longer than Cloudflare waits). Returns False if a sync is already running."""
+    if running():
+        return False
+    db.set_setting("sync_started", db.now())
+
+    def run():
+        try:
+            sync_all()
+        except Exception as e:   # keep the error where the page can show it
+            db.set_setting("last_sync", json.dumps({"at": db.now(), "error": str(e)}))
+    threading.Thread(target=run, name="sync-now", daemon=True).start()
+    time.sleep(0.05)   # let it take the lock so the page that follows shows "Syncing…"
+    return True
+
+
 def _seconds_until(hour):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     nxt = now.replace(hour=hour, minute=0, second=0, microsecond=0)

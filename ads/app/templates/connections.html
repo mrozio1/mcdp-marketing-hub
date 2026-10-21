@@ -80,7 +80,7 @@
 {% if meta_on or google_connected %}
 <div class="conn-actions">
   <form method="post" action="/connections/refresh" data-busy="Checking…"><button class="btn btn-quiet" type="submit">Refresh account lists</button></form>
-  <form method="post" action="/sync" data-busy="Syncing… this can take a minute"><input type="hidden" name="back" value="/connections"><button class="btn" type="submit">Sync now</button></form>
+  <form method="post" action="/sync" data-busy="Starting…"><input type="hidden" name="back" value="/connections"><button class="btn" type="submit" {% if sync_running %}disabled{% endif %}>{{ "Syncing…" if sync_running else "Sync now" }}</button></form>
   {% if checked.at %}<span class="muted small">Account lists checked {{ checked.at.replace('T', ' ')[:16] }}</span>{% endif %}
 </div>
 <p class="muted small">The next sync covers {{ window[0] }} to {{ window[1] }}. In the first three days of a month it pulls the whole previous month instead, so reports cover a complete month.</p>

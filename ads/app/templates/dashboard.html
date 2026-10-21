@@ -5,9 +5,9 @@
 <div class="title-row">
   <h1>Practices</h1>
   {% if any_connection and can_edit %}
-  <form method="post" action="/sync" data-busy="Syncing…" class="sync-form">
+  <form method="post" action="/sync" data-busy="Starting…" class="sync-form">
     <input type="hidden" name="back" value="/practices">
-    <button class="btn btn-quiet" type="submit">Sync now</button>
+    <button class="btn btn-quiet" type="submit" {% if sync_running %}disabled{% endif %}>{{ "Syncing…" if sync_running else "Sync now" }}</button>
     <span class="muted small">{% if last_sync.at %}Last synced {{ last_sync.at.replace('T', ' ')[:16] }}{% else %}Not synced yet{% endif %}</span>
   </form>
   {% endif %}

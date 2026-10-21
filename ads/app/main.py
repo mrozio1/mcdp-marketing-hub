@@ -188,6 +188,7 @@ def page(request, name, **ctx):
     ctx["flash"] = request.session.pop("flash", None)
     ctx["ai_on"] = ai.available()
     ctx["last_sync"] = sync.last_sync()
+    ctx["sync_running"] = sync.running()
     ctx["any_connection"] = cx.meta_configured() or cx.google_configured()
     ctx.setdefault("social_url", SOCIAL_URL)
     u = me(request)
@@ -1040,8 +1041,30 @@ async def connections_refresh(request: Request):
 async def sync_now(request: Request, back: str = Form("/")):
     if (r := guard(request)):
         return r
-    status = await asyncio.to_thread(sync.sync_all)
-    flash(request, *summarize_sync(status))
+    back = back if back.startswith("/") and not back.startswith("//") else "/practices"
+    if sync.start_in_background():
+        flash(request, "Sync started. It runs in the background and can take a few minutes; this page updates when it's done.")
+    else:
+        flash(request, "A sync is already running; this page updates when it's done.")
+    return RedirectResponse(back, status_code=303)
+
+
+@app.get("/sync/status")
+def sync_status(request: Request):
+    if not authed(request):
+        return Response(status_code=401)
+    return {"running": sync.running(), "at": sync.last_sync().get("at")}
+
+
+@app.get("/sync/done")
+def sync_done(request: Request, back: str = "/practices"):
+    if (r := guard(request)):
+        return r
+    st = sync.last_sync()
+    if st.get("error"):
+        flash(request, f"The sync stopped: {st['error']}", "error")
+    elif st:
+        flash(request, *summarize_sync(st))
     return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/practices", status_code=303)
 
 
@@ -1928,12 +1951,10 @@ async def salesforce_send(request: Request):
     if not salesforce.connected():
         flash(request, "Connect Salesforce first.", "error")
     else:
-        got = await asyncio.to_thread(salesforce.send_pending, PUBLIC_URL, 500)
-        msg = f"{got['sent']} visit{'s' if got['sent'] != 1 else ''} sent to Salesforce."
-        if got["failed"]:
-            flash(request, f"{msg} {got['failed']} didn't go: {got['error']}", "error")
-        else:
-            flash(request, msg + (f" {got['waiting']} still waiting." if got.get("waiting") else ""))
+        n = len(salesforce.pending_ids(10000))
+        salesforce.send_in_background(PUBLIC_URL, 500)
+        flash(request, f"Sending {n} visit{'s' if n != 1 else ''} to Salesforce in the background. "
+                       "Refresh in a minute to see the result here." if n else "Nothing waiting; every visit is already in Salesforce.")
     back = (await request.form()).get("back") or "/connections#salesforce"
     return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/connections", status_code=303)
 

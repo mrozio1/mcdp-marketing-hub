@@ -437,3 +437,32 @@ def test_salesforce_refresh_token_rotation(env, monkeypatch):
     assert len(calls) == 2
     sf.disconnect()
     db.set_setting("sf_last_refresh", None)
+
+
+def test_sync_now_answers_at_once(env, monkeypatch):
+    import threading, time as _t
+    from app import sync
+    release = threading.Event()
+    calls = []
+
+    def slow_sync(today=None):
+        with sync._lock:
+            calls.append(1)
+            release.wait(5)
+            sync.db.set_setting("last_sync", json.dumps({"at": "2026-10-21T17:40:00", "since": "2026-10-01",
+                                                         "until": "2026-10-21", "results": {}}))
+    monkeypatch.setattr(sync, "sync_all", slow_sync)
+    a = env["admin"]
+    t0 = _t.time()
+    r = a.post("/sync", data={"back": "/practices"}, follow_redirects=True)
+    assert _t.time() - t0 < 3 and "Sync started" in r.text and "/sync/status" in r.text   # page polls until done
+    assert a.get("/sync/status").json()["running"] is True
+    r = a.post("/sync", data={"back": "/practices"}, follow_redirects=True)
+    assert "already running" in r.text and len(calls) == 1
+    release.set()
+    for _ in range(50):
+        if not a.get("/sync/status").json()["running"]:
+            break
+        _t.sleep(0.05)
+    r = a.get("/sync/done?back=/practices", follow_redirects=True)
+    assert "/sync/status" not in r.text

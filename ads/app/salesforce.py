@@ -359,9 +359,9 @@ def send_pending(hub_url="", limit=BATCH):
     return out
 
 
-def send_in_background(hub_url=""):
+def send_in_background(hub_url="", limit=BATCH):
     if connected():
-        threading.Thread(target=lambda: _safe(send_pending, hub_url), name="salesforce-send", daemon=True).start()
+        threading.Thread(target=lambda: _safe(send_pending, hub_url, limit), name="salesforce-send", daemon=True).start()
 
 
 def _safe(fn, *a):

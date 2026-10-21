@@ -379,8 +379,8 @@
         <button type="submit" class="btn btn-quiet">Save links</button>
       </form>
       {% if p.meta_account_id or p.google_customer_id or fb_linked or ig_linked %}
-      <form method="post" action="/sync" data-busy="Syncing…" class="inline-sync">
-        <input type="hidden" name="back" value="/p/{{ p.id }}"><button class="linklike" type="submit">Sync now</button>
+      <form method="post" action="/sync" data-busy="Starting…" class="inline-sync">
+        <input type="hidden" name="back" value="/p/{{ p.id }}"><button class="linklike" type="submit" {% if sync_running %}disabled{% endif %}>{{ "Syncing…" if sync_running else "Sync now" }}</button>
       </form>
       {% endif %}
       </div>
