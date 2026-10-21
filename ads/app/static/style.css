@@ -727,3 +727,12 @@ section[aria-labelledby="due-h"], section#budgets { margin-top: 32px; }
 .rv-month-pick { margin-bottom: 1rem; max-width: 16rem; }
 @media (max-width: 640px) { .rv-table th, .rv-table td { white-space: normal; } }
 .rv-checked .inline-form { margin-left: 0.4rem; }
+
+/* Log a visit: people met */
+.people-met { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; }
+.people-met legend { padding: 0; margin-bottom: 6px; }
+.person { display: grid; grid-template-columns: 1fr 1.3fr 1fr auto; gap: 10px; align-items: end; }
+.person + .person { border-top: 1px solid var(--hair); padding-top: 10px; }
+.person-remove { padding-bottom: 10px; }
+.people-met #add-person { justify-self: start; }
+@media (max-width: 560px) { .person { grid-template-columns: 1fr; } .person-remove { justify-self: start; padding-bottom: 0; } }

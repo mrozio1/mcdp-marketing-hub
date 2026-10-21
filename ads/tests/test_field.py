@@ -274,3 +274,37 @@ def test_people_see_only_their_own_field_data_unless_admin(env):
     assert "Cy's Secret Dental" in offices and "Riverside Dental" not in offices
     every = admin.get("/field?period=month").text
     assert "Cy&#39;s Secret Dental" in every and "Riverside Dental" in every and 'name="who"' in every
+
+
+def test_several_people_with_emails(env):
+    a, f = env["agent"], env["field"]
+    r = a.post("/field/visits", data={
+        "place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental", "rating": "warm",
+        "visited_at": date.today().isoformat() + "T09:00",
+        "person_name": ["Pam Beesly", "Dr. Oak", ""], "person_email": ["Pam@Maple.com ", "", ""],
+        "person_role": ["Office manager", "Doctor", ""]}, follow_redirects=True)
+    assert r.status_code == 200
+    rows = f.visits_between(date.today(), date.today() + timedelta(days=1))
+    v = [x for x in rows if x["met_name"].startswith("Pam Beesly")][0]
+    assert v["people"] == [{"name": "Pam Beesly", "email": "pam@maple.com", "role": "Office manager"},
+                           {"name": "Dr. Oak", "email": "", "role": "Doctor"}]
+    assert v["met_name"] == "Pam Beesly, Dr. Oak"
+    page = a.get("/field?period=day").text
+    assert "pam@maple.com" in page and "Dr. Oak (Doctor)" in page
+    # Export carries names, roles and emails in the same order.
+    import openpyxl, io
+    ws = openpyxl.load_workbook(io.BytesIO(a.get("/field.xlsx?period=day").content)).active
+    hdr = [c.value for c in ws[2]]
+    row = [[c.value for c in r] for r in ws.iter_rows(min_row=3) if r[hdr.index("Met")].value == "Pam Beesly; Dr. Oak"][0]
+    assert row[hdr.index("Met")] == "Pam Beesly; Dr. Oak"
+    assert row[hdr.index("Email")] == "pam@maple.com; –"
+    # A bad email is turned back with a clear message, nothing saved.
+    n = len(f.visits_between(date.today(), date.today() + timedelta(days=1)))
+    r = a.post("/field/visits", data={"place_id": "ChIJ_dentist_maple001", "name": "Maple", "person_name": ["X"],
+                                      "person_email": ["not-an-email"], "person_role": [""]}, follow_redirects=True)
+    assert "look like an email" in r.text
+    assert len(f.visits_between(date.today(), date.today() + timedelta(days=1))) == n
+    # Deleting the visit removes its people too.
+    env["admin"].post(f"/field/visits/{v['id']}/delete")
+    with env["db"].conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM visit_people WHERE visit_id=?", (v["id"],)).fetchone()[0] == 0

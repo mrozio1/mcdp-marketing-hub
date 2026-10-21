@@ -37,12 +37,18 @@
 
   <label>When<input type="datetime-local" name="visited_at" id="visited-at"></label>
 
-  <div class="two-up">
-    <label>Who you met<input name="met_name" maxlength="120" placeholder="Name" autocomplete="off"></label>
-    <label>Their role
-      <select name="met_role"><option value="">Choose…</option>{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select>
-    </label>
-  </div>
+  <fieldset class="people-met" id="people-met">
+    <legend>Who you met</legend>
+    <div class="person">
+      <label>Name<input name="person_name" maxlength="120" placeholder="Name" autocomplete="off"></label>
+      <label>Email<input name="person_email" type="email" maxlength="160" placeholder="Optional" autocomplete="off" inputmode="email"></label>
+      <label>Role
+        <select name="person_role"><option value="">Choose…</option>{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select>
+      </label>
+      <button type="button" class="person-remove linklike small" aria-label="Remove this person" hidden>Remove</button>
+    </div>
+    <button type="button" class="chip" id="add-person">+ Add another person</button>
+  </fieldset>
 
   <fieldset class="rating-pick">
     <legend>Relationship</legend>
@@ -83,7 +89,7 @@
   <ul class="visit-history">
     {% for h in history %}
     <li><strong>{{ h.visited_at[:10] }}</strong> · {{ h.user_name }}{% if h.rating %} · <span class="rating-chip r-{{ h.rating }}">{{ ratings[h.rating] }}</span>{% endif %}
-      {% if h.met_name %}<br><span class="small">Met {{ h.met_name }}{% if h.met_role %} ({{ h.met_role }}){% endif %}</span>{% endif %}
+      {% if h.people %}<br><span class="small">Met {% for p in h.people %}{{ p.name or p.email }}{% if p.role %} ({{ p.role }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
       {% if h.dropped or h.cost %}<br><span class="small">{{ h.dropped }}{% if h.cost %} · {{ h.cost|money }}{% endif %}</span>{% endif %}
       {% if h.notes %}<br><span class="small muted">{{ h.notes }}</span>{% endif %}</li>
     {% endfor %}
@@ -117,6 +123,26 @@
     } else geo.textContent = "📍 Location found; it'll be saved as this office's spot.";
   }, () => { geo.textContent = "Location not shared, so the visit won't show as on site. You can allow it in the browser's settings."; },
      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+
+  // People met: "+ Add another person" copies the first row, empty.
+  const box = $("people-met"), first = box.querySelector(".person");
+  const syncRemove = () => { const rows = box.querySelectorAll(".person");
+    rows.forEach(r => r.querySelector(".person-remove").hidden = rows.length === 1); };
+  $("add-person").onclick = () => {
+    if (box.querySelectorAll(".person").length >= {{ max_people }}) return;
+    const row = first.cloneNode(true);
+    row.querySelectorAll("input").forEach(i => i.value = "");
+    row.querySelector("select").selectedIndex = 0;
+    box.insertBefore(row, $("add-person"));
+    syncRemove();
+    row.querySelector("input").focus();
+  };
+  box.addEventListener("click", e => {
+    const b = e.target.closest(".person-remove");
+    if (!b) return;
+    if (box.querySelectorAll(".person").length > 1) b.closest(".person").remove();
+    syncRemove();
+  });
 
   // Quick-add chips
   document.querySelectorAll("[data-chip]").forEach(b => b.onclick = () => {

@@ -24,6 +24,8 @@ RATINGS = ("cold", "warm", "hot", "referring")
 RATING_LABELS = {"cold": "Cold", "warm": "Warm", "hot": "Hot", "referring": "Referring"}
 MET_ROLES = ("Office manager", "Doctor", "Front desk", "Hygienist / assistant", "Other")
 DROP_CHIPS = ("Lunch", "Treats", "Referral pads", "Swag", "Brochures")
+MAX_PEOPLE = 12
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 ON_SITE_MILES = 0.2
 MAX_RECEIPT = 8 * 1024 * 1024
 MAPS_STOPS_PER_LINK = 10   # Google Maps app: origin + up to 9 waypoints + destination
@@ -62,6 +64,15 @@ CREATE TABLE IF NOT EXISTS visits (
 );
 CREATE INDEX IF NOT EXISTS visits_when ON visits(visited_at);
 CREATE INDEX IF NOT EXISTS visits_office ON visits(office_id, visited_at);
+CREATE TABLE IF NOT EXISTS visit_people (
+  id INTEGER PRIMARY KEY,
+  visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+  pos INTEGER NOT NULL DEFAULT 0,
+  name TEXT DEFAULT '',
+  email TEXT DEFAULT '',
+  role TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS visit_people_visit ON visit_people(visit_id);
 CREATE TABLE IF NOT EXISTS field_links (
   map_office_id INTEGER PRIMARY KEY,
   practice_id INTEGER
@@ -278,6 +289,47 @@ def geocode_one(address):
     return None
 
 
+# ------------------------------------------------------------------ people met
+def people_in(form):
+    """The people met on a visit, from form["people"] (list of dicts) or the older single met_name/met_role pair.
+    Blank rows are dropped; a bad email raises FieldError."""
+    raw = form.get("people")
+    if raw is None:
+        raw = [{"name": form.get("met_name"), "email": form.get("met_email"), "role": form.get("met_role")}]
+    out = []
+    for p in raw:
+        name, email, role = _clean(p.get("name"), 120), _clean(p.get("email"), 160).lower(), _clean(p.get("role"), 60)
+        if not name and not email:
+            continue
+        if email and not EMAIL_RE.match(email):
+            raise FieldError(f"“{email}” doesn't look like an email address.")
+        out.append({"name": name, "email": email, "role": role})
+    if len(out) > MAX_PEOPLE:
+        raise FieldError(f"That's more than {MAX_PEOPLE} people; log the main contacts.")
+    return out
+
+
+def with_people(rows):
+    """Adds r["people"] to each visit row. Visits logged before people had their own table fall back to met_name."""
+    ids = [r["id"] for r in rows]
+    found = {}
+    if ids:
+        with db.conn() as c:
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                for p in c.execute(f"SELECT visit_id, name, email, role FROM visit_people WHERE visit_id IN "
+                                   f"({','.join('?' * len(chunk))}) ORDER BY visit_id, pos", chunk):
+                    found.setdefault(p["visit_id"], []).append({"name": p["name"], "email": p["email"], "role": p["role"]})
+    for r in rows:
+        r["people"] = found.get(r["id"]) or ([{"name": r["met_name"], "email": "", "role": r.get("met_role") or ""}]
+                                             if r.get("met_name") else [])
+    return rows
+
+
+def person_label(p):
+    return p["name"] or p["email"]
+
+
 # ------------------------------------------------------------------ visits
 def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     """form: dict of the log form's fields. Returns the visit id."""
@@ -300,6 +352,9 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
             c.execute("UPDATE field_offices SET lat=?, lng=?, our_office_id=COALESCE(our_office_id, ?) WHERE id=?",
                       (plat, plng, nearest_office(plat, plng), o["id"]))
         dist, on_site = 0.0, 1
+    people = people_in(form)
+    met_name = _clean(", ".join(person_label(p) for p in people), 300)
+    met_role = _clean(", ".join(dict.fromkeys(p["role"] for p in people if p["role"])), 200)
     receipt = save_receipt(receipt_bytes, receipt_type) if receipt_bytes else ""
     with db.conn() as c:
         cur = c.execute(
@@ -307,17 +362,20 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
             "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (o["id"], user.get("id") or None, user.get("name", ""), _when(form.get("visited_at")),
-             _clean(form.get("met_name"), 120), _clean(form.get("met_role"), 60), rating,
+             met_name, met_role, rating,
              _clean(form.get("dropped"), 300), cost, receipt, _date_or_blank(form.get("followup")),
              str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now()))
-        return cur.lastrowid
+        vid = cur.lastrowid
+        c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
+                      [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
+        return vid
 
 
 def visit(vid):
     with db.conn() as c:
         r = c.execute("SELECT v.*, o.name AS office_name, o.place_id, o.npi_key, o.address AS office_address "
                       "FROM visits v JOIN field_offices o ON o.id=v.office_id WHERE v.id=?", (vid,)).fetchone()
-    return dict(r) if r else None
+    return with_people([dict(r)])[0] if r else None
 
 
 def delete_visit(vid):
@@ -325,6 +383,7 @@ def delete_visit(vid):
     if not v:
         return
     with db.conn() as c:
+        c.execute("DELETE FROM visit_people WHERE visit_id=?", (vid,))
         c.execute("DELETE FROM visits WHERE id=?", (vid,))
     if v["receipt"]:
         try:
@@ -431,7 +490,7 @@ def visits_between(start, end, user_id=None, practice_id=None):
         rows = [r for r in rows if r["user_id"] == user_id]
     if practice_id:
         rows = [r for r in rows if r["practice_id"] == practice_id]
-    return rows
+    return with_people(rows)
 
 
 def pacing(spend, budget, start, today=None):
@@ -659,7 +718,7 @@ def export_xlsx(rows, title):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Visits"
-    head = ["Date", "Time", "Agent", "Office", "Address", "Met", "Role", "Relationship", "Dropped off", "Cost",
+    head = ["Date", "Time", "Agent", "Office", "Address", "Met", "Role", "Email", "Relationship", "Dropped off", "Cost",
             "On site", "Miles from office", "Follow-up", "Notes", "Receipt"]
     ws.append([title])
     ws["A1"].font = Font(bold=True, size=13)
@@ -668,15 +727,18 @@ def export_xlsx(rows, title):
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="0F7471")
     for r in sorted(rows, key=lambda r: r["visited_at"]):
+        ppl = r.get("people") or []
         ws.append([r["visited_at"][:10], r["visited_at"][11:16], r["user_name"], r["office_name"], r["office_address"],
-                   r["met_name"], r["met_role"], RATING_LABELS.get(r["rating"], ""), r["dropped"], r["cost"] or 0,
+                   "; ".join(person_label(p) for p in ppl), "; ".join(p["role"] or "–" for p in ppl) if any(p["role"] for p in ppl) else "",
+                   "; ".join(p["email"] or "–" for p in ppl) if any(p["email"] for p in ppl) else "",
+                   RATING_LABELS.get(r["rating"], ""), r["dropped"], r["cost"] or 0,
                    {1: "Yes", 0: "No"}.get(r["on_site"], "Not shared"), r["distance_mi"], r["followup"], r["notes"],
                    "Yes" if r["receipt"] else ""])
-        ws.cell(ws.max_row, 10).number_format = '"$"#,##0.00'
+        ws.cell(ws.max_row, 11).number_format = '"$"#,##0.00'
     total_row = ws.max_row + 1
-    ws.cell(total_row, 9, "Total").font = Font(bold=True)
-    ws.cell(total_row, 10, f"=SUM(J3:J{total_row - 1})").number_format = '"$"#,##0.00'
-    for col, w in zip("ABCDEFGHIJKLMNO", (11, 7, 16, 30, 34, 18, 16, 12, 22, 10, 9, 10, 11, 40, 8)):
+    ws.cell(total_row, 10, "Total").font = Font(bold=True)
+    ws.cell(total_row, 11, f"=SUM(K3:K{total_row - 1})").number_format = '"$"#,##0.00'
+    for col, w in zip("ABCDEFGHIJKLMNOP", (11, 7, 16, 30, 34, 22, 18, 28, 12, 22, 10, 9, 10, 11, 40, 8)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A3"
     buf = io.BytesIO()
