@@ -119,7 +119,7 @@
     {% if sf_client %}<p><a class="btn" href="/salesforce/connect">Sign in to Salesforce</a></p>{% endif %}
     <details class="how">
       <summary>Where do I get this?</summary>
-      <p>In Salesforce: <strong>Setup → External Client App Manager → New External Client App</strong>. Name it “MCDP Hub”, tick <strong>Enable OAuth</strong>, set the callback URL to <code class="break-all">{{ sf_redirect }}</code>, and add the scopes <strong>Manage user data via APIs (api)</strong> and <strong>Perform requests at any time (refresh_token, offline_access)</strong>. Keep <strong>Require PKCE</strong> and <strong>Require secret for Web Server Flow</strong> ticked. Save, then open <strong>Settings → OAuth Settings → Consumer Key and Secret</strong>.</p>
+      <p>In Salesforce: <strong>Setup → External Client App Manager → New External Client App</strong>. Name it “MCDP Hub”, tick <strong>Enable OAuth</strong>, set the callback URL to <code class="break-all">{{ sf_redirect }}</code>, and add the scopes <strong>Access the identity URL service</strong>, <strong>Manage user data via APIs (api)</strong> and <strong>Perform requests at any time (refresh_token, offline_access)</strong>. Tick <strong>Require secret for Web Server Flow</strong> and <strong>Require secret for Refresh Token Flow</strong>. Save, then open <strong>Settings → OAuth Settings → Consumer Key and Secret</strong>.</p>
       <p>Sign in with a Salesforce user that can create Accounts, Contacts and Tasks. Add a <strong>Referral office</strong> value to the Account <strong>Type</strong> picklist so it shows in list views and reports.</p>
     </details>
     </div>

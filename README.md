@@ -257,7 +257,7 @@ role; *+ Add another person* adds a row), the relationship (Cold, Warm,
   created with Type *Referral office*. A follow-up date becomes an open Task. Existing Accounts
   and Contacts are never edited. Failures show on the visit and are retried every 15 minutes.
   Setup: an External Client App in Salesforce with callback `https://<hub>/salesforce/callback`
-  and the `api` and `refresh_token` scopes; paste its consumer key and secret, then sign in.
+  and the `id`, `api` and `refresh_token` scopes; paste its consumer key and secret, then sign in.
 
 Google's terms: our records hold the office name from the NPI Registry or as the agent types it;
 Google's own name and address are only shown live. Receipts are stored next to the database in
