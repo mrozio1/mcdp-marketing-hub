@@ -308,3 +308,108 @@ def test_several_people_with_emails(env):
     env["admin"].post(f"/field/visits/{v['id']}/delete")
     with env["db"].conn() as c:
         assert c.execute("SELECT COUNT(*) FROM visit_people WHERE visit_id=?", (v["id"],)).fetchone()[0] == 0
+
+
+class FakeSF:
+    """Just enough of the Salesforce REST API: SOQL lookups by exact value, and creates."""
+    def __init__(self):
+        self.rows = {"Account": [{"Id": "001OLD", "Name": "Oak Dental", "BillingPostalCode": "43512"}],
+                     "Contact": [{"Id": "003OLD", "Email": "pam@maple.com", "AccountId": "001X", "Name": "Pam B"}],
+                     "User": [{"Id": "005ABE", "Email": "abe@example.com", "IsActive": True}], "Task": []}
+        self.n = 0
+
+    def __call__(self, method, path, body=None, params=None, absolute=False):
+        if method == "POST":
+            obj = path.rsplit("/", 1)[1]
+            self.n += 1
+            rec = {"Id": f"{obj[:3].upper()}{self.n}", **body}
+            self.rows[obj].append(rec)
+            return {"id": rec["Id"], "success": True}
+        q = params["q"]
+        obj = re.search(r"FROM (\w+)", q).group(1)
+        conds = dict(re.findall(r"(\w+) = '((?:[^'\\]|\\.)*)'", q))
+        out = [r for r in self.rows[obj] if all(str(r.get(k, "")).lower() == v.replace("\\'", "'").lower() for k, v in conds.items())]
+        return {"records": out}
+
+
+def test_salesforce_sync(env, monkeypatch):
+    a, f, db = env["agent"], env["field"], env["db"]
+    from app import salesforce as sf
+    fake = FakeSF()
+    monkeypatch.setattr(sf, "api", fake)
+    db.set_setting("sf_client_id", "x" * 30)
+    db.set_setting("sf_client_secret", "y" * 20)
+    db.set_setting("sf_refresh_token", "rt")
+    db.set_setting("sf_instance_url", "https://mcdp.my.salesforce.com")
+    monkeypatch.setattr(sf, "send_in_background", lambda *a: None)   # send explicitly below
+    with db.conn() as c:
+        c.execute("UPDATE visits SET sf_status='sent'")              # earlier tests' visits aren't part of this
+    a.post("/field/visits", data={
+        "place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental", "rating": "hot",
+        "visited_at": date.today().isoformat() + "T09:30", "followup": (date.today() + timedelta(days=7)).isoformat(),
+        "notes": "Wants referral pads", "dropped": "Lunch", "cost": "52",
+        "person_name": ["Pam Beesly", "Dr. Joe Oak"], "person_email": ["pam@maple.com", ""],
+        "person_role": ["Office manager", "Doctor"]})
+    a.post("/field/visits", data={"npi_key": "npi-oak", "name": "Oak Dental", "visited_at": date.today().isoformat() + "T11:00",
+                                  "person_name": [""], "person_email": [""], "person_role": [""]})
+    got = sf.send_pending("https://ads.mcdp.com")
+    assert got["sent"] == 2 and got["failed"] == 0
+    accs = fake.rows["Account"]
+    new = [x for x in accs if x["Id"] != "001OLD"]
+    assert len(new) == 1 and new[0]["Name"] == "Maple Street Family Dental" and new[0]["Type"] == "Referral office"
+    assert new[0]["BillingCity"] == "Defiance" and new[0]["BillingPostalCode"] == "43512"
+    # Pam already existed (matched by email, not duplicated); Dr. Oak is new, with Dr. as salutation.
+    assert [c for c in fake.rows["Contact"] if c.get("LastName") == "Oak"][0]["Salutation"] == "Dr."
+    assert sum(1 for c in fake.rows["Contact"] if c.get("Email") == "pam@maple.com") == 1
+    tasks = fake.rows["Task"]
+    visit_t = [t for t in tasks if t["Subject"] == "Field visit: Maple Street Family Dental"][0]
+    assert visit_t["Status"] == "Completed" and visit_t["WhoId"] == "003OLD" and visit_t["OwnerId"] == "005ABE"
+    assert "Pam Beesly (Office manager) <pam@maple.com>; Dr. Joe Oak (Doctor)" in visit_t["Description"]
+    assert "Relationship: Hot" in visit_t["Description"] and "$52.00" in visit_t["Description"]
+    fu = [t for t in tasks if t["Subject"].startswith("Follow up:")]
+    assert len(fu) == 1 and fu[0]["Status"] == "Open"
+    # The existing "Oak Dental" Account was matched, not recreated; a visit with nobody met has no contact.
+    oak_t = [t for t in tasks if t["Subject"] == "Field visit: Oak Dental"][0]
+    assert oak_t["WhatId"] == "001OLD" and "WhoId" not in oak_t
+    # Sending again does nothing new; the Field page links each visit to Salesforce.
+    n = len(tasks)
+    assert sf.send_pending()["sent"] == 0 and len(fake.rows["Task"]) == n
+    assert "in Salesforce" in a.get("/field?period=day").text
+    # A failure is kept on the visit and shown, and retried later.
+    def broken(*a, **k):
+        raise sf.SFError("REQUIRED_FIELD_MISSING (HTTP 400)")
+    a.post("/field/visits", data={"place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental",
+                                  "visited_at": date.today().isoformat() + "T15:00"})
+    monkeypatch.setattr(sf, "api", broken)
+    got = sf.send_pending()
+    assert got["failed"] == 1 and "REQUIRED_FIELD_MISSING" in got["error"]
+    assert "Salesforce: not sent" in a.get("/field?period=day").text
+    monkeypatch.setattr(sf, "api", fake)
+    assert sf.send_pending()["sent"] == 1
+    sf.disconnect()
+    for k in ("sf_client_id", "sf_client_secret"):
+        db.set_setting(k, None)
+
+
+def test_salesforce_setup_is_admin_only(env):
+    assert env["agent"].get("/salesforce/connect", follow_redirects=False).status_code == 303
+    r = env["agent"].post("/connections/salesforce", data={"client_id": "x" * 30, "client_secret": "y" * 20}, follow_redirects=False)
+    assert r.status_code == 303 and env["db"].get_setting("sf_client_id") is None
+    r = env["admin"].post("/connections/salesforce", data={"client_id": "x" * 30, "client_secret": "y" * 20}, follow_redirects=True)
+    assert "Sign in to Salesforce" in r.text
+    r = env["admin"].get("/salesforce/connect", follow_redirects=False)
+    loc = r.headers["location"]
+    assert loc.startswith("https://login.salesforce.com/services/oauth2/authorize") and "code_challenge=" in loc
+    assert "salesforce%2Fcallback" in loc
+    r = env["admin"].get("/salesforce/callback?code=abc&state=wrong", follow_redirects=True)
+    assert "expired" in r.text
+
+
+def test_salesforce_address_and_names():
+    from app import salesforce as sf
+    assert sf.split_address("12 Maple St, Defiance, OH 43512, USA") == {
+        "BillingStreet": "12 Maple St", "BillingCity": "Defiance", "BillingState": "OH", "BillingPostalCode": "43512"}
+    assert sf.split_address("Suite 4, 9 Oak Ave, Troy, MI 48084")["BillingStreet"] == "Suite 4, 9 Oak Ave"
+    assert sf.split_name("Dr. Mary Ann Lee") == {"FirstName": "Mary Ann", "LastName": "Lee", "Salutation": "Dr."}
+    assert sf.split_name("", "front@maple.com")["LastName"] == "front"
+    assert sf._q("O'Brien") == "'O\\'Brien'"

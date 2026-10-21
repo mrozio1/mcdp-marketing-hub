@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, field, organic, places, referrals, reviews, scope, sync, users
+from . import actions, ai, db, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -39,7 +39,7 @@ ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!.*/delete$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+/delete$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
-ADMIN_ONLY = (re.compile(r"^/(connections|google|team)(/|$)"), re.compile(r"^/map/setup$"),
+ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/p/\d+/delete$"))
 
 
@@ -130,12 +130,14 @@ def _startup():
     places.purge_old()
     referrals.init()
     field.init()
+    salesforce.init()
     reviews.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
         reviews.start_scheduler()
         places.start_scheduler()
         referrals.start_scheduler()
+        salesforce.start_scheduler(PUBLIC_URL)
 
 
 SHARED = {"id": 0, "name": "Team password", "email": "", "role": "admin"}
@@ -1012,7 +1014,9 @@ def connections(request: Request):
                 meta_from_page=bool(db.get_setting("meta_access_token")),
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 checked=checked, redirect_uri=redirect_uri(request), practices=db.practices(),
-                window=sync.sync_window())
+                window=sync.sync_window(), sf_client=all(salesforce.client()), sf_on=salesforce.connected(),
+                sf_user=salesforce.user(), sf_status=salesforce.status(), sf_redirect=_sf_redirect(request),
+                sf_login=salesforce.login_url(), sf_waiting=len(salesforce.pending_ids(10000)) if salesforce.connected() else 0)
 
 
 @app.post("/connections/refresh")
@@ -1450,7 +1454,7 @@ def field_page(request: Request):
                 who=who, practice=prac, team=team, practices=db.practices(), ratings=field.RATING_LABELS,
                 follow=field.followups(user_id=None if see_all else u["id"]), offices=places.offices(), links=links,
                 agents=[t for t in team if t["active"] and t.get("field")], browser_key=places.browser_key(), map_id=places.map_id(),
-                my_id=(u or {}).get("id"))
+                my_id=(u or {}).get("id"), sf_on=salesforce.connected(), sf_base=salesforce.instance_url())
 
 
 @app.get("/field.xlsx")
@@ -1509,6 +1513,7 @@ async def field_log(request: Request):
         q = urllib.parse.urlencode({k: v for k, v in (("office", data["office_id"]), ("place", data["place_id"]),
                                                        ("npi", data["npi_key"]), ("error", str(e))) if v})
         return RedirectResponse(f"/field/log?{q}", status_code=303)
+    salesforce.send_in_background(PUBLIC_URL)
     v = field.visit(vid)
     where = " (on site)" if v["on_site"] == 1 else f" ({v['distance_mi']:g} mi from the office)" if v["on_site"] == 0 else ""
     flash(request, f"Visit to {v['office_name']} logged{where}.")
@@ -1847,6 +1852,90 @@ async def reviews_settings(request: Request, overdue: str = Form(""), every: str
         db.set_setting("inbox_check_minutes", str(e))
         flash(request, "Inbox settings saved.")
     return RedirectResponse("/reviews#inbox-setup", status_code=303)
+
+
+# ---------- Salesforce (field visits) ----------
+def _sf_redirect(request: Request):
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    return base + "/salesforce/callback"
+
+
+@app.post("/connections/salesforce")
+async def save_salesforce(request: Request, client_id: str = Form(""), client_secret: str = Form(""),
+                          login_url: str = Form("")):
+    if (r := guard(request)):
+        return r
+    client_id, client_secret, login_url = client_id.strip(), client_secret.strip(), login_url.strip().rstrip("/")
+    if len(client_id) < 20 or len(client_secret) < 10:
+        flash(request, "That doesn't look like a Salesforce consumer key and secret. Copy both from the External Client App.", "error")
+    elif login_url and not re.match(r"^https://[a-z0-9.-]+\.(salesforce|force)\.com$", login_url):
+        flash(request, "The sign-in address should look like https://login.salesforce.com or https://yourcompany.my.salesforce.com.", "error")
+    else:
+        db.set_setting("sf_client_id", client_id)
+        db.set_setting("sf_client_secret", client_secret)
+        db.set_setting("sf_login_url", login_url or None)
+        flash(request, "Saved. Now click “Sign in to Salesforce”.")
+    return RedirectResponse("/connections#salesforce", status_code=303)
+
+
+@app.get("/salesforce/connect")
+def salesforce_connect(request: Request):
+    if (r := guard(request)):
+        return r
+    if not all(salesforce.client()):
+        flash(request, "Save the Salesforce consumer key and secret first.", "error")
+        return RedirectResponse("/connections#salesforce", status_code=303)
+    state = os.urandom(16).hex()
+    verifier, challenge = salesforce.pkce_pair()
+    request.session["sf_state"], request.session["sf_verifier"] = state, verifier
+    return RedirectResponse(salesforce.auth_url(_sf_redirect(request), state, challenge), status_code=303)
+
+
+@app.get("/salesforce/callback")
+async def salesforce_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                              error_description: str = ""):
+    if (r := guard(request)):
+        return r
+    expected, verifier = request.session.pop("sf_state", None), request.session.pop("sf_verifier", None)
+    if error:
+        flash(request, f"Salesforce sign-in didn't finish: {error_description or error}.", "error")
+    elif not expected or not hmac.compare_digest(state, expected):
+        flash(request, "That Salesforce sign-in link expired. Try again.", "error")
+    else:
+        try:
+            who = await asyncio.to_thread(salesforce.exchange_code, code, _sf_redirect(request), verifier)
+            n = len(salesforce.pending_ids(10000))
+            flash(request, f"Salesforce connected as {who.get('display_name') or who.get('username') or 'you'}. "
+                           f"{n} visit{'s' if n != 1 else ''} waiting; click “Send visits now” or they go within 15 minutes.")
+        except salesforce.SFError as e:
+            flash(request, f"Salesforce sign-in failed: {e}", "error")
+    return RedirectResponse("/connections#salesforce", status_code=303)
+
+
+@app.post("/salesforce/disconnect")
+def salesforce_disconnect(request: Request):
+    if (r := guard(request)):
+        return r
+    salesforce.disconnect()
+    flash(request, "Salesforce disconnected. Visits already sent stay in Salesforce.")
+    return RedirectResponse("/connections#salesforce", status_code=303)
+
+
+@app.post("/salesforce/send")
+async def salesforce_send(request: Request):
+    if (r := guard(request)):
+        return r
+    if not salesforce.connected():
+        flash(request, "Connect Salesforce first.", "error")
+    else:
+        got = await asyncio.to_thread(salesforce.send_pending, PUBLIC_URL, 500)
+        msg = f"{got['sent']} visit{'s' if got['sent'] != 1 else ''} sent to Salesforce."
+        if got["failed"]:
+            flash(request, f"{msg} {got['failed']} didn't go: {got['error']}", "error")
+        else:
+            flash(request, msg + (f" {got['waiting']} still waiting." if got.get("waiting") else ""))
+    back = (await request.form()).get("back") or "/connections#salesforce"
+    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/connections", status_code=303)
 
 
 def _gbp_redirect(request: Request):

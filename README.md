@@ -230,7 +230,8 @@ a viewer with it on can log visits but still can't change anything else). Admins
 field budgets and office-to-practice links; admins and editors can remove a visit.
 
 - **Log a visit** from a dental pin on the map, from a practice on the Export Map List, or for a
-  new office on the spot. They record who they met and their role, the relationship (Cold, Warm,
+  new office on the spot. They record who they met (one or more people, each with name, email and
+role; *+ Add another person* adds a row), the relationship (Cold, Warm,
   Hot or Referring), what they dropped off and its cost, a follow-up date and notes.
 - **Receipt photo**: the photo is shrunk on the phone and saved with the visit, and the hub's
   free AI reads the total into the cost box for the agent to check.
@@ -248,6 +249,15 @@ field budgets and office-to-practice links; admins and editors can remove a visi
   start (where you are, your home address from *Your account*, or one of our offices), and the
   hub puts the stops in a short driving order and opens them in the Google Maps app (10 stops per
   link; longer routes are split).
+
+- **Salesforce** (Connections → Salesforce): each visit is sent when it's saved, as a completed
+  Task on the office's Account (owner: the agent's Salesforce user with the same email, else the
+  connected user), with the first person met as its contact; everyone met becomes a Contact
+  (matched by email first). Offices are matched to Accounts by name (and ZIP); new ones are
+  created with Type *Referral office*. A follow-up date becomes an open Task. Existing Accounts
+  and Contacts are never edited. Failures show on the visit and are retried every 15 minutes.
+  Setup: an External Client App in Salesforce with callback `https://<hub>/salesforce/callback`
+  and the `api` and `refresh_token` scopes; paste its consumer key and secret, then sign in.
 
 Google's terms: our records hold the office name from the NPI Registry or as the agent types it;
 Google's own name and address are only shown live. Receipts are stored next to the database in

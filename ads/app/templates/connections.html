@@ -86,6 +86,46 @@
 <p class="muted small">The next sync covers {{ window[0] }} to {{ window[1] }}. In the first three days of a month it pulls the whole previous month instead, so reports cover a complete month.</p>
 {% endif %}
 
+<section class="panel conn section-gap" id="salesforce">
+  <h2>Salesforce <span class="muted small">· field visits</span></h2>
+  {% if sf_on %}
+    {% if sf_status.error and sf_status.failed %}<p class="state state-bad">Last send had a problem</p><p class="small">{{ sf_status.error }}</p>
+    {% else %}<p class="state state-good">Connected</p>{% endif %}
+    <p>Signed in as {{ sf_user.name or sf_user.username or 'a Salesforce user' }}{% if sf_user.username and sf_user.name %} <span class="muted small">({{ sf_user.username }})</span>{% endif %}.
+      Each visit is sent when it's saved, and anything that didn't go is retried every 15 minutes.
+      {% if sf_waiting %}<strong>{{ sf_waiting }} waiting.</strong>{% else %}Nothing waiting.{% endif %}
+      {% if sf_status.at %}<span class="muted small">Last send {{ sf_status.at.replace('T', ' ')[:16] }}.</span>{% endif %}</p>
+    <div class="conn-actions">
+      <form method="post" action="/salesforce/send" data-busy="Sending…"><button class="btn" type="submit">Send visits now</button></form>
+      <form method="post" action="/salesforce/disconnect" data-confirm="Disconnect Salesforce? Visits already sent stay there; new ones wait until you reconnect."><button class="linklike danger" type="submit">Disconnect</button></form>
+    </div>
+  {% else %}
+    <p class="state">Not connected</p>
+  {% endif %}
+  <details class="how">
+    <summary>What goes into Salesforce</summary>
+    <p>Each visit becomes a completed <strong>Task</strong> on the office’s <strong>Account</strong>: the subject is “Field visit: office name”, assigned to the agent if they have a Salesforce user with the same email (otherwise to the connected user), with who they met, the relationship, what was dropped off and the cost, and the notes. The first person met is the Task’s contact.</p>
+    <p>Everyone met becomes a <strong>Contact</strong> on that Account, matched by email first so nobody is duplicated. Offices already in Salesforce are matched by name (and ZIP); new ones are created with Type <strong>Referral office</strong>. A follow-up date becomes an open Task on that day. Existing Accounts and Contacts are never edited.</p>
+  </details>
+  <details class="drawer drawer-inline" id="sf-setup" {% if not sf_on %}open{% endif %}>
+    <summary><span class="drawer-title">{{ 'Change the connection' if sf_client else 'Connect Salesforce' }}</span></summary>
+    <div class="drawer-body">
+    <form method="post" action="/connections/salesforce" class="stack">
+      <label>Consumer key<input name="client_id" autocomplete="off" spellcheck="false" required></label>
+      <label>Consumer secret<input name="client_secret" type="password" autocomplete="off" required></label>
+      <label>Sign-in address <span class="muted small">(optional)</span><input name="login_url" placeholder="https://login.salesforce.com" value="{{ sf_login if sf_login != 'https://login.salesforce.com' else '' }}" autocomplete="off"></label>
+      <button class="btn {{ 'btn-quiet' if sf_client else '' }}" type="submit">Save</button>
+    </form>
+    {% if sf_client %}<p><a class="btn" href="/salesforce/connect">Sign in to Salesforce</a></p>{% endif %}
+    <details class="how">
+      <summary>Where do I get this?</summary>
+      <p>In Salesforce: <strong>Setup → External Client App Manager → New External Client App</strong>. Name it “MCDP Hub”, tick <strong>Enable OAuth</strong>, set the callback URL to <code class="break-all">{{ sf_redirect }}</code>, and add the scopes <strong>Manage user data via APIs (api)</strong> and <strong>Perform requests at any time (refresh_token, offline_access)</strong>. Keep <strong>Require PKCE</strong> and <strong>Require secret for Web Server Flow</strong> ticked. Save, then open <strong>Settings → OAuth Settings → Consumer Key and Secret</strong>.</p>
+      <p>Sign in with a Salesforce user that can create Accounts, Contacts and Tasks. Add a <strong>Referral office</strong> value to the Account <strong>Type</strong> picklist so it shows in list views and reports.</p>
+    </details>
+    </div>
+  </details>
+</section>
+
 <h2 class="section-gap">Which practice uses which account</h2>
 {% if practices %}
 <div class="table-scroll"><table class="data links">
