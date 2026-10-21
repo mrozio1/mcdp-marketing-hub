@@ -25,6 +25,7 @@ ACCOUNT_TYPE = "Referral office"
 RETRY_MINUTES = 15
 BATCH = 50
 _lock = threading.Lock()
+_tok_lock = threading.Lock()   # with refresh token rotation, two refreshes at once would spend the token twice
 _token_cache = {}
 
 
@@ -78,7 +79,7 @@ def auth_url(redirect_uri, state, challenge):
     cid, _ = client()
     return login_url() + "/services/oauth2/authorize?" + urllib.parse.urlencode({
         "response_type": "code", "client_id": cid, "redirect_uri": redirect_uri, "state": state,
-        "scope": "api refresh_token", "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "login consent"})
+        "scope": "api refresh_token id", "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "login consent"})
 
 
 def _form_post(url, fields):
@@ -101,7 +102,10 @@ def exchange_code(code, redirect_uri, verifier):
     db.set_setting("sf_instance_url", tok["instance_url"])
     _token_cache.clear()
     _token_cache.update(access=tok["access_token"], url=tok["instance_url"], at=time.time())
-    me = api("GET", tok.get("id") or "", absolute=True) if tok.get("id") else {}
+    try:
+        me = api("GET", tok["id"], absolute=True) if tok.get("id") else {}
+    except SFError:   # the name is only for display
+        me = {}
     db.set_setting("sf_user", json.dumps({"name": me.get("display_name", ""), "username": me.get("username", ""),
                                           "org": me.get("organization_id", "")}))
     return me
@@ -125,8 +129,15 @@ def instance_url():
 
 
 def _access(force=False):
-    if not force and _token_cache.get("access") and time.time() - _token_cache.get("at", 0) < 1800:
-        return _token_cache["access"], _token_cache["url"]
+    seen = _token_cache.get("access")
+    with _tok_lock:
+        fresh = _token_cache.get("access") and time.time() - _token_cache.get("at", 0) < 1800
+        if fresh and (not force or _token_cache["access"] != seen):   # someone else just refreshed: use theirs
+            return _token_cache["access"], _token_cache["url"]
+        return _refresh()
+
+
+def _refresh():
     rt = db.get_setting("sf_refresh_token")
     if not rt:
         raise SFError("Salesforce isn't connected.")
@@ -134,8 +145,19 @@ def _access(force=False):
     tok = _form_post(login_url() + "/services/oauth2/token", {
         "grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "client_secret": secret})
     url = tok.get("instance_url") or instance_url()
+    if tok.get("refresh_token") and tok["refresh_token"] != rt:
+        db.set_setting("sf_refresh_token", tok["refresh_token"])   # refresh token rotation: the old one is now spent
+    db.set_setting("sf_last_refresh", db.now())
     _token_cache.update(access=tok["access_token"], url=url, at=time.time())
     return tok["access_token"], url
+
+
+def keep_alive():
+    """Salesforce expires a refresh token unused for 30 days; refresh once a day so a quiet month doesn't disconnect."""
+    from datetime import datetime, timedelta
+    last = db.get_setting("sf_last_refresh")
+    if connected() and (not last or datetime.now() - datetime.fromisoformat(last) > timedelta(days=1)):
+        _access(force=True)
 
 
 def api(method, path, body=None, params=None, absolute=False):
@@ -355,6 +377,7 @@ def start_scheduler(hub_url=""):
         while True:
             if connected():
                 _safe(send_pending, hub_url)
+                _safe(keep_alive)
             time.sleep(RETRY_MINUTES * 60)
     threading.Thread(target=loop, name="salesforce-retry", daemon=True).start()
 

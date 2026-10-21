@@ -413,3 +413,27 @@ def test_salesforce_address_and_names():
     assert sf.split_name("Dr. Mary Ann Lee") == {"FirstName": "Mary Ann", "LastName": "Lee", "Salutation": "Dr."}
     assert sf.split_name("", "front@maple.com")["LastName"] == "front"
     assert sf._q("O'Brien") == "'O\\'Brien'"
+
+
+def test_salesforce_refresh_token_rotation(env, monkeypatch):
+    from app import salesforce as sf
+    db = env["db"]
+    calls = []
+
+    def fake_post(url, fields):
+        calls.append(fields["refresh_token"])
+        return {"access_token": f"at{len(calls)}", "instance_url": "https://x.my.salesforce.com",
+                "refresh_token": f"rt{len(calls) + 1}"}
+    monkeypatch.setattr(sf, "_form_post", fake_post)
+    db.set_setting("sf_refresh_token", "rt1")
+    sf._token_cache.clear()
+    assert sf._access() == ("at1", "https://x.my.salesforce.com")
+    assert db.get_setting("sf_refresh_token") == "rt2"            # the rotated token is kept
+    assert sf._access()[0] == "at1" and len(calls) == 1           # cached access token reused
+    db.set_setting("sf_last_refresh", "2000-01-01T00:00:00")
+    sf.keep_alive()
+    assert calls == ["rt1", "rt2"] and db.get_setting("sf_refresh_token") == "rt3"
+    sf.keep_alive()                                               # refreshed today already: nothing
+    assert len(calls) == 2
+    sf.disconnect()
+    db.set_setting("sf_last_refresh", None)
