@@ -736,3 +736,9 @@ section[aria-labelledby="due-h"], section#budgets { margin-top: 32px; }
 .person-remove { padding-bottom: 10px; }
 .people-met #add-person { justify-self: start; }
 @media (max-width: 560px) { .person { grid-template-columns: 1fr; } .person-remove { justify-self: start; padding-bottom: 0; } }
+
+/* Welcome page: the MCDP mark, large and faint, off to the right behind everything */
+.welcome-mark { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.10;
+  background: url("/static/mcdp-mark.png") no-repeat right -6vw bottom -10vh / auto 92vh; }
+.welcome { position: relative; z-index: 1; }
+@media print { .welcome-mark { display: none; } }
