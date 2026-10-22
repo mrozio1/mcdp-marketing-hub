@@ -124,6 +124,15 @@ All numbers are calculated exactly; the AI only explains them, following rules
 condensed from [claude-ads](https://github.com/AgriciDaniel/claude-ads) (see
 `ads/NOTICE.md`).
 
+### Adding a practice that shares the master's ad accounts
+
+Give it its **campaign filter words** and leave its ad accounts unlinked: a practice with filter words
+and no ad account of its own automatically uses the master record's Meta and Google accounts (shown on
+Connections as "master's, by filter words"). Link its own account only if it really has one. The
+practices list explains anything that keeps a practice from showing numbers: nothing linked, filter
+words that match none of the account's campaigns, or the last sync's error for that account. A practice
+only counts as the master when it has an ad account linked and no filter words.
+
 ### Boosted posts and reels
 
 A boost (from a Page, Instagram or the Meta Business Suite "Ads" tab) is a Meta campaign with an

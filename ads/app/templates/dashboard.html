@@ -28,6 +28,7 @@
       <th scope="row">
         <a href="/p/{{ it.p.id }}">{{ it.p.name }}</a>
         {% if it.master %}<span class="tag tag-master">Master</span>{% elif it.p.campaign_filter %}<span class="muted small scope-sub">{{ it.p.campaign_filter|truncate(40) }}</span>{% endif %}
+        {% for pr in it.problems %}<span class="setup-problem small">⚠ {{ pr }}</span>{% endfor %}
         {% if it.issues %}<span class="issues">{{ it.issues }} to review</span>{% endif %}
       </th>
       {% for v in it.views %}

@@ -68,6 +68,29 @@ def _db_claims():
     return claims_from(db.practices())
 
 
+def inherited_accounts(p, practices):
+    """A practice with filter words but no ad account of its own uses the master record's account
+    (the unfiltered practice linked to one), so a new practice works as soon as its words are set."""
+    out = {}
+    if not has_filter(p):
+        return out
+    for key in ("meta_account_id", "google_customer_id"):
+        if not p.get(key):
+            m = next((q for q in practices if q["id"] != p["id"] and not has_filter(q) and q.get(key)), None)
+            if m:
+                out[key] = m[key]
+    return out
+
+
+def with_inherited(practices):
+    """Practices with inherited ad accounts filled in; 'inherited' lists which ones came from the master."""
+    out = []
+    for p in practices:
+        inh = inherited_accounts(p, practices)
+        out.append({**p, **inh, "inherited": sorted(inh)})
+    return out
+
+
 def _db_owners():
     from . import db
     try:
@@ -114,8 +137,8 @@ def matches(campaign, practice_or_filter, claims=None, owners=None, practices=No
             belongs = set((claims or {}).get(name, ())) or boost_to
             if belongs and pid not in belongs:
                 mine = str(p.get("meta_account_id") or "")
-                if not any(str(q.get("meta_account_id") or "") == mine and mine
-                           for q in practices or [] if q["id"] in belongs):
+                if not any(mine and str(q.get("meta_account_id") or "") in (mine, "")
+                           for q in practices or [] if q["id"] in belongs):   # empty: uses the master's account
                     return False
         return True
     if name in {norm(n) for n in added_campaigns(p)}:

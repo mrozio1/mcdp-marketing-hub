@@ -278,7 +278,8 @@ def sync_all(today=None):
     try:
         since, until = sync_window(today)
         google, google_error = None, None
-        practices = db.practices()
+        from .scope import with_inherited
+        practices = with_inherited(db.practices())   # filter-only practices use the master's accounts
         if cx.google_configured() and any(p.get("google_customer_id") for p in practices):
             try:
                 google = cx.GoogleClient(db.get_setting("google_refresh_token"))

@@ -117,3 +117,40 @@ def test_promo_lookup_reads_meta_fields(monkeypatch):
     assert got["Boost A"] == {"fb": ["PG1"], "ig": [], "ig_media": [], "boost": True}
     assert got["Ad B"]["fb"] == ["PG2"] and got["Ad B"]["ig"] == ["IG2"] and not got["Ad B"]["boost"]
     assert got["Reel C"]["boost"] and got["Reel C"]["ig_media"] == ["M9"] and got["Reel C"]["ig"] == ["IG3"]
+
+
+def test_filter_only_practice_uses_the_master_accounts(client, monkeypatch):
+    c, db, sync, mp = client
+    master, heights, waterford = _setup(db, sync, monkeypatch)
+    new = db.add_practice("Brand Office", 0, 0, "brand")          # words only, no ad account linked
+    nomatch = db.add_practice("Wesley Orthodontics", 0, 0, "wesley")
+    bare = db.add_practice("Eric Groeneveld", 0, 0, "")             # nothing at all
+    sync.sync_all(today=TODAY)
+    assert shown(c.get(f"/p/{new}").text, "Brand awareness Oct")    # pulled through the master's account
+    conn = c.get("/connections").text
+    assert "(master&#39;s, by filter words)" in conn or "(master's, by filter words)" in conn
+    dash = c.get("/practices").text
+    assert "its filter words match none of the" in dash              # Wesley: words match nothing
+    assert "Not linked to an ad account, Facebook Page or Instagram yet" in dash
+    assert db.practice(new)["meta_account_id"] in ("", None)        # nothing was written to the practice
+
+
+def test_sync_errors_show_on_the_practices_list(client, monkeypatch):
+    c, db, sync, mp = client
+    master, heights, waterford = _setup(db, sync, monkeypatch)
+
+    def gone(acct, since, until):
+        raise sync.cx.ConnectorError("The customer account can't be accessed because it is not yet enabled")
+    monkeypatch.setattr(sync.cx, "meta_campaign_rows", gone)
+    sync.sync_all(today=TODAY)
+    assert "Meta Ads: The customer account can&#39;t be accessed" in c.get("/practices").text
+
+
+def test_a_blank_practice_is_not_the_master(client, monkeypatch):
+    c, db, sync, mp = client
+    master, heights, waterford = _setup(db, sync, monkeypatch)
+    blank = db.add_practice("Eric Groeneveld", 0, 0, "")
+    assert "Master" not in c.get(f"/p/{blank}").text.split("<h1", 1)[1].split("</h1>", 1)[0]
+    dash = c.get("/practices").text
+    row = dash.split("Eric Groeneveld", 1)[1][:400]
+    assert "tag-master" not in row

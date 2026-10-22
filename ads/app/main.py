@@ -261,7 +261,8 @@ def suggest_social(p, items):
 
 def is_master(p, practices):
     """No campaign filter while other practices have one: this record shows everything."""
-    return not scope.has_filter(p) and any(scope.has_filter(q) for q in practices if q["id"] != p["id"])
+    return (not scope.has_filter(p) and bool(p.get("meta_account_id") or p.get("google_customer_id"))
+            and any(scope.has_filter(q) for q in practices if q["id"] != p["id"]))
 
 
 # ---------- auth ----------
@@ -530,18 +531,43 @@ def welcome(request: Request):
 
 
 # ---------- practices ----------
+def setup_problems(p, eff, views, result):
+    """Plain-language reasons a practice shows no ad numbers, for the practices list."""
+    out = []
+    names = dict(PLATFORMS) | {"facebook": "Facebook posts", "instagram": "Instagram posts"}
+    for k, r in (result or {}).items():
+        if isinstance(r, dict) and r.get("ok") is False:
+            out.append(f"{names.get(k, k)}: {r.get('error', 'the last sync failed')}"[:160])
+    linked = any(eff.get(k) for k in ("meta_account_id", "google_customer_id"))
+    has_any = any(v["upload"] for v in views)
+    if not linked and not has_any and not p.get("fb_page_id") and not p.get("ig_account_id"):
+        out.append("Not linked to an ad account, Facebook Page or Instagram yet. Link them in Practice setup.")
+    elif not linked and not has_any:
+        out.append("No ad account linked, so there are no ad numbers. Link one in Practice setup, or give it "
+                   "campaign filter words to use the master record's accounts.")
+    for v in views:
+        if v["upload"] and v["filtered"] and not v["campaigns"] and v["camp_total"]:
+            out.append(f"{v['label']}: its filter words match none of the {v['camp_total']} campaigns in the account. "
+                       "Check the words in Practice setup.")
+    return out
+
+
 @app.get("/practices", response_class=HTMLResponse)
 def dashboard(request: Request):
     if (r := guard(request)):
         return r
     items = []
     allp = db.practices()
+    eff = {q["id"]: q for q in scope.with_inherited(allp)}
+    results = sync.last_sync().get("results", {})
     for p in allp:
         views = practice_views(p)
+        problems = setup_problems(p, eff[p["id"]], views, results.get(str(p["id"]), {}))
         waste = sum(f["amount"] for v in views for f in v["findings"] if f["kind"] in ("zero-conv-campaign", "high-cpa"))
         waste += sum((v["search_terms"] or {}).get("wasted_total", 0) for v in views)
         items.append({"p": p, "views": views, "waste": round(waste, 2), "master": is_master(p, allp),
-                      "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium"))})
+                      "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium")),
+                      "problems": problems})
     items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
     return page(request, "dashboard.html", items=items)
 
@@ -1050,7 +1076,7 @@ def connections(request: Request):
                 google_connected=google_ready(), manager_id=cx.setting("GOOGLE_ADS_LOGIN_CUSTOMER_ID"),
                 meta_from_page=bool(db.get_setting("meta_access_token")),
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
-                checked=checked, redirect_uri=redirect_uri(request), practices=db.practices(),
+                checked=checked, redirect_uri=redirect_uri(request), practices=scope.with_inherited(db.practices()),
                 window=sync.sync_window(), sf_client=all(salesforce.client()), sf_on=salesforce.connected(),
                 sf_user=salesforce.user(), sf_status=salesforce.status(), sf_redirect=_sf_redirect(request),
                 sf_login=salesforce.login_url(), sf_waiting=len(salesforce.pending_ids(10000)) if salesforce.connected() else 0)
