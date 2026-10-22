@@ -742,3 +742,7 @@ section[aria-labelledby="due-h"], section#budgets { margin-top: 32px; }
   background: url("/static/mcdp-mark.png") no-repeat right -6vw bottom -10vh / auto 92vh; }
 .welcome { position: relative; z-index: 1; }
 @media print { .welcome-mark { display: none; } }
+
+/* Campaign table: boosted posts and the per-campaign "Move to…" */
+.tag-boost { background: #F4E9F7; color: #7A2E8E; }
+.move-form select { font: inherit; font-size: 0.82rem; padding: 0.15rem 0.3rem; min-width: 7.5rem; max-width: 12rem; border: 1px solid var(--hair); border-radius: 6px; background: transparent; color: var(--ink-soft); }

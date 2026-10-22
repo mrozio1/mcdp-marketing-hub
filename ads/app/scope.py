@@ -5,6 +5,11 @@ A practice's filter is a comma-separated list of words matched against campaign 
 Campaigns whose names don't fit a pattern can also be added to a practice by exact name.
 An added campaign belongs only to the practice(s) it was added to, even if another practice's
 words would match it. A practice with neither sees every campaign: that is the master record.
+
+Meta campaigns are also assigned by what they promote (see sync.build_owners): a boosted post or reel
+belongs to the practice whose Facebook Page / Instagram account it came from, whatever it's called.
+Other campaigns promoting a practice's Page fill in only when no practice's words match them. Moving a
+campaign by hand (adding it to a practice) always wins.
 """
 from __future__ import annotations
 
@@ -63,35 +68,88 @@ def _db_claims():
     return claims_from(db.practices())
 
 
-def matches(campaign, practice_or_filter, claims=None):
+def _db_owners():
+    from . import db
+    try:
+        return json.loads(db.get_setting("campaign_owners") or "{}").get("meta", {})
+    except ValueError:
+        return {}
+
+
+def boosted_names(owners=None):
+    """Normalized names of Meta campaigns that boost an existing post or reel."""
+    owners = _db_owners() if owners is None else owners
+    return {k for k, e in owners.items() if e.get("boost")}
+
+
+def _words_match(name, practice):
+    inc, exc = parse_filter(practice.get("campaign_filter"))
+    if not inc and not exc:
+        return False
+    return not any(e in name for e in exc) and (not inc or any(i in name for i in inc))
+
+
+def matches(campaign, practice_or_filter, claims=None, owners=None, practices=None, platform=None):
     if not isinstance(practice_or_filter, dict):
         inc, exc = parse_filter(practice_or_filter)
         name = norm(campaign)
         return not any(e in name for e in exc) and (not inc or any(i in name for i in inc))
     p = practice_or_filter
-    if not has_filter(p):
-        return True                                   # master record: everything
+    pid = p.get("id")
     name = norm(campaign)
+    if pid is not None:
+        if claims is None:
+            claims = _db_claims()
+        if owners is None:
+            owners = _db_owners()
+        if practices is None:
+            from . import db
+            practices = db.practices()
+    own = (owners or {}).get(name) or {}
+    boost_to = set(own.get("practices", [])) if own.get("boost") else set()
+    if not has_filter(p):
+        # Master / single-practice record: everything in its rows, except a Meta campaign that belongs
+        # (moved by hand, or a boost of its posts) to a practice on a different ad account.
+        if platform == "meta" and pid is not None:
+            belongs = set((claims or {}).get(name, ())) or boost_to
+            if belongs and pid not in belongs:
+                mine = str(p.get("meta_account_id") or "")
+                if not any(str(q.get("meta_account_id") or "") == mine and mine
+                           for q in practices or [] if q["id"] in belongs):
+                    return False
+        return True
     if name in {norm(n) for n in added_campaigns(p)}:
         return True
-    if claims is None and p.get("id") is not None:
-        claims = _db_claims()
-    if claims and name in claims and p.get("id") not in claims[name]:
-        return False                                  # added by hand to another practice
-    inc, exc = parse_filter(p.get("campaign_filter"))
-    if not inc and not exc:
-        return False                                  # this practice only has hand-added campaigns
-    if any(e in name for e in exc):
-        return False
-    return not inc or any(i in name for i in inc)
+    if claims and name in claims and pid not in claims[name]:
+        return False                                  # moved by hand to another practice
+    if boost_to:
+        return pid in boost_to                        # a boost belongs to the practice whose post it is
+    if _words_match(name, p):
+        return True
+    fallback = set(own.get("practices", []))
+    if pid in fallback and not any(_words_match(name, q) for q in practices or [] if q["id"] != pid):
+        return True                                   # promotes this practice's Page; no one's words claim it
+    return False
 
 
-def apply(rows, practice, claims=None):
-    if not has_filter(practice):
+def apply(rows, practice, claims=None, owners=None, platform=None):
+    if not has_filter(practice) and platform != "meta":
         return rows
-    if claims is None and isinstance(practice, dict) and practice.get("id") is not None:
-        claims = _db_claims()
-    return [r for r in rows if matches(r.get("campaign"), practice, claims)]
+    practices = None
+    if isinstance(practice, dict) and practice.get("id") is not None:
+        from . import db
+        practices = db.practices()
+        claims = claims_from(practices) if claims is None else claims
+        owners = _db_owners() if owners is None else owners
+    cache = {}
+    out = []
+    for r in rows:
+        c = r.get("campaign")
+        if c not in cache:
+            cache[c] = matches(c, practice, claims, owners, practices, platform)
+        if cache[c]:
+            out.append(r)
+    return out
 
 
 def group_key(campaign):
@@ -157,7 +215,8 @@ def breakdown(master, platform, rows, practices):
     if not others and not camps:
         return None
     claims = claims_from(practices)
-    owners = {c["name"]: [q for q in others if matches(c["name"], q, claims)] for c in camps}
+    promo = _db_owners() if platform == "meta" else {}
+    owners = {c["name"]: [q for q in others if matches(c["name"], q, claims, promo, practices, platform)] for c in camps}
     by_practice = []
     for q in others:
         mine = [c for c in camps if q in owners[c["name"]]]

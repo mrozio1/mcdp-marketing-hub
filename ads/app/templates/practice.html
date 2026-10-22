@@ -162,14 +162,26 @@
       {% endif %}
 
       {% if v.campaigns %}
-      <details class="campaigns">
-        <summary>All campaigns ({{ v.campaigns|length }})</summary>
+      <details class="campaigns" id="campaigns-{{ v.key }}">
+        <summary>All campaigns ({{ v.campaigns|length }}){% set nb = v.campaigns|selectattr('name')|map(attribute='name')|map('lower')|select('in', v.boosted)|list %}{% if nb %} <span class="muted small">· {{ nb|length }} boosted</span>{% endif %}</summary>
         <div class="table-scroll"><table class="data">
-          <thead><tr><th>Campaign</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Conv.</th><th class="num">Cost/conv.</th><th class="num">CTR</th></tr></thead>
+          <thead><tr><th>Campaign</th><th class="num">Spend</th><th class="num">Clicks</th><th class="num">Conv.</th><th class="num">Cost/conv.</th><th class="num">CTR</th>{% if can_edit and all_practices|length > 1 %}<th>Practice</th>{% endif %}</tr></thead>
           <tbody>
           {% for c in v.campaigns %}
-            <tr><td>{{ c.name }}</td><td class="num">{{ c.spend|money }}</td><td class="num">{{ '{:,}'.format(c.clicks) }}</td>
-                <td class="num">{{ '%g'|format(c.conversions) }}</td><td class="num">{{ c.cpa|money }}</td><td class="num">{{ c.ctr|pct }}</td></tr>
+            {% set cn = c.name.split()|join(' ')|lower %}
+            <tr><td>{{ c.name }}{% if cn in v.boosted %} <span class="tag tag-boost" title="A boosted post or reel; assigned to the practice whose Page or Instagram it came from">Boosted</span>{% endif %}{% if cn in added_norm %} <span class="tag" title="Moved to this practice by hand">moved here</span>{% endif %}</td>
+                <td class="num">{{ c.spend|money }}</td><td class="num">{{ '{:,}'.format(c.clicks) }}</td>
+                <td class="num">{{ '%g'|format(c.conversions) }}</td><td class="num">{{ c.cpa|money }}</td><td class="num">{{ c.ctr|pct }}</td>
+                {% if can_edit and all_practices|length > 1 %}<td>
+                  <form method="post" action="/p/{{ p.id }}/campaigns/move" class="move-form">
+                    <input type="hidden" name="name" value="{{ c.name }}"><input type="hidden" name="back" value="{{ v.key }}">
+                    <select name="to" aria-label="Move {{ c.name }} to another practice" onchange="this.form.submit()">
+                      <option value="" selected>Move to…</option>
+                      {% for q in all_practices if q.id != p.id %}<option value="{{ q.id }}">{{ q.name }}</option>{% endfor %}
+                      {% if cn in added_norm %}<option value="auto">Back to automatic</option>{% endif %}
+                    </select>
+                    <noscript><button class="linklike small" type="submit">Move</button></noscript>
+                  </form></td>{% endif %}</tr>
           {% endfor %}
           </tbody>
         </table></div>

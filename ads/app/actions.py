@@ -206,7 +206,7 @@ def _google_proposals(p, view, notes):
 
 def _meta_proposals(p, view, notes):
     acct = str(p["meta_account_id"]).removeprefix("act_")
-    camps = [c for c in meta_campaigns(acct) if scope.matches(c.get("name"), p)]
+    camps = [c for c in meta_campaigns(acct) if scope.matches(c.get("name"), p, platform="meta")]
     one = _unique_by_name(camps)
     out = []
     base = {"platform": "meta", "account": acct}
@@ -324,7 +324,7 @@ def _google_draft(p, campaign_name, write_fn):
 
 def _meta_draft(p, campaign_name, write_fn):
     acct = str(p["meta_account_id"]).removeprefix("act_")
-    camps = _unique_by_name([c for c in meta_campaigns(acct) if scope.matches(c.get("name"), p)])
+    camps = _unique_by_name([c for c in meta_campaigns(acct) if scope.matches(c.get("name"), p, platform="meta")])
     c = camps.get(campaign_name)
     if not c:
         raise ActionError(f"Couldn't find one campaign called “{campaign_name}” in Meta.")

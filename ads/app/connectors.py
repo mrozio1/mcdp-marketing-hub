@@ -221,6 +221,42 @@ def meta_campaign_rows(account_id, since: date, until: date):
     return rows
 
 
+def meta_campaign_promos(account_id):
+    """Which Facebook Page / Instagram account each campaign's ads promote, and whether it's a boost
+    (an ad built from an existing post or reel). {campaign name: {'fb': [page ids], 'ig': [ig user ids],
+    'ig_media': [media ids], 'boost': bool}}"""
+    account_id = str(account_id).removeprefix("act_")
+    base = "object_story_id,effective_object_story_id,effective_instagram_media_id,source_instagram_media_id"
+    data = None
+    for extra in (",instagram_user_id", ",instagram_actor_id", ""):   # Meta has renamed the IG field over versions
+        try:
+            data = _meta_paged(f"act_{account_id}/ads", {"fields": f"campaign{{name}},creative{{{base}{extra}}}",
+                                                         "limit": 200}, limit_pages=20)
+            break
+        except ConnectorError as e:
+            if not extra or "field" not in str(e).lower():
+                raise
+    out = {}
+    for ad in data or []:
+        name = ((ad.get("campaign") or {}).get("name") or "").strip()
+        cr = ad.get("creative") or {}
+        if not name:
+            continue
+        o = out.setdefault(name, {"fb": [], "ig": [], "ig_media": [], "boost": False})
+        story = cr.get("effective_object_story_id") or cr.get("object_story_id") or ""
+        if "_" in story and story.split("_", 1)[0] not in o["fb"]:
+            o["fb"].append(story.split("_", 1)[0])
+        ig = cr.get("instagram_user_id") or cr.get("instagram_actor_id")
+        if ig and str(ig) not in o["ig"]:
+            o["ig"].append(str(ig))
+        for m in (cr.get("effective_instagram_media_id"), cr.get("source_instagram_media_id")):
+            if m and str(m) not in o["ig_media"]:
+                o["ig_media"].append(str(m))
+        if cr.get("object_story_id") or cr.get("source_instagram_media_id"):
+            o["boost"] = True        # built from a post that was already published: a boost
+    return out
+
+
 # ------------------------------------------------------------------ Meta organic (Pages + Instagram)
 # Meta retired post "impressions" in Nov 2025 in favour of "views" and keeps renaming metrics, so
 # insights are requested newest-name-first and any metric Meta rejects is skipped (and remembered).

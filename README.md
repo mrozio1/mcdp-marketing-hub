@@ -124,6 +124,17 @@ All numbers are calculated exactly; the AI only explains them, following rules
 condensed from [claude-ads](https://github.com/AgriciDaniel/claude-ads) (see
 `ads/NOTICE.md`).
 
+### Boosted posts and reels
+
+A boost (from a Page, Instagram or the Meta Business Suite "Ads" tab) is a Meta campaign with an
+automatic name like *Post: "…"*, so name filters miss it. Each sync asks Meta which Facebook Page or
+Instagram account every ad promotes, in every ad account the hub can see, and a boost goes to the
+practice that Page or account is linked to (Practice setup → Facebook Pages / Instagram), even when it
+was charged to a different ad account. Other campaigns that promote a practice's Page fill in only when
+no practice's filter words match them. Boosts carry a **Boosted** tag in the campaign list. If one
+lands on the wrong practice, use **Move to…** on that row; it then belongs only to that practice
+(**Back to automatic** undoes it).
+
 ### Organic posts (Facebook + Instagram) and the combined view
 
 Link each practice's **Facebook Page** and **Instagram account** under *Linked accounts*

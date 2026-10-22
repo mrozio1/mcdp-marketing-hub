@@ -207,10 +207,11 @@ def platform_view(practice, key, label, all_practices=None):
     up = db.latest_upload(practice["id"], key, "campaign") or db.latest_upload(practice["id"], key, "ad")
     view = {"key": key, "label": label, "upload": up, "budget": budget, "campaigns": [], "findings": [],
             "totals": None, "pacing": {"available": False}, "search_terms": None, "search_upload": None,
-            "filtered": scope.has_filter(practice), "camp_total": 0, "breakdown": None, "all_names": []}
+            "filtered": scope.has_filter(practice), "camp_total": 0, "breakdown": None, "all_names": [],
+            "boosted": scope.boosted_names() if key == "meta" else set()}
     if up:
         all_rows = db.upload_rows(up["id"])
-        rows = scope.apply(all_rows, practice)
+        rows = scope.apply(all_rows, practice, platform=key)
         view["camp_total"] = len({r["campaign"] for r in all_rows})
         view["all_names"] = sorted({r["campaign"] for r in all_rows if r.get("campaign")}, key=str.lower)
         if rows:
@@ -220,7 +221,7 @@ def platform_view(practice, key, label, all_practices=None):
             view["breakdown"] = scope.breakdown(practice, key, all_rows, all_practices)
     st_up = db.latest_upload(practice["id"], key, "search_term")
     if st_up:
-        st_rows = scope.apply(db.upload_rows(st_up["id"]), practice)
+        st_rows = scope.apply(db.upload_rows(st_up["id"]), practice, platform=key)
         if st_rows:
             view["search_upload"] = st_up
             view["search_terms"] = analyze_search_terms(st_rows)
@@ -594,7 +595,8 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 meta_accounts=sync.cached_accounts("meta"), google_accounts=sync.cached_accounts("google"),
                 meta_on=cx.meta_configured(), google_on=google_ready(),
                 assign_targets=[q for q in allp if q["id"] != pid],
-                added=scope.added_campaigns(p),
+                added=scope.added_campaigns(p), all_practices=allp,
+                added_norm={scope.norm(n) for n in scope.added_campaigns(p)},
                 fixes_open=db.changes(pid, ["proposed", "failed", "stale"]),
                 fixes_done=db.changes(pid, ["applied", "undone"], limit=40),
                 kind_labels=actions.KIND_LABELS)
@@ -687,6 +689,40 @@ def practice_campaign_add(request: Request, pid: int, name: str = Form("")):
         n = db.add_campaigns(pid, [name])
         flash(request, f"Added “{name.strip()}”." if n else "That campaign was already added.")
     return RedirectResponse(f"/p/{pid}#campaigns", status_code=303)
+
+
+@app.post("/p/{pid}/campaigns/move")
+def practice_campaign_move(request: Request, pid: int, name: str = Form(""), to: str = Form(""), back: str = Form("")):
+    """Move a campaign to another practice (it then belongs only there), or back to automatic assignment."""
+    if (r := guard(request)):
+        return r
+    here = f"/p/{pid}#campaigns-{back}" if back in ("meta", "google") else f"/p/{pid}"
+    name = " ".join(name.split())
+    if not name or not to:
+        return RedirectResponse(here, status_code=303)
+    for q in db.practices():
+        if scope.norm(name) in {scope.norm(n) for n in scope.added_campaigns(q)}:
+            db.remove_campaign(q["id"], name)
+    if to == "auto":
+        flash(request, f"“{name}” is back to automatic assignment.")
+        return RedirectResponse(here, status_code=303)
+    target = db.practice(int(to)) if to.isdigit() else None
+    if not target:
+        return RedirectResponse(here, status_code=303)
+    db.add_campaigns(target["id"], [name])
+    have = False
+    for plat in ("meta", "google"):
+        up = db.latest_upload(target["id"], plat, "campaign")
+        if up and any(scope.norm(r["campaign"]) == scope.norm(name) for r in db.upload_rows(up["id"])):
+            have = True
+    if have:
+        flash(request, f"Moved “{name}” to {target['name']}.")
+    else:
+        started = sync.start_in_background()
+        flash(request, f"Moved “{name}” to {target['name']}. It runs in an ad account {target['name']} isn't linked to, "
+                       + ("so a sync has started to bring its numbers over (Meta campaigns only); it shows there in a minute or two."
+                          if started else "so it shows there after the sync that's running now (Meta campaigns only)."))
+    return RedirectResponse(here, status_code=303)
 
 
 @app.post("/p/{pid}/campaigns/remove")

@@ -103,14 +103,98 @@ def _fetch(cache, key, fn):
     return val
 
 
-def sync_practice(p, since, until, google=None, cache=None):
+MAX_PROMO_ACCOUNTS = 80
+
+
+def campaign_owners():
+    """{'meta': {normalized campaign name: {'name', 'practices': [ids], 'boost': bool}},
+        'where': {normalized name: [meta ad account ids it runs in]}} from the last sync."""
+    return _status("campaign_owners")
+
+
+def build_owners(practices, cache=None):
+    """Ask Meta which Page / Instagram account every campaign promotes (in every ad account we can see),
+    and map that to the practice the Page or account is linked to."""
+    from .scope import norm
+    if not cx.meta_configured():
+        return {}
+    page_to, ig_to = {}, {}
+    for p in practices:
+        for a in db.social_ids(p, "fb"):
+            page_to.setdefault(a, set()).add(p["id"])
+        for a in db.social_ids(p, "ig"):
+            ig_to.setdefault(a, set()).add(p["id"])
+    accounts = []
+    for a in [p.get("meta_account_id") for p in practices] + [a["id"] for a in cached_accounts("meta") if a.get("active")]:
+        a = str(a or "").removeprefix("act_")
+        if a and a not in accounts:
+            accounts.append(a)
+    with db.conn() as c:
+        media_owner = {r["post_id"]: r["account_id"] for r in c.execute(
+            "SELECT post_id, account_id FROM posts WHERE network='instagram'")}
+    owners, where, failed = {}, {}, 0
+    for acct in accounts[:MAX_PROMO_ACCOUNTS]:
+        try:
+            promos = _fetch(cache, ("meta-promos", acct), lambda a=acct: cx.meta_campaign_promos(a))
+        except cx.ConnectorError:
+            failed += 1
+            continue
+        for name, pr in promos.items():
+            key = norm(name)
+            where.setdefault(key, [])
+            if acct not in where[key]:
+                where[key].append(acct)
+            pids = set()
+            for f in pr["fb"]:
+                pids |= page_to.get(f, set())
+            for i in pr["ig"]:
+                pids |= ig_to.get(i, set())
+            for m in pr["ig_media"]:
+                pids |= ig_to.get(media_owner.get(m, ""), set())
+            if not pids and not pr["boost"]:
+                continue
+            e = owners.setdefault(key, {"name": name, "practices": [], "boost": False})
+            e["practices"] = sorted(set(e["practices"]) | pids)
+            e["boost"] = e["boost"] or pr["boost"]
+    out = {"at": db.now(), "meta": owners, "where": where, "accounts": len(accounts), "failed": failed}
+    db.set_setting("campaign_owners", json.dumps(out))
+    return out
+
+
+def _extra_meta_rows(p, since, until, cache, owners):
+    """Rows for campaigns that belong to this practice but run in another ad account: boosts of its
+    posts charged elsewhere, and campaigns moved to it by hand."""
+    from .scope import added_campaigns, norm
+    if not owners:
+        return []
+    mine = {k for k, e in owners.get("meta", {}).items() if e.get("boost") and p["id"] in e.get("practices", [])}
+    mine |= {norm(n) for n in added_campaigns(p)}
+    own_acct = str(p.get("meta_account_id") or "").removeprefix("act_")
+    by_acct = {}
+    for k in mine:
+        for a in owners.get("where", {}).get(k, []):
+            if a != own_acct:
+                by_acct.setdefault(a, set()).add(k)
+    rows = []
+    for acct, names in by_acct.items():
+        try:
+            all_rows = _fetch(cache, ("meta", acct), lambda a=acct: cx.meta_campaign_rows(a, since, until))
+        except cx.ConnectorError:
+            continue
+        rows += [r for r in all_rows if norm(r["campaign"]) in names]
+    return rows
+
+
+def sync_practice(p, since, until, google=None, cache=None, owners=None):
     """Returns {'meta': {...}, 'google': {...}} for one practice. Stores the whole account's rows;
     the practice's campaign filter is applied when the page reads them."""
     out = {}
-    if p.get("meta_account_id") and cx.meta_configured():
+    extra = _extra_meta_rows(p, since, until, cache, owners) if cx.meta_configured() else []
+    if (p.get("meta_account_id") or extra) and cx.meta_configured():
         try:
-            acct = p["meta_account_id"]
-            rows = _fetch(cache, ("meta", acct), lambda: cx.meta_campaign_rows(acct, since, until))
+            acct = p.get("meta_account_id")
+            rows = _fetch(cache, ("meta", acct), lambda: cx.meta_campaign_rows(acct, since, until)) if acct else []
+            rows = rows + extra
             db.save_upload(p["id"], _parsed(rows, "meta", "campaign", since, until),
                            f"Synced from Meta ({len(rows)} campaign-days)", source="sync")
             db.prune_synced(p["id"], "meta", "campaign")
@@ -201,8 +285,12 @@ def sync_all(today=None):
             except cx.ConnectorError as e:
                 google_error = str(e)
         results, cache = {}, {}
+        try:
+            owners = build_owners(practices, cache)
+        except Exception:   # never let the ownership lookup stop the numbers syncing
+            owners = campaign_owners()
         for p in practices:
-            r = sync_practice(p, since, until, google, cache)
+            r = sync_practice(p, since, until, google, cache, owners)
             if google_error and p.get("google_customer_id"):
                 r["google"] = {"ok": False, "error": google_error}
             if r:
