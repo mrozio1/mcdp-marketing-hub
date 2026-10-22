@@ -130,8 +130,8 @@ def test_filter_only_practice_uses_the_master_accounts(client, monkeypatch):
     conn = c.get("/connections").text
     assert "(master&#39;s, by filter words)" in conn or "(master's, by filter words)" in conn
     dash = c.get("/practices").text
-    assert "its filter words match none of the" in dash              # Wesley: words match nothing
-    assert "Not linked to an ad account, Facebook Page or Instagram yet" in dash
+    assert "Filter matches no campaigns" in dash              # Wesley: words match nothing
+    assert "Nothing linked yet" in dash
     assert db.practice(new)["meta_account_id"] in ("", None)        # nothing was written to the practice
 
 
@@ -143,7 +143,7 @@ def test_sync_errors_show_on_the_practices_list(client, monkeypatch):
         raise sync.cx.ConnectorError("The customer account can't be accessed because it is not yet enabled")
     monkeypatch.setattr(sync.cx, "meta_campaign_rows", gone)
     sync.sync_all(today=TODAY)
-    assert "Meta Ads: The customer account can&#39;t be accessed" in c.get("/practices").text
+    assert "Meta Ads sync failed" in c.get("/practices").text
 
 
 def test_a_blank_practice_is_not_the_master(client, monkeypatch):

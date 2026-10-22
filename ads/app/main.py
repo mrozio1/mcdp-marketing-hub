@@ -95,6 +95,21 @@ templates.env.filters["money"] = money
 templates.env.filters["pct"] = pct
 
 
+def compact(n):
+    """12345 -> 12.3k, for tight spaces."""
+    if n is None:
+        return "—"
+    n = float(n)
+    for div, suf in ((1e6, "M"), (1e3, "k")):
+        if abs(n) >= div:
+            v = n / div
+            return f"{v:.1f}".rstrip("0").rstrip(".") + suf
+    return f"{n:,.0f}"
+
+
+templates.env.filters["compact"] = compact
+
+
 LIST_ITEM = re.compile(r"^\s*([-*+]|\d+[.)])\s+")
 
 
@@ -532,24 +547,35 @@ def welcome(request: Request):
 
 # ---------- practices ----------
 def setup_problems(p, eff, views, result):
-    """Plain-language reasons a practice shows no ad numbers, for the practices list."""
+    """Reasons a practice shows no ad numbers, for the practices list: [{'short', 'long'}]."""
     out = []
     names = dict(PLATFORMS) | {"facebook": "Facebook posts", "instagram": "Instagram posts"}
     for k, r in (result or {}).items():
         if isinstance(r, dict) and r.get("ok") is False:
-            out.append(f"{names.get(k, k)}: {r.get('error', 'the last sync failed')}"[:160])
+            out.append({"short": f"{names.get(k, k)} sync failed", "at": "accounts", "long": f"{names.get(k, k)}: {r.get('error', 'the last sync failed')}"})
     linked = any(eff.get(k) for k in ("meta_account_id", "google_customer_id"))
     has_any = any(v["upload"] for v in views)
     if not linked and not has_any and not p.get("fb_page_id") and not p.get("ig_account_id"):
-        out.append("Not linked to an ad account, Facebook Page or Instagram yet. Link them in Practice setup.")
+        out.append({"short": "Nothing linked yet", "at": "accounts", "long": "Not linked to an ad account, Facebook Page or Instagram yet. Link them in Practice setup."})
     elif not linked and not has_any:
-        out.append("No ad account linked, so there are no ad numbers. Link one in Practice setup, or give it "
-                   "campaign filter words to use the master record's accounts.")
-    for v in views:
-        if v["upload"] and v["filtered"] and not v["campaigns"] and v["camp_total"]:
-            out.append(f"{v['label']}: its filter words match none of the {v['camp_total']} campaigns in the account. "
-                       "Check the words in Practice setup.")
+        out.append({"short": "No ad account", "at": "accounts", "long": "No ad account linked, so there are no ad numbers. Link one in Practice setup, "
+                                                     "or give it campaign filter words to use the master record's accounts."})
+    none = [v for v in views if v["upload"] and v["filtered"] and not v["campaigns"] and v["camp_total"]]
+    if none:
+        out.append({"short": "Filter matches no campaigns", "at": "settings",
+                    "long": " ".join(f"{v['label']}: its filter words match none of the {v['camp_total']} campaigns in the account."
+                                     for v in none) + " Check the words in Practice setup."})
     return out
+
+
+def organic_summary(p, allp):
+    """This month's Facebook / Instagram post numbers for the practices list."""
+    since, until = sync.sync_window()
+    try:
+        org = organic.organic_view(p, allp, is_master(p, allp), since, until)
+    except Exception:
+        return []
+    return [n for n in org["networks"] if n.get("count")]
 
 
 @app.get("/practices", response_class=HTMLResponse)
@@ -567,7 +593,7 @@ def dashboard(request: Request):
         waste += sum((v["search_terms"] or {}).get("wasted_total", 0) for v in views)
         items.append({"p": p, "views": views, "waste": round(waste, 2), "master": is_master(p, allp),
                       "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium")),
-                      "problems": problems})
+                      "problems": problems, "organic": organic_summary(p, allp)})
     items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
     return page(request, "dashboard.html", items=items)
 

@@ -748,4 +748,13 @@ section[aria-labelledby="due-h"], section#budgets { margin-top: 32px; }
 .move-form select { font: inherit; font-size: 0.82rem; padding: 0.15rem 0.3rem; min-width: 7.5rem; max-width: 12rem; border: 1px solid var(--hair); border-radius: 6px; background: transparent; color: var(--ink-soft); }
 
 /* Practices list: why a practice has no numbers */
-.setup-problem { display: block; color: #8A4B12; margin-top: 0.2rem; max-width: 28rem; line-height: 1.35; }
+table.practices th .setup-note, .setup-note { display: block; max-width: 11rem; margin-top: 0.25rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 0.78rem; font-weight: 400; color: #9A6A3A; text-decoration: none; }
+table.practices th .setup-note:hover, .setup-note:hover { color: #8A4B12; text-decoration: underline; }
+table.practices tr.organic-row th, table.practices tr.organic-row td { border-top: 0; padding-top: 0; }
+table.practices tr:has(+ tr.organic-row) th, table.practices tr:has(+ tr.organic-row) td { border-bottom: 0; padding-bottom: 0.4rem; }
+.organic-row td { font-size: 0.85rem; color: var(--ink-soft); }
+.organic-line { display: grid; grid-template-columns: auto 1fr; gap: 0 1rem; align-items: baseline; }
+.organic-label { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); }
+.organic-net { display: block; white-space: nowrap; line-height: 1.6; }
+.organic-net strong { font-weight: 600; color: var(--ink); margin-right: 0.2rem; }

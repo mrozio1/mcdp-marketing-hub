@@ -28,7 +28,7 @@
       <th scope="row">
         <a href="/p/{{ it.p.id }}">{{ it.p.name }}</a>
         {% if it.master %}<span class="tag tag-master">Master</span>{% elif it.p.campaign_filter %}<span class="muted small scope-sub">{{ it.p.campaign_filter|truncate(40) }}</span>{% endif %}
-        {% for pr in it.problems %}<span class="setup-problem small">⚠ {{ pr }}</span>{% endfor %}
+        {% if it.problems %}<a class="setup-note" href="/p/{{ it.p.id }}#{{ it.problems[0].at }}" title="{{ it.problems|map(attribute='long')|join('  ') }}">⚠ {{ it.problems[0].short }}{% if it.problems|length > 1 %} +{{ it.problems|length - 1 }}{% endif %}</a>{% endif %}
         {% if it.issues %}<span class="issues">{{ it.issues }} to review</span>{% endif %}
       </th>
       {% for v in it.views %}
@@ -36,6 +36,15 @@
       {% endfor %}
       <td class="num">{% if it.waste %}<span class="waste">{{ it.waste|money }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
     </tr>
+    {% if it.organic %}
+    <tr class="organic-row">
+      <th scope="row"><span class="sr-only">{{ it.p.name }} organic posts</span></th>
+      <td colspan="2"><div class="organic-line"><span class="organic-label">Organic this month</span>
+        <div>{% for n in it.organic %}<span class="organic-net"><strong>{{ n.label }}</strong> {{ n.count }} post{{ '' if n.count == 1 else 's' }}{% if n.views is not none %} · {{ n.views|compact }} views{% endif %} · {{ n.interactions|compact }} engagements{% if n.rate %} · {{ '%.1f'|format(n.rate * 100) }}% rate{% endif %}</span>{% endfor %}</div>
+      </div></td>
+      <td></td>
+    </tr>
+    {% endif %}
   {% endfor %}
   </tbody>
 </table>
