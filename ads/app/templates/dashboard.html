@@ -64,5 +64,19 @@
   </form>
   </div>
 </details>
+<details class="drawer" id="brand-import" {% if kits_waiting %}open{% endif %}>
+  <summary><span class="drawer-title">Import brand kits</span><span class="drawer-hint">{% if kits_waiting %}{{ kits_waiting|length }} practice{{ 's' if kits_waiting|length != 1 }} with suggestions to check{% else %}Load several practices' brand kits from one file{% endif %}</span></summary>
+  <div class="drawer-body">
+  <p class="muted small">Each brand's kit goes to every practice whose name includes the brand name, as suggestions. Nothing is used for ads until someone opens the practice's Brand kit, checks it and clicks Save.</p>
+  <form method="post" action="/brand-kits/import" enctype="multipart/form-data" class="row-form" data-busy="Importing…">
+    <label>Brand kits file (.json)<input type="file" name="file" accept=".json,application/json" required></label>
+    <button type="submit" class="btn btn-quiet">Import</button>
+  </form>
+  {% if kits_waiting %}
+  <p class="small">Waiting for review:
+    {% for q in kits_waiting %}<a href="/p/{{ q.id }}#brand">{{ q.name }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>
+  {% endif %}
+  </div>
+</details>
 {% endif %}
 {% endblock %}

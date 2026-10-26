@@ -210,7 +210,10 @@ always include, words never to use, locations and doctors. Fill it by hand, uplo
 practice's brand guide (PDF, Word, PowerPoint or text), or **Read the website** (home page
 plus a few service / about pages), then **Fill the kit from these**: the AI suggests each
 field and nothing is used until someone checks it and clicks Save. A kit can be copied
-from another practice as a starting point.
+from another practice as a starting point. Several kits can be loaded at once from a .json
+file under **Import brand kits** on the Practices page: each brand's kit goes to every
+practice whose name includes the brand name (or one of its `match` words), again only as
+suggestions to check and Save.
 
 After writing, every line is checked: lines over the length limit, using a "never say"
 word, with an exclamation mark in a Google headline, a phone number, a guarantee or

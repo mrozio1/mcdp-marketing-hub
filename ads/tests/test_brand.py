@@ -158,3 +158,45 @@ def test_copy_kit_from_another_practice(hub):
     assert "Copied Heights Orthodontics" in r.text
     assert brand.kit(other)["offers"] == KIT["offers"]
     assert "Brand kit" in c.get(f"/p/{other}").text
+
+
+SAMPLE = {"kits": [
+    {"brand": "Lakeview Orthodontics", "match": ["Lakeview"], "website": "https://lakeview.example/",
+     "voice": "Warm", "offers": ["Free consultation", "No aligner surcharge"], "must_say": "Lakeview Orthodontics"},
+    {"brand": "Riverbend Orthodontics", "voice": "Friendly", "doctors": "Dr. Ada Example"},
+    {"brand": "Pediatric Dentistry of Riverbend", "voice": "Playful", "locations": "Riverbend\nNorth County"},
+    {"brand": "Mt Pleasant Dental", "match": ["Mt Pleasant", "Mount Pleasant"], "voice": "Caring"},
+    {"brand": "Harbor's Edge Dental", "match": ["Harbor's Edge"], "voice": "Calm", "must_say": "Harbor's Edge"},
+    {"brand": "Elsewhere Orthodontics", "voice": "Bright"},
+]}
+
+
+def test_bulk_import_matches_brands_to_practices(hub):
+    c, db, pid, ai = hub
+    import json
+    from app import brand
+    names = ["Lakeview Orthodontics - Canton", "Lakeview Clarkston", "Riverbend Orthodontics",
+             "Pediatric Dentistry of Riverbend", "Mount Pleasant Dental", "Harbors Edge Family Dentistry", "MCDP Ads"]
+    ids = {n: db.add_practice(n, 0, 0) for n in names}
+    brand.save(ids["Riverbend Orthodontics"], {"voice": "Our own saved voice"}, "Mark")
+    r = c.post("/brand-kits/import", files={"file": ("kits.json", json.dumps(SAMPLE).encode())})
+    assert "Brand kits ready to review for 6 practices (5 brands)" in r.text
+    assert "No practice matched: Elsewhere Orthodontics" in r.text
+    k = brand.kit(ids["Lakeview Clarkston"])
+    assert k["suggested"]["offers"] == "Free consultation\nNo aligner surcharge" and k["website"] == "https://lakeview.example/"
+    assert not brand.has_kit(k)                                           # suggestions only until saved
+    assert brand.kit(ids["Pediatric Dentistry of Riverbend"])["suggested"]["voice"] == "Playful"   # most specific brand wins
+    assert brand.kit(ids["Riverbend Orthodontics"])["voice"] == "Our own saved voice"           # saved kit untouched
+    assert brand.kit(ids["Riverbend Orthodontics"])["suggested"]["doctors"] == "Dr. Ada Example"
+    assert brand.kit(ids["Mount Pleasant Dental"])["suggested"]["voice"] == "Caring"
+    assert brand.kit(ids["Harbors Edge Family Dentistry"])["suggested"]["must_say"] == "Harbor's Edge"
+    assert brand.kit(ids["MCDP Ads"])["suggested"] is None
+    page = c.get("/practices").text
+    assert "6 practices with suggestions to check" in page and "Lakeview Clarkston" in page
+    assert "Suggested from your materials" in c.get(f"/p/{ids['Lakeview Clarkston']}").text
+
+
+def test_bulk_import_rejects_bad_files(hub):
+    c, db, pid, ai = hub
+    assert "isn" in c.post("/brand-kits/import", files={"file": ("x.json", b"not json")}).text
+    assert "no brand kits" in c.post("/brand-kits/import", files={"file": ("x.json", b'{"kits": []}')}).text

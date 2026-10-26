@@ -596,7 +596,7 @@ def dashboard(request: Request):
                       "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium")),
                       "problems": problems, "organic": organic_summary(p, allp)})
     items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
-    return page(request, "dashboard.html", items=items)
+    return page(request, "dashboard.html", items=items, kits_waiting=brand.waiting_review(allp))
 
 
 @app.post("/practices")
@@ -1032,6 +1032,30 @@ async def brand_fill(request: Request, pid: int):
         return _brand_back(pid)
     flash(request, "Suggestions filled in below from your materials. Check each one, then Save the kit.")
     return _brand_back(pid)
+
+
+@app.post("/brand-kits/import")
+async def brand_import(request: Request, file: UploadFile = File(...)):
+    if (r := guard(request)):
+        return r
+    import json as _json
+    raw = await file.read(brand.FILE_MAX + 1)
+    try:
+        data = _json.loads(raw.decode("utf-8-sig"))
+        rep = brand.import_kits(data, db.practices(), actor(request))
+    except (ValueError, UnicodeDecodeError):
+        flash(request, "That isn't a brand-kits file (it should be the .json file Claude made).", "error")
+        return RedirectResponse("/practices#brand-import", status_code=303)
+    except brand.BrandError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse("/practices#brand-import", status_code=303)
+    n = sum(len(v) for v in rep["matched"].values())
+    msg = (f"Brand kits ready to review for {n} practice{'s' if n != 1 else ''} ({len(rep['matched'])} brands). "
+           "Open each practice's Brand kit, check the suggestions and Save.")
+    if rep["unmatched"]:
+        msg += " No practice matched: " + ", ".join(rep["unmatched"]) + " (add the practice, or rename it to include the brand name, and import again)."
+    flash(request, msg, "ok" if n else "error")
+    return RedirectResponse("/practices#brand-import", status_code=303)
 
 
 @app.post("/p/{pid}/brand/discard")

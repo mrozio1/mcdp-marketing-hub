@@ -403,3 +403,60 @@ def fill_from_sources(practice, generate_json):
         raise BrandError("The AI couldn't find brand details in those materials.")
     set_suggested(practice["id"], vals)
     return vals
+
+
+# ------------------------------------------------------------------ bulk import (one file, many practices)
+def _norm(s):
+    s = str(s or "").lower().replace("’", "'").replace("'", "")
+    s = re.sub(r"\bmount\b", "mt", s)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+def import_kits(data, practices, by=""):
+    """data: {"kits": [{"brand", "match"?: [terms], "website"?, <kit fields>}]} (or just the list).
+    Each kit goes to every practice whose name contains one of its terms (the brand name by default),
+    as suggestions to check and Save; nothing a person saved is changed. A practice that matches
+    several brands takes the most specific (longest) term. Returns {"matched": {brand: [names]},
+    "unmatched": [brands], "skipped": [reasons]}."""
+    kits = data.get("kits") if isinstance(data, dict) else data
+    if not isinstance(kits, list) or not kits:
+        raise BrandError("That file has no brand kits in it.")
+    best = {}                          # practice id -> (term length, kit index)
+    for i, k in enumerate(kits):
+        if not isinstance(k, dict) or not str(k.get("brand") or "").strip():
+            continue
+        terms = [t for t in (k.get("match") or []) if str(t).strip()] + [k["brand"]]
+        for p in practices:
+            name = _norm(p["name"])
+            for t in terms:
+                nt = _norm(t)
+                if nt and re.search(r"(?<![a-z0-9])" + re.escape(nt) + r"(?![a-z0-9])", name):
+                    if len(nt) > best.get(p["id"], (0, None))[0]:
+                        best[p["id"]] = (len(nt), i)
+    matched, skipped = {}, []
+    by_id = {p["id"]: p for p in practices}
+    for pid, (_, i) in best.items():
+        k = kits[i]
+        vals = {key: _clean_field("\n".join(v) if isinstance(v, list) else v) for key, v in k.items() if key in KEYS}
+        if not any(vals.values()):
+            skipped.append(f"{k['brand']}: empty kit")
+            continue
+        site = str(k.get("website") or "").strip()
+        cur = kit(pid)
+        if site and not cur.get("website"):
+            with db.conn() as c:
+                data_now = {x: cur.get(x, "") for x in KEYS}
+                data_now["website"] = site[:300]
+                c.execute("INSERT INTO brand_kits(practice_id, data, suggested) VALUES (?,?, '') "
+                          "ON CONFLICT(practice_id) DO UPDATE SET data=excluded.data", (pid, json.dumps(data_now)))
+        set_suggested(pid, vals)
+        matched.setdefault(k["brand"], []).append(by_id[pid]["name"])
+    unmatched = [k.get("brand") for k in kits if isinstance(k, dict) and k.get("brand") and k["brand"] not in matched]
+    return {"matched": matched, "unmatched": unmatched, "skipped": skipped}
+
+
+def waiting_review(practices):
+    """Practices with suggestions nobody has checked yet."""
+    with db.conn() as c:
+        rows = {r["practice_id"] for r in c.execute("SELECT practice_id FROM brand_kits WHERE suggested != ''")}
+    return [p for p in practices if p["id"] in rows]
