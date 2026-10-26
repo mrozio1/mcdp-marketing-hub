@@ -327,6 +327,10 @@
       <h2>New Google campaign</h2>
       <p class="muted">A complete Search campaign written from this practice’s {% if kit.voice or kit.services or kit.offers %}<a href="#brand">brand kit</a>{% else %}details (add a <a href="#brand">brand kit</a> for on-brand ads){% endif %}: keywords, one ad group and a responsive search ad, shown on Google search to people in or regularly in a radius around the office, bidding to get the most clicks for the budget. You check and edit everything first; Apply creates it <strong>paused</strong> in Google Ads, and Undo removes it.</p>
 
+      {% if camp_job %}
+      <p class="flash flash-ok camp-running" role="status">Writing the campaign… this takes up to two minutes. This page refreshes by itself; you can leave and come back.</p>
+      <script>setTimeout(() => location.reload(), 6000);</script>
+      {% endif %}
       {% if camp_drafts %}
       {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/apply" class="fix-list camp-list" data-busy="Creating in Google Ads…"><input type="hidden" name="back" value="campaign">{% else %}<div>{% endif %}
       <ul>
@@ -336,6 +340,10 @@
             {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="camp">{% endif %}
             <span><span class="tag tag-google">Google</span> {{ ch.title }}<br><span class="muted small">{{ ch.detail }}</span>
             {% if ch.error %}<br><span class="fix-error small">Didn’t go through: {{ ch.error }}</span>{% endif %}
+            {% if pl.flagged %}<span class="camp-flagged small"><strong>Flagged by Google</strong>
+              {% for f in pl.flagged %}<span class="flag-row">{{ f.what|capitalize }}{% if f.text %} “{{ f.text }}”{% endif %} — {{ f.policy }}{% if not f.exemptible %} <strong>(remove it; can’t be appealed)</strong>{% endif %}{% if f.about %}<span class="muted"> · {{ f.about }}</span>{% endif %}</span>{% endfor %}
+              {% if pl.review %}<span class="flag-row">Next Create asks Google to review the flagged items.</span>{% endif %}
+            </span>{% endif %}
             <span class="ad-preview">
               <strong class="small">Ad group</strong> <span class="small">{{ pl.ad_group }}</span><br>
               <strong class="small">Keywords</strong> <span class="small">{{ pl.keywords|join(' · ') }}</span><br>
@@ -363,6 +371,9 @@
               <label class="small">Searches to never show for, one per line<textarea name="negatives" form="camp-edit-{{ ch.id }}" rows="3">{{ pl.negatives|join('\n') }}</textarea></label>
               <label class="small">Headlines, one per line (3–15, up to 30 characters)<textarea name="headlines" form="camp-edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ pl.headlines|join('\n') }}</textarea></label>
               <label class="small">Descriptions, one per line (2–4, up to 90 characters)<textarea name="descriptions" form="camp-edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ pl.descriptions|join('\n') }}</textarea></label>
+              {% if pl.flagged and (pl.flagged|selectattr('exemptible')|list) %}
+              <label class="check small"><input type="checkbox" name="review" value="1" form="camp-edit-{{ ch.id }}" {% if pl.review %}checked{% endif %}> Ask Google to review the flagged items (for things that are legitimate for this practice; Google decides, and the campaign stays paused either way)</label>
+              {% endif %}
               <button class="btn btn-quiet" type="submit" form="camp-edit-{{ ch.id }}">Save campaign</button>
             </details>
             {% endif %}
@@ -379,7 +390,7 @@
       {% if can_edit %}
       <details class="camp-new" {% if not camp_drafts and not camp_made %}open{% endif %}>
         <summary>Draft a new campaign</summary>
-        <form method="post" action="/p/{{ p.id }}/campaign/new" class="stack camp-form" data-busy="Writing the campaign…">
+        <form method="post" action="/p/{{ p.id }}/campaign/new" class="stack camp-form" data-busy="Starting…">
           <label>What should it promote?<input name="focus" maxlength="120" placeholder="e.g. Invisalign for adults, emergency dentist, braces for kids" required></label>
           <div class="camp-row">
             <label>Daily budget ($)<input name="daily_budget" type="number" min="1" max="1000" step="0.01" value="20" required></label>
@@ -390,7 +401,7 @@
             <textarea name="addresses" rows="3" placeholder="43767 Van Dyke Ave, Sterling Heights, MI 48314">{{ camp_addresses|join('\n') }}</textarea></label>
           <label>Landing page<input name="final_url" value="{{ kit.website or '' }}" placeholder="https://…"></label>
           <button class="btn" type="submit" {% if not ai_on %}disabled{% endif %}>Write the campaign</button>
-          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …” so its results show on this page. Takes up to a minute.</span>
+          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …” so its results show on this page. Writing takes up to two minutes and runs in the background.</span>
         </form>
       </details>
       {% endif %}

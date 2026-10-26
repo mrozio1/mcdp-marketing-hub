@@ -69,6 +69,7 @@ def _fresh_state():
         "g_negatives": {},       # resource -> (campaign_id, text)
         "g_ads": {},             # resource -> payload
         "g_new": {},             # campaign resource -> the mutateOperations that created it
+        "g_policy": {},          # keyword text -> exemptible?  (Google's policy check on new keywords)
         "m_objects": {"c1": {"name": "Heights - Free Consult Leads", "status": "ACTIVE", "daily_budget": "2000"},
                       "c2": {"name": "Heights - Smile Gallery Video", "status": "ACTIVE"},
                       "as2": {"name": "Video viewers", "status": "ACTIVE", "daily_budget": "1500", "campaign_id": "c2"}},
@@ -299,6 +300,27 @@ class H(BaseHTTPRequestHandler):
             service = u.path.rsplit("/", 1)[1].split(":")[0]
             if service == "googleAds":
                 mops = json.loads(body)["mutateOperations"]
+                errs = []
+                for i, op in enumerate(mops):
+                    inner = op.get("adGroupCriterionOperation")
+                    if not inner:
+                        continue
+                    text = inner["create"]["keyword"]["text"]
+                    if text in STATE["g_policy"] and not inner.get("exemptPolicyViolationKeys"):
+                        errs.append({"errorCode": {"policyViolationError": "POLICY_ERROR"},
+                                     "message": "A policy was violated. See PolicyViolationDetails for more detail.",
+                                     "location": {"fieldPathElements": [{"fieldName": "mutate_operations", "index": i},
+                                                                        {"fieldName": "ad_group_criterion_operation"}]},
+                                     "details": {"policyViolationDetails": {
+                                         "externalPolicyName": "Healthcare and medicines",
+                                         "externalPolicyDescription": "Some health terms need review.",
+                                         "key": {"policyName": "HEALTH_TEST", "violatingText": text},
+                                         "isExemptible": STATE["g_policy"][text]}}})
+                if errs:
+                    return self._json(400, {"error": {"code": 400, "message": "Request contains an invalid argument.",
+                                                      "status": "INVALID_ARGUMENT", "details": [{
+                                                          "@type": "type.googleapis.com/google.ads.googleads.v25.errors.GoogleAdsFailure",
+                                                          "errors": errs}]}})
                 out, temp = [], {}
                 for op in mops:
                     (kind, inner), = op.items()

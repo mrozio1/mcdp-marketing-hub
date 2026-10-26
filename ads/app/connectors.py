@@ -39,7 +39,9 @@ META_LEAD_FALLBACK = ["onsite_conversion.lead_grouped", "offsite_conversion.fb_p
 
 
 class ConnectorError(RuntimeError):
-    pass
+    def __init__(self, msg="", payload=None):
+        super().__init__(msg)
+        self.payload = payload      # the platform's error body, when there was one
 
 
 def setting(name):
@@ -68,7 +70,7 @@ def _http(url, data=None, headers=None, method=None, timeout=60):
             j = json.loads(raw)
         except ValueError:
             j = None
-        raise ConnectorError(_explain(e.code, j, raw))
+        raise ConnectorError(_explain(e.code, j, raw), payload=j)
     except urllib.error.URLError as e:
         raise ConnectorError(f"Couldn't reach {urllib.parse.urlparse(url).netloc}: {e.reason}")
 
@@ -824,7 +826,7 @@ class GoogleClient:
             res = _http(url, data={"mutateOperations": mutate_operations},
                         headers=self._headers(self._login_for(cid)), timeout=120)
         except ConnectorError as e:
-            raise ConnectorError(_write_hint(str(e), "google")) from None
+            raise ConnectorError(_write_hint(str(e), "google"), payload=e.payload) from None
         return res.get("mutateOperationResponses", [])
 
     def search(self, customer_id, gaql):

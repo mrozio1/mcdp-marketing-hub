@@ -201,7 +201,7 @@ def flash(request, msg, kind="ok"):
 
 
 def page(request, name, **ctx):
-    ctx["flash"] = request.session.pop("flash", None)
+    ctx["flash"] = request.session.pop("flash", None) or getattr(request.state, "camp_flash", None)
     ctx["ai_on"] = ai.available()
     ctx["last_sync"] = sync.last_sync()
     ctx["sync_running"] = sync.running()
@@ -656,7 +656,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 camp_drafts=[c for c in db.changes(pid, ["proposed", "failed", "stale"]) if c["kind"] == campaigns.KIND],
                 camp_made=[c for c in db.changes(pid, ["applied"], limit=60) if c["kind"] == campaigns.KIND],
                 camp_account=campaigns.account_for(p, allp), camp_name_word=campaigns.name_word(p),
-                camp_addresses=campaigns.office_addresses(pid),
+                camp_addresses=campaigns.office_addresses(pid), camp_job=_camp_job_view(request, pid),
                 kit=brand.kit(pid), brand_fields=brand.FIELDS, brand_sources=brand.sources(pid),
                 kit_sources=[q for q in allp if q["id"] != pid and brand.has_kit(brand.kit(q["id"]))])
 
@@ -969,6 +969,34 @@ async def fixes_edit(request: Request, pid: int, cid: int):
 
 
 # ---------- brand-new Google Search campaigns (drafted from the brand kit, created paused on Apply) ----------
+# Writing a campaign can take longer than the Cloudflare tunnel waits (100 s), so it runs in the
+# background; the page shows "Writing…" and refreshes itself until it's done.
+import threading as _threading
+import time as _time
+
+CAMP_JOBS = {}          # practice id -> {"state": "running"|"done"|"error", "msg": str, "started": float}
+CAMP_JOB_MAX = 6 * 60   # a job older than this is treated as lost (e.g. the app restarted)
+
+
+def camp_job(pid):
+    j = CAMP_JOBS.get(pid)
+    if j and j["state"] == "running" and _time.time() - j["started"] > CAMP_JOB_MAX:
+        j.update(state="error", msg="Writing the campaign took too long and was stopped. Try again.")
+    return j
+
+
+def _run_camp_job(pid, kwargs):
+    p = db.practice(pid)
+    try:
+        campaigns.draft(p, ai.generate_json, practices=db.practices(), **kwargs)
+        CAMP_JOBS[pid] = {"state": "done", "started": _time.time(), "msg": "Campaign drafted. Check every part "
+                          "below (edit if needed), then tick it and click Create to make it, paused, in Google Ads."}
+    except (campaigns.CampaignError, actions.ActionError, ai.AIError, cx.ConnectorError) as e:
+        CAMP_JOBS[pid] = {"state": "error", "started": _time.time(), "msg": str(e)}
+    except Exception as e:      # never leave the page stuck on "Writing…"
+        CAMP_JOBS[pid] = {"state": "error", "started": _time.time(), "msg": f"Something went wrong writing the campaign: {e}"}
+
+
 @app.post("/p/{pid}/campaign/new")
 async def campaign_new(request: Request, pid: int):
     if (r := guard(request)):
@@ -976,18 +1004,34 @@ async def campaign_new(request: Request, pid: int):
     p = db.practice(pid)
     if not p:
         return RedirectResponse("/practices", status_code=303)
+    back = RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+    j = camp_job(pid)
+    if j and j["state"] == "running":
+        flash(request, "A campaign is already being written for this practice; it appears here when ready.")
+        return back
     f = await request.form()
     addrs = [x.strip() for x in str(f.get("addresses") or "").replace("\r", "").split("\n") if x.strip()]
-    try:
-        await asyncio.to_thread(campaigns.draft, p, ai.generate_json, focus=f.get("focus", ""),
-                                daily_budget=f.get("daily_budget"), max_cpc=f.get("max_cpc") or None,
-                                radius=f.get("radius") or 10, addresses=addrs, landing_url=f.get("final_url", ""),
-                                practices=db.practices())
-        flash(request, "Campaign drafted. Check every part below (edit if needed), then tick it and Apply to create "
-                       "it, paused, in Google Ads.")
-    except (campaigns.CampaignError, actions.ActionError, ai.AIError) as e:
+    kwargs = dict(focus=f.get("focus", ""), daily_budget=f.get("daily_budget"), max_cpc=f.get("max_cpc") or None,
+                  radius=f.get("radius") or 10, addresses=addrs, landing_url=f.get("final_url", ""))
+    try:                                   # quick checks now, so mistakes show straight away
+        campaigns._money(kwargs["daily_budget"], 1, 1000, "Daily budget")
+        if kwargs["max_cpc"]:
+            campaigns._money(kwargs["max_cpc"], 0.1, 100, "Max cost per click")
+        campaigns._radius(kwargs["radius"])
+        if not campaigns.account_for(p):
+            raise campaigns.CampaignError("Link this practice (or its master record) to a Google Ads account first, "
+                                          "under Linked accounts.")
+        if not ai.available():
+            raise campaigns.CampaignError("AI isn't switched on for the Ads page. Run: sh enable-ads.sh")
+    except campaigns.CampaignError as e:
         flash(request, str(e), "error")
-    return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+        return back
+    CAMP_JOBS[pid] = {"state": "running", "started": _time.time(), "msg": ""}
+    if os.environ.get("ADS_SYNC_JOBS") == "1":          # tests: run in line
+        _run_camp_job(pid, kwargs)
+    else:
+        _threading.Thread(target=_run_camp_job, args=(pid, kwargs), daemon=True).start()
+    return back
 
 
 @app.post("/p/{pid}/campaign/{cid}/edit")
@@ -1007,6 +1051,18 @@ async def campaign_edit(request: Request, pid: int, cid: int):
                      detail=campaigns.summary_detail(payload))
     flash(request, "Campaign saved. Tick it and Apply to create it (paused).")
     return RedirectResponse(f"/p/{pid}#camp-{cid}", status_code=303)
+
+
+def _camp_job_view(request, pid):
+    """Running -> shown with a self-refresh; finished -> its message shown once, as a flash."""
+    j = camp_job(pid)
+    if not j:
+        return None
+    if j["state"] == "running":
+        return j
+    CAMP_JOBS.pop(pid, None)
+    request.state.camp_flash = {"msg": j["msg"], "kind": "ok" if j["state"] == "done" else "error"}
+    return None
 
 
 # ---------- brand kits (per practice): rules every new ad is written and checked against ----------

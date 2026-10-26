@@ -288,7 +288,7 @@ def clean_rsa(d, kit=None):
     def keep(xs, limit, maxlen, kind):
         seen, out = set(), []
         for x in xs or []:
-            x = " ".join(str(x).split()).strip()
+            x = brand.fix_case(" ".join(str(x).split()).strip(), kind, kit)
             if not x or x.lower() in seen:
                 continue
             probs = brand.check_line(x, kind, kit, maxlen)

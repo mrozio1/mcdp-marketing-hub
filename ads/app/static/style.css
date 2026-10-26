@@ -807,3 +807,8 @@ li.fix:has(.ad-extra) > .fix-main { flex: 1 1 0; }
 .camp-new > summary { cursor: pointer; color: var(--teal); font-weight: 600; }
 .camp-form { margin-top: 0.8rem; }
 .camp-form textarea, .camp-form input { width: 100%; }
+
+.camp-flagged { display: block; margin-top: 0.4rem; padding: 0.45rem 0.6rem; border-left: 3px solid #B42318; background: #FDF2F1; }
+.camp-flagged .flag-row { display: block; margin-top: 0.2rem; }
+.ad-edit label.check { display: flex; gap: 0.5rem; align-items: flex-start; font-weight: 400; }
+.ad-edit label.check input { width: auto; margin-top: 0.2rem; }

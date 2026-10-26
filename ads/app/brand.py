@@ -172,6 +172,35 @@ def _term_in(term, text):
     return bool(t) and re.search(r"(?<![a-z0-9])" + t + r"(?![a-z0-9])", text.lower()) is not None
 
 
+SMALL = {"a", "an", "and", "at", "by", "for", "in", "of", "on", "or", "the", "to", "with", "your", "our"}
+
+
+def fix_case(text, kind, k=None):
+    """Models sometimes return ad text all in lowercase. Put the kit's own names back in their
+    casing (practice name, towns, doctors, services), then use title case for headlines and
+    sentence case for descriptions. Text that already has capitals is left as written."""
+    if not text or text != text.lower():
+        return text
+    out = text
+    names = []
+    for key in ("must_say", "locations", "doctors", "services", "offers"):
+        for line in lines(k, key):
+            names += [p.strip() for p in re.split(r"[,:;()]", line) if len(p.strip()) > 1]
+    for n in sorted(set(names), key=len, reverse=True):
+        if n != n.lower():
+            out = re.sub(r"(?<![A-Za-z0-9])" + re.escape(n.lower()) + r"(?![A-Za-z0-9])", n, out)
+    if kind == "headline":
+        words = out.split(" ")
+        out = " ".join(w if (w != w.lower() or (i and w in SMALL)) else (w[:1].upper() + w[1:])
+                       for i, w in enumerate(words))
+    else:
+        out = re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), out)
+    out = re.sub(r"\b(mi|oh|in|il)\b(?=$|[\s.,])", lambda m: m.group(1).upper()
+                 if re.search(r",\s*" + m.group(1) + r"\b", out) else m.group(1), out)
+    out = re.sub(r"\b(dds|dmd|ms|msd)\b", lambda m: m.group(1).upper(), out, flags=re.I)
+    return out
+
+
 def check_line(text, kind, k=None, maxlen=None):
     """kind: 'headline' (Google), 'description' (Google) or 'meta'. Returns a list of problems."""
     probs = []

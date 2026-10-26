@@ -239,7 +239,10 @@ def edit(ch, form, kit=None, practice=None):
         final_url=str(form.get("final_url") or "").strip(), keywords=keywords, negatives=negatives,
         headlines=list(dict.fromkeys(" ".join(x.split()) for x in lines("headlines"))),
         descriptions=list(dict.fromkeys(" ".join(x.split()) for x in lines("descriptions"))),
-        dropped=[], edited=True)
+        dropped=[], edited=True, review=bool(form.get("review")))
+    if pl.get("flagged"):
+        texts = {"keyword": {k.lower() for k in pl["keywords"]}}
+        pl["flagged"] = [f for f in pl["flagged"] if f["what"] != "keyword" or f["text"].lower() in texts["keyword"]]
     probs = check(pl, kit)
     if probs:
         raise CampaignError(" ".join(probs[:3]) + (f" (and {len(probs) - 3} more)" if len(probs) > 3 else ""))
@@ -281,14 +284,83 @@ def operations(pl):
                                                               "keyword": {"text": n, "matchType": "PHRASE"}}}})
     ops.append({"adGroupOperation": {"create": {"resourceName": group, "campaign": camp, "name": pl["ad_group"],
                                                 "status": "ENABLED", "type": "SEARCH_STANDARD"}}})
+    review = pl.get("review") and pl.get("flagged")
+    kw_keys, ad_topics = {}, []
+    if review:
+        for f in pl["flagged"]:
+            if not f.get("exemptible"):
+                continue
+            if f["what"] == "keyword" and f.get("key"):
+                kw_keys.setdefault(f["text"].lower(), []).append(f["key"])
+            elif f["what"] == "ad":
+                ad_topics += f.get("topics") or []
+                if f.get("key"):
+                    kw_keys.setdefault("\0ad", []).append(f["key"])
     for k in pl["keywords"]:
-        ops.append({"adGroupCriterionOperation": {"create": {"adGroup": group, "status": "ENABLED",
-                                                             "keyword": {"text": k, "matchType": "PHRASE"}}}})
-    ops.append({"adGroupAdOperation": {"create": {"adGroup": group, "status": "ENABLED", "ad": {
+        crit = {"adGroup": group, "status": "ENABLED", "keyword": {"text": k, "matchType": "PHRASE"}}
+        if k.lower() in kw_keys:
+            crit_op = {"create": crit, "exemptPolicyViolationKeys": kw_keys[k.lower()]}
+        else:
+            crit_op = {"create": crit}
+        ops.append({"adGroupCriterionOperation": crit_op})
+    ad_op = {"create": {"adGroup": group, "status": "ENABLED", "ad": {
         "finalUrls": [pl["final_url"]], "responsiveSearchAd": {
             "headlines": [{"text": h} for h in pl["headlines"]],
-            "descriptions": [{"text": d} for d in pl["descriptions"]]}}}}})
+            "descriptions": [{"text": d} for d in pl["descriptions"]]}}}}
+    if ad_topics or kw_keys.get("\0ad"):
+        ad_op["policyValidationParameter"] = {k: v for k, v in (("ignorablePolicyTopics", sorted(set(ad_topics))),
+                                                                ("exemptPolicyViolationKeys", kw_keys.get("\0ad", [])))
+                                              if v}
+    ops.append({"adGroupAdOperation": ad_op})
     return ops
+
+
+def _describe_op(op):
+    (kind, inner), = op.items()
+    c = inner.get("create", {})
+    if kind == "adGroupCriterionOperation":
+        return "keyword", (c.get("keyword") or {}).get("text", "")
+    if kind == "campaignCriterionOperation" and c.get("keyword"):
+        return "blocked search", c["keyword"].get("text", "")
+    if kind == "adGroupAdOperation":
+        return "ad", ""
+    return {"campaignOperation": "campaign", "adGroupOperation": "ad group",
+            "campaignBudgetOperation": "budget"}.get(kind, "setting"), c.get("name", "")
+
+
+def policy_findings(payload, ops):
+    """Google's policy errors from a failed mutate, as [{what, text, policy, exemptible, key, topics}]."""
+    err = (payload[0] if isinstance(payload, list) and payload else payload or {})
+    err = err.get("error", err) if isinstance(err, dict) else {}
+    found = []
+    for d in err.get("details") or []:
+        for e in d.get("errors") or []:
+            det = e.get("details") or {}
+            pv, pf = det.get("policyViolationDetails"), det.get("policyFindingDetails")
+            if not pv and not pf:
+                continue
+            idx = next((x.get("index") for x in (e.get("location") or {}).get("fieldPathElements") or []
+                        if x.get("fieldName") == "mutate_operations"), None)
+            what, text = _describe_op(ops[idx]) if isinstance(idx, int) and idx < len(ops) else ("item", "")
+            if pv:
+                found.append({"what": what, "text": text or (pv.get("key") or {}).get("violatingText", ""),
+                              "policy": pv.get("externalPolicyName") or (pv.get("key") or {}).get("policyName", "a policy"),
+                              "about": pv.get("externalPolicyDescription", "")[:300],
+                              "exemptible": bool(pv.get("isExemptible")), "key": pv.get("key") or {}, "topics": []})
+            else:
+                topics = [t.get("topic") for t in pf.get("policyTopicEntries") or [] if t.get("topic")]
+                found.append({"what": what, "text": text, "policy": ", ".join(topics) or "an ad policy", "about": "",
+                              "exemptible": True, "key": {}, "topics": topics})
+    return found
+
+
+def explain_findings(found):
+    parts = []
+    for f in found[:6]:
+        label = f"{f['what']} “{f['text']}”" if f["text"] else f["what"]
+        parts.append(f"{label}: {f['policy']}" + ("" if f["exemptible"] else " (can't be appealed; remove it)"))
+    more = f" and {len(found) - 6} more" if len(found) > 6 else ""
+    return "Google flagged " + "; ".join(parts) + more + "."
 
 
 def apply(ch, google_client, kit=None):
@@ -299,7 +371,19 @@ def apply(ch, google_client, kit=None):
     existing = google_client.search(pl["account"], "SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED'")
     if any((r.get("campaign") or {}).get("name", "").strip().lower() == pl["name"].strip().lower() for r in existing):
         raise CampaignError(f"A campaign called “{pl['name']}” already exists in Google Ads. Edit the name and apply again.")
-    res = google_client.mutate_all(pl["account"], operations(pl))
+    ops = operations(pl)
+    try:
+        res = google_client.mutate_all(pl["account"], ops)
+    except cx.ConnectorError as e:
+        found = policy_findings(e.payload, ops)
+        if not found:
+            raise
+        new_pl = dict(pl, flagged=found, review=False)
+        db.update_change(ch["id"], payload=new_pl)
+        hint = (" Remove those under Edit the campaign, or tick “Ask Google to review the flagged items” there "
+                "if they're legitimate for this practice." if any(f["exemptible"] for f in found) else
+                " Remove those under Edit the campaign and try again.")
+        raise CampaignError(explain_findings(found) + hint) from None
     camp = next((r["campaignResult"]["resourceName"] for r in res if "campaignResult" in r), None)
     budget = next((r["campaignBudgetResult"]["resourceName"] for r in res if "campaignBudgetResult" in r), None)
     if not camp:

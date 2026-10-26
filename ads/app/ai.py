@@ -160,6 +160,7 @@ JSON_TASKS = {
         '"headlines": [12 to 15 strings, each 30 characters or fewer], "descriptions": [4 strings, each 90 '
         "characters or fewer]}. Count characters carefully. Keywords: mix service + location (e.g. 'invisalign "
         "sterling heights'), service + 'near me', and plain service terms; no keywords about jobs or schools. "
+        "Headlines in title case and descriptions in sentence case (only keywords are lowercase). "
         "Ad text: vary the angles (offer, trust, convenience, outcome, call to action); use the practice name "
         "and town in a few headlines; no exclamation marks in headlines, no phone numbers, no words in "
         "capitals. If a brand kit is given, write in its voice, use only its approved offers and obey its "
