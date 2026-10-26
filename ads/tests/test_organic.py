@@ -309,3 +309,19 @@ def test_instagram_connected_with_an_instagram_login_is_read_from_instagram(monk
     cx._meta_post("123/replies", {"message": "Thanks!"}, token="IGAAtoken")
     assert seen[0].startswith("https://graph.instagram.com/") and seen[1].startswith(cx.META_BASE + "/")
     assert seen[2].startswith("https://graph.instagram.com/")
+
+
+def test_sync_now_refreshes_the_page_lists_first(monkeypatch, tmp_path):
+    import importlib
+    monkeypatch.setenv("ADS_DB", str(tmp_path / "ads.db"))
+    from app import db, sync
+    importlib.reload(db)
+    importlib.reload(sync)
+    db.init()
+    calls = []
+    monkeypatch.setattr(sync, "refresh_account_lists", lambda: calls.append("lists"))
+    sync.sync_all(refresh_lists=True)
+    assert calls == ["lists"]
+    calls.clear()
+    sync.sync_all()                       # the nightly run refreshes separately, not twice
+    assert calls == []

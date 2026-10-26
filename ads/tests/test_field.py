@@ -445,7 +445,7 @@ def test_sync_now_answers_at_once(env, monkeypatch):
     release = threading.Event()
     calls = []
 
-    def slow_sync(today=None):
+    def slow_sync(today=None, refresh_lists=False):
         with sync._lock:
             calls.append(1)
             release.wait(5)

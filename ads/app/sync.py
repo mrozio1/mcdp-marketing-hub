@@ -272,10 +272,15 @@ def sync_social(practices, today=None):
     return out
 
 
-def sync_all(today=None):
+def sync_all(today=None, refresh_lists=False):
     if not _lock.acquire(blocking=False):
         return {"busy": True}
     try:
+        if refresh_lists:          # "Sync now": pick up Pages / accounts connected since the last refresh first
+            try:
+                refresh_account_lists()
+            except Exception:
+                pass
         since, until = sync_window(today)
         google, google_error = None, None
         from .scope import with_inherited
@@ -333,7 +338,7 @@ def start_in_background():
 
     def run():
         try:
-            sync_all()
+            sync_all(refresh_lists=True)
         except Exception as e:   # keep the error where the page can show it
             db.set_setting("last_sync", json.dumps({"at": db.now(), "error": str(e)}))
     threading.Thread(target=run, name="sync-now", daemon=True).start()
