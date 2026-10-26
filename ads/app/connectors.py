@@ -555,13 +555,26 @@ def _meta_post(path, params, token):
                  headers={"Content-Type": "application/x-www-form-urlencoded"})
 
 
-def _comment_hint(msg, network):
-    low = msg.lower()
-    if "permission" in low or "(#200)" in low or "(#10)" in low or "(#3)" in low:
-        need = "pages_manage_engagement" if network == "facebook" else "instagram_manage_comments"
-        return (f"Meta refused: this account's access can read but not answer comments. Give the MCDP_Ads_Reader "
-                f"system user the {need} permission (or reconnect the account in Social), then try again. ({msg})")
-    return msg
+def _comment_hint(msgs, network):
+    """msgs: [(how, error)] for each way in that was tried."""
+    low = " ".join(m for _, m in msgs).lower()
+    detail = " · ".join(f"{how}: {m}" for how, m in msgs)
+    if not any(w in low for w in ("permission", "(#200)", "(#10)", "(#3)", "does not exist", "unsupported post")):
+        return detail
+    if network == "instagram":
+        return ("Meta refused the reply: the hub can read this Instagram account's comments but isn't allowed to "
+                "answer them. Fix (once per account): Meta Business Settings → Users → System users → "
+                "MCDP_Ads_Reader → Assign assets → Instagram accounts → this account → turn on “Community "
+                "activity” (manage comments), then reply again. If the account is connected in Social through "
+                "Instagram login instead, reconnect it there and allow comment management. (" + detail + ")")
+    return ("Meta refused the reply: the hub can read this Page's comments but isn't allowed to answer them. Fix "
+            "(once per Page): Business Settings → Users → System users → MCDP_Ads_Reader → Assign assets → Pages → "
+            "this Page → turn on “Community activity” (or full control), make sure the token has "
+            "pages_manage_engagement, then reply again. (" + detail + ")")
+
+
+def _how(token):
+    return "Instagram login (Social)" if (token or "").startswith("IG") else "Facebook access"
 
 
 def comment_action(network, comment_id, action, tokens, message=""):
@@ -574,11 +587,16 @@ def comment_action(network, comment_id, action, tokens, message=""):
         edge, params = comment_id, ({"is_hidden": "true"} if network == "facebook" else {"hide": "true"})
     else:
         raise ConnectorError("That action isn't available for this comment.")
-    try:
-        res, _ = _first_working(tokens, lambda t: _meta_post(edge, params, t))
-        return res
-    except ConnectorError as e:
-        raise ConnectorError(_comment_hint(str(e), network)) from None
+    tried = []
+    for t in [t for t in tokens if t]:
+        try:
+            return _meta_post(edge, params, t)
+        except ConnectorError as e:
+            tried.append((_how(t), str(e)))
+    if not tried:
+        raise ConnectorError("No access to this account yet. Link it under the practice's Linked accounts or "
+                             "connect it in Social.")
+    raise ConnectorError(_comment_hint(tried, network))
 
 
 # ------------------------------------------------------------------ Google Business Profile (reviews)

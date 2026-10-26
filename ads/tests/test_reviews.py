@@ -318,3 +318,20 @@ def test_sync_inbox_pulls_comments_and_reports(env, monkeypatch):
 def test_welcome_and_nav_point_to_reviews(env):
     r = env["viewer"].get("/")
     assert "Reviews &amp; comments" in r.text and "waiting for a reply" in r.text
+
+
+def test_instagram_reply_refusal_explains_the_fix(monkeypatch):
+    from app import connectors as cx
+    calls = []
+
+    def refuse(path, params, token):
+        calls.append(token)
+        raise cx.ConnectorError("Unsupported post request. Object with ID '181' does not exist, cannot be loaded due "
+                                "to missing permissions (HTTP 400)")
+    monkeypatch.setattr(cx, "_meta_post", refuse)
+    try:
+        cx.comment_action("instagram", "181", "reply", ["EAAsystem", "IGsocial"], "Thanks!")
+    except cx.ConnectorError as e:
+        msg = str(e)
+    assert calls == ["EAAsystem", "IGsocial"]                               # every way in is tried
+    assert "Community activity" in msg and "Facebook access:" in msg and "Instagram login (Social):" in msg
