@@ -547,8 +547,18 @@ def _apply_meta(ch):
         _meta_set_budget(pl["object_id"], expect=pl["old"], new=pl["new"], name=pl["campaign"])
         return {}
     if kind == "draft_ad":
+        spec = pl["object_story_spec"]
+        if pl.get("image_id"):
+            from . import images
+            try:
+                hsh = images.meta_upload(ch["practice_id"], acct, pl["image_id"])
+            except images.ImageError as e:
+                raise ActionError(str(e))
+            spec = copy.deepcopy(spec)
+            spec["link_data"]["image_hash"] = hsh
+            spec["link_data"].pop("picture", None)
         cr = cx._meta_write(f"act_{acct}/adcreatives", {"name": f"{pl['campaign']} - new text (MCDP Ads)",
-                                                        "object_story_spec": pl["object_story_spec"]})
+                                                        "object_story_spec": spec})
         try:
             ad = cx._meta_write(f"act_{acct}/ads", {"name": f"{pl['headline'][:60]} (draft)", "adset_id": pl["adset_id"],
                                                     "creative": {"creative_id": cr["id"]}, "status": "PAUSED"})
@@ -608,8 +618,9 @@ def apply_change(ch, by=""):
     except cx.ConnectorError as e:
         db.update_change(ch["id"], status="failed", error=str(e))
         return False, str(e)
-    db.update_change(ch["id"], status="applied", result=result, error="", applied_at=db.now(), applied_by=by)
-    return True, ""
+    db.update_change(ch["id"], status="applied", result=result, error=(result or {}).get("warning", ""),
+                     applied_at=db.now(), applied_by=by)
+    return True, (result or {}).get("warning", "")
 
 
 def undo_change(ch, by=""):

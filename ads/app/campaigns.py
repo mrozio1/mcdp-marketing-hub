@@ -388,7 +388,18 @@ def apply(ch, google_client, kit=None):
     budget = next((r["campaignBudgetResult"]["resourceName"] for r in res if "campaignBudgetResult" in r), None)
     if not camp:
         raise CampaignError("Google didn't confirm the new campaign; check Google Ads before trying again.")
-    return {"campaign": camp, "budget": budget}
+    out = {"campaign": camp, "budget": budget}
+    if pl.get("images"):                 # separate step: a refused picture never blocks the campaign itself
+        from . import images
+        try:
+            ops = images.google_operations(ch["practice_id"], pl["account"], camp, pl["images"], pl["name"])
+            if ops:
+                google_client.mutate_all(pl["account"], ops)
+                out["images"] = len(ops) // 4
+        except (cx.ConnectorError, images.ImageError) as e:
+            out["warning"] = ("The campaign was created, but Google didn't take the images: " + str(e)
+                              + " Add them in Google Ads (Assets → Images) or try again from a new draft.")
+    return out
 
 
 def undo(ch, google_client):

@@ -79,6 +79,7 @@ def client(tmp_path, monkeypatch):
     yield c, db, sync, mp
     c.__exit__(None, None, None)
     srv.shutdown()
+    srv.server_close()
 
 
 def test_master_split_and_filtered_practice(client):

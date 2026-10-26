@@ -214,6 +214,17 @@ the radius, a few standard negative keywords (jobs, careers, school…). The nam
 contains the practice's campaign word so its results show on its page. **Undo** removes the
 campaign. Needs the Google robot at Standard access.
 
+### Ad images
+
+Under **Brand kit → Ad images** each practice keeps a logo, a library of its own photos, and
+AI images made with the free Cloudflare image service (`sh enable-cf-images.sh ACCOUNT_ID
+TOKEN` must be on). AI prompts always exclude text, logos, before/after, mouths and
+procedures. Each drafted **new Google campaign** can take up to 4 pictures, added after the
+campaign is created as square (1200×1200) and wide (1200×628) image assets; if Google
+refuses a picture, the campaign is still created and the reason is shown. Each **Meta new ad**
+can use one picture instead of copying the existing ad's: it's uploaded as 1080×1080 with the
+logo small in the bottom-right corner. Files live in the Ads data volume under `/data/brand`.
+
 ### Brand kits (per practice)
 
 The practice page's **Brand kit** drop-down holds the rules new ads are written with:

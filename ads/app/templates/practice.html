@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% from "_macros.html" import ruler %}
+{% macro image_picker(ch, multi, selected, variant) %}
+  <details class="img-pick"{% if selected %} open{% endif %}><summary class="small">Images{% if selected %} ({{ selected|length }} picked){% endif %}</summary>
+    {% if selected %}<div class="img-chosen">{% for i in selected %}<img src="/brand-images/{{ i }}?v={{ variant }}" alt="Picked image" loading="lazy">{% endfor %}</div>
+      <p class="muted small">{% if variant == 'meta_square' %}How it will look on Facebook and Instagram (1080×1080, logo in the corner).{% else %}Added as square and wide image assets.{% endif %}</p>{% endif %}
+    {% if can_edit %}
+    {% if pickable %}
+    <div class="img-grid">
+      {% for a in pickable %}<label class="img-opt"><input type="{{ 'checkbox' if multi else 'radio' }}" name="img" value="{{ a.id }}" form="imgpick-{{ ch.id }}" {% if a.id in selected %}checked{% endif %}><img src="/brand-images/{{ a.id }}" alt="{{ a.label or 'Library image' }}" loading="lazy"><span class="small muted">{{ 'AI' if a.kind == 'generated' else 'Photo' }}</span></label>{% endfor %}
+      {% if not multi %}<label class="img-opt img-none"><input type="radio" name="img" value="" form="imgpick-{{ ch.id }}" {% if not selected %}checked{% endif %}><span class="small">Keep the existing ad’s image</span></label>{% endif %}
+    </div>
+    <button class="btn btn-quiet" type="submit" form="imgpick-{{ ch.id }}">{{ 'Use these images' if multi else 'Use this image' }}</button>
+    {% else %}<p class="muted small">No pictures yet. Upload practice photos under Brand kit → Ad images, or make AI images here.</p>{% endif %}
+    <button class="linklike small" type="submit" form="imggen-{{ ch.id }}" {% if not ai_on %}disabled{% endif %}>Make 3 AI images for this{% if multi %} campaign{% else %} ad{% endif %}</button>
+    {% endif %}
+  </details>
+{% endmacro %}
 {% block title %}{{ p.name }}{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/practices">Practices</a></p>
@@ -238,6 +254,7 @@
                   </span>
                 </label>
                 {% if kind == 'draft_ad' %}<div class="ad-extra">
+                    {% if ch.platform == 'meta' %}{{ image_picker(ch, False, [ch.payload.image_id] if ch.payload.image_id else [], 'meta_square') }}{% endif %}
                     {% if ch.payload.dropped %}
                     <details class="ad-dropped small"><summary>Lines left out ({{ ch.payload.dropped|length }})</summary>
                       <ul>{% for d in ch.payload.dropped %}<li>“{{ d.text }}” <span class="muted">— {{ d.why }}</span></li>{% endfor %}</ul>
@@ -271,7 +288,9 @@
         {% endfor %}
         {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
       </form>{% else %}</div>{% endif %}
-      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>{% endfor %}{% endif %}
+      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
+        {% if ch.platform == 'meta' %}<form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
+        <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus or ch.payload.campaign }}"><input type="hidden" name="back" value="fix-{{ ch.id }}"></form>{% endif %}{% endfor %}{% endif %}
       {% endif %}
 
       {% set draftable = [] %}
@@ -350,10 +369,12 @@
               <strong class="small">Headlines</strong> <span class="small">{{ pl.headlines|join(' · ') }}</span><br>
               <strong class="small">Descriptions</strong> <span class="small">{{ pl.descriptions|join(' · ') }}</span><br>
               <strong class="small">Landing page</strong> <span class="small">{{ pl.final_url or '—' }}</span><br>
-              <strong class="small">Around</strong> <span class="small">{{ pl.addresses|join(' · ') or 'no address yet' }} ({{ '%g'|format(pl.radius) }} mi)</span>
+              <strong class="small">Around</strong> <span class="small">{{ pl.addresses|join(' · ') or 'no address yet' }} ({{ '%g'|format(pl.radius) }} mi)</span><br>
+              <strong class="small">Images</strong> <span class="small">{% if pl.images %}{{ pl.images|length }} picked{% else %}none (optional){% endif %}</span>
             </span></span>
           </label>
           <div class="ad-extra">
+            {{ image_picker(ch, True, pl.images or [], 'google_square') }}
             {% if pl.dropped %}<details class="ad-dropped small"><summary>Left out ({{ pl.dropped|length }})</summary>
               <ul>{% for d in pl.dropped %}<li>“{{ d.text }}” <span class="muted">— {{ d.why }}</span></li>{% endfor %}</ul></details>{% endif %}
             {% if can_edit %}
@@ -383,7 +404,9 @@
       {% endfor %}
       </ul>
       {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button></form>
-      {% for ch in camp_drafts %}<form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>{% endfor %}
+      {% for ch in camp_drafts %}<form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
+        <form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
+        <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus }}"><input type="hidden" name="back" value="camp-{{ ch.id }}"></form>{% endfor %}
       {% else %}</div>{% endif %}
       {% endif %}
 
@@ -599,6 +622,34 @@
         {% for key, label, hint, rows in brand_fields if kit[key] %}<dt>{{ label }}</dt><dd>{{ kit[key]|replace('\n', ' · ') }}</dd>{% endfor %}
       </dl>
       {% else %}<p class="muted small">No brand kit yet.</p>{% endif %}
+
+      <div class="brand-images" id="brand-images">
+        <h3 class="drawer-sub">Ad images</h3>
+        <p class="muted small">The logo goes, small, in a corner of Meta ad images (never on Google’s). Practice photos and AI images can be picked for new Google campaigns and Meta ads.</p>
+        <div class="logo-row">
+          {% if brand_logo %}<img class="logo-thumb" src="/brand-images/{{ brand_logo.id }}" alt="{{ p.name }} logo">{% else %}<span class="muted small">No logo yet.</span>{% endif %}
+          {% if can_edit %}<form method="post" action="/p/{{ p.id }}/brand/images/upload" enctype="multipart/form-data" data-busy="Saving…" class="inline-upload">
+            <input type="hidden" name="kind" value="logo"><input type="file" name="files" accept="image/png,image/jpeg,image/webp" required aria-label="Logo file">
+            <button class="btn btn-quiet" type="submit">{{ 'Replace logo' if brand_logo else 'Upload logo' }}</button></form>{% endif %}
+        </div>
+        {% if can_edit %}
+        <form method="post" action="/p/{{ p.id }}/brand/images/upload" enctype="multipart/form-data" class="stack" data-busy="Adding…">
+          <input type="hidden" name="kind" value="photo">
+          <label class="small">Practice photos <span class="muted">(office, team, community; JPEG, PNG or WebP; several at once)</span><input type="file" name="files" accept="image/jpeg,image/png,image/webp" multiple required></label>
+          <button class="btn btn-quiet" type="submit">Add photos</button>
+        </form>
+        <form method="post" action="/p/{{ p.id }}/brand/images/generate" class="stack" data-busy="Making images…">
+          <label class="small">Make AI images <span class="muted">(describe a scene, or leave blank for a mix)</span><input name="idea" maxlength="300" placeholder="e.g. a family walking into a bright modern office"></label>
+          <button class="btn btn-quiet" type="submit" {% if not ai_on %}disabled{% endif %}>Make 3 images</button>
+          <span class="muted small">Free, via the Cloudflare image service. No before/after, mouths, procedures, text or logos in the picture.</span>
+        </form>
+        {% endif %}
+        {% for title, items in [('Photos', brand_photos), ('AI images', brand_generated)] if items %}
+        <p class="small"><strong>{{ title }}</strong> ({{ items|length }})</p>
+        <div class="img-grid">{% for a in items %}<figure class="img-opt"><img src="/brand-images/{{ a.id }}" alt="{{ a.label or title }}" loading="lazy" title="{{ a.prompt[:200] if a.prompt else a.label }}">
+          {% if can_edit %}<form method="post" action="/p/{{ p.id }}/brand/images/{{ a.id }}/delete" data-confirm="Remove this image from the library?"><button class="x-btn" type="submit" aria-label="Remove" title="Remove">&times;</button></form>{% endif %}</figure>{% endfor %}</div>
+        {% endfor %}
+      </div>
       </div>
     </details>
 

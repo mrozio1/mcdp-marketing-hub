@@ -28,6 +28,7 @@ def env(tmp_path_factory):
     db.init()
     yield connectors, db, sync
     srv.shutdown()
+    srv.server_close()
 
 
 def test_meta_accounts_and_rows(env):

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, campaigns, db, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
+from . import actions, ai, brand, campaigns, db, images, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -148,6 +148,7 @@ def _startup():
     salesforce.init()
     reviews.init()
     brand.init()
+    images.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
         reviews.start_scheduler()
@@ -657,6 +658,8 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 camp_made=[c for c in db.changes(pid, ["applied"], limit=60) if c["kind"] == campaigns.KIND],
                 camp_account=campaigns.account_for(p, allp), camp_name_word=campaigns.name_word(p),
                 camp_addresses=campaigns.office_addresses(pid), camp_job=_camp_job_view(request, pid),
+                brand_logo=images.logo(pid), brand_photos=images.assets(pid, "photo"),
+                brand_generated=images.assets(pid, "generated"), pickable=images.pickable(pid),
                 kit=brand.kit(pid), brand_fields=brand.FIELDS, brand_sources=brand.sources(pid),
                 kit_sources=[q for q in allp if q["id"] != pid and brand.has_kit(brand.kit(q["id"]))])
 
@@ -879,7 +882,7 @@ async def fixes_apply(request: Request, pid: int):
         return r
     form = await request.form()
     ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()]
-    done, problems = 0, []
+    done, problems, warnings = 0, [], []
     for cid in ids:
         ch = db.change(cid)
         if not ch or ch["practice_id"] != pid:
@@ -887,9 +890,13 @@ async def fixes_apply(request: Request, pid: int):
         ok, msg = await asyncio.to_thread(actions.apply_change, ch, actor(request))
         if ok:
             done += 1
+            if msg:
+                warnings.append(msg)
         else:
             problems.append(f"{ch['title']}: {msg}")
     msg = f"Applied {done} change{'s' if done != 1 else ''} in Google / Meta." if done else "Nothing was applied."
+    if warnings:
+        msg += " " + warnings[0]
     if problems:
         msg += f" {len(problems)} didn't go through — " + problems[0] + (" (see the list for the rest)" if len(problems) > 1 else "")
     flash(request, msg, "error" if problems else "ok")
@@ -1063,6 +1070,120 @@ def _camp_job_view(request, pid):
     CAMP_JOBS.pop(pid, None)
     request.state.camp_flash = {"msg": j["msg"], "kind": "ok" if j["state"] == "done" else "error"}
     return None
+
+
+# ---------- ad images: logo, photo library, AI images, and picking them for drafts ----------
+def _img_back(pid, anchor="brand"):
+    return RedirectResponse(f"/p/{pid}#{anchor}", status_code=303)
+
+
+@app.post("/p/{pid}/brand/images/upload")
+async def brand_images_upload(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    if not db.practice(pid):
+        return RedirectResponse("/practices", status_code=303)
+    form = await request.form()
+    kind = "logo" if form.get("kind") == "logo" else "photo"
+    files = [f for f in form.getlist("files") if getattr(f, "filename", "")]
+    added, errs = 0, []
+    for f in files[:30]:
+        data = await f.read(images.MAX_UPLOAD + 1)
+        try:
+            await asyncio.to_thread(images.add_upload, pid, data, f.filename, kind, actor(request))
+            added += 1
+        except images.ImageError as e:
+            errs.append(f"{f.filename}: {e}")
+    if kind == "logo":
+        flash(request, "Logo saved. Meta ad images get it, small, in a corner." if added else (errs or ["Choose a file."])[0],
+              "ok" if added else "error")
+    else:
+        msg = f"Added {added} photo{'s' if added != 1 else ''} to the library." if added else "No photos added."
+        if errs:
+            msg += " " + errs[0] + (f" (and {len(errs) - 1} more)" if len(errs) > 1 else "")
+        flash(request, msg, "error" if errs and not added else "ok")
+    return _img_back(pid, "brand-images")
+
+
+@app.post("/p/{pid}/brand/images/generate")
+async def brand_images_generate(request: Request, pid: int, idea: str = Form(""), back: str = Form(""),
+                                focus: str = Form("")):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/practices", status_code=303)
+    try:
+        ids = await asyncio.to_thread(images.generate, p, focus or idea, 3, None, actor(request), idea.strip()[:300])
+        flash(request, f"Made {len(ids)} AI images. They're in the library below each draft and under Brand kit → "
+                       "Ad images; pick the ones to use.")
+    except images.ImageError as e:
+        flash(request, str(e), "error")
+    anchor = back if re.match(r"^(fix|camp)-\d+$", back or "") else "brand-images"
+    return _img_back(pid, anchor)
+
+
+@app.post("/p/{pid}/brand/images/{aid}/delete")
+def brand_images_delete(request: Request, pid: int, aid: int):
+    if (r := guard(request)):
+        return r
+    images.delete(pid, aid)
+    flash(request, "Removed from the library. Ads already created keep their copy.")
+    return _img_back(pid, "brand-images")
+
+
+@app.get("/brand-images/{aid}")
+def brand_image_file(request: Request, aid: int, v: str = ""):
+    if (r := guard(request)):
+        return r
+    a = images.asset(aid)
+    if not a or not images.path(a):
+        return Response(status_code=404)
+    try:
+        if v in images.VARIANTS:
+            data = images.render(a, v, images.logo(a["practice_id"]))
+        else:
+            from PIL import Image
+            import io as _io
+            img = Image.open(images.path(a))
+            img.thumbnail((480, 480))
+            buf = _io.BytesIO()
+            if img.mode in ("RGBA", "LA"):
+                img.save(buf, "PNG")
+                return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+            img.convert("RGB").save(buf, "JPEG", quality=82)
+            data = buf.getvalue()
+    except (images.ImageError, OSError):
+        return Response(status_code=404)
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/p/{pid}/drafts/{cid}/images")
+async def draft_images(request: Request, pid: int, cid: int):
+    """Pick the images for a drafted Google campaign (up to 4) or Meta ad (one)."""
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if not ch or ch["practice_id"] != pid or ch["status"] not in ("proposed", "failed", "stale"):
+        return _fix_back(pid)
+    form = await request.form()
+    pl = dict(ch["payload"])
+    picked = form.getlist("img")
+    if ch["kind"] == campaigns.KIND:
+        pl["images"] = images.clean_selection(pid, picked, images.GOOGLE_MAX_IMAGES)
+        anchor, n = f"camp-{cid}", len(pl["images"])
+        msg = f"{n} image{'s' if n != 1 else ''} will be added to the campaign." if n else "No images will be added."
+    elif ch["kind"] == "draft_ad" and ch["platform"] == "meta":
+        sel = images.clean_selection(pid, picked, 1)
+        pl["image_id"] = sel[0] if sel else None
+        anchor = f"fix-{cid}"
+        msg = ("The new ad will use this image, with the logo in the corner." if sel else
+               f"The new ad will reuse the image of “{pl.get('copied_from') or 'the existing ad'}”.")
+    else:
+        return _fix_back(pid)
+    db.update_change(cid, payload=pl)
+    flash(request, msg)
+    return RedirectResponse(f"/p/{pid}#{anchor}", status_code=303)
 
 
 # ---------- brand kits (per practice): rules every new ad is written and checked against ----------

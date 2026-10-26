@@ -69,7 +69,10 @@ def _fresh_state():
         "g_negatives": {},       # resource -> (campaign_id, text)
         "g_ads": {},             # resource -> payload
         "g_new": {},             # campaign resource -> the mutateOperations that created it
-        "g_policy": {},          # keyword text -> exemptible?  (Google's policy check on new keywords)
+        "g_policy": {},
+        "g_assets": [],          # image asset operations sent to Google
+        "m_images": {},          # hash -> jpeg bytes uploaded to Meta
+        "cf_prompts": [],        # prompts sent to the image service          # keyword text -> exemptible?  (Google's policy check on new keywords)
         "m_objects": {"c1": {"name": "Heights - Free Consult Leads", "status": "ACTIVE", "daily_budget": "2000"},
                       "c2": {"name": "Heights - Smile Gallery Video", "status": "ACTIVE"},
                       "as2": {"name": "Video viewers", "status": "ACTIVE", "daily_budget": "1500", "campaign_id": "c2"}},
@@ -250,6 +253,13 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
         LOG.append(("POST", u.path, dict(self.headers), body))
+        if u.path == "/v1/images/generations":          # the cf-image adapter
+            import base64, io
+            from PIL import Image
+            STATE["cf_prompts"].append(json.loads(body)["prompt"])
+            buf = io.BytesIO()
+            Image.new("RGB", (1024, 1024), (40 + len(STATE["cf_prompts"]) * 20, 150, 160)).save(buf, "JPEG")
+            return self._json(200, {"created": 1, "data": [{"b64_json": base64.b64encode(buf.getvalue()).decode()}]})
         if u.path == "/token":
             f = dict(urllib.parse.parse_qsl(body))
             if f.get("grant_type") == "authorization_code" and f.get("code") == "auth-code-1":
@@ -274,6 +284,12 @@ class H(BaseHTTPRequestHandler):
             if READ_ONLY["meta"]:
                 return self._json(403, {"error": {"message": "(#200) Requires ads_management permission to manage the object", "code": 200}})
             obj = u.path[len("/v25.0/"):]
+            if obj == "act_555001/adimages":
+                import base64, hashlib
+                raw = base64.b64decode(f["bytes"])
+                h = hashlib.md5(raw).hexdigest()
+                STATE["m_images"][h] = raw
+                return self._json(200, {"images": {f.get("name", "x.jpg"): {"hash": h, "url": "https://cdn.example/i.jpg"}}})
             if obj == "act_555001/adcreatives":
                 STATE["seq"] += 1
                 cid = f"cr{STATE['seq']}"
@@ -336,6 +352,12 @@ class H(BaseHTTPRequestHandler):
                         if k in c and c[k].rsplit("/", 1)[1].startswith("-"):
                             assert c[k] in temp, f"{k} refers to an unknown temp id"
                     out.append({kind.replace("Operation", "Result"): {"resourceName": real}})
+                if not any("campaignOperation" in o for o in mops):           # images added to a campaign
+                    for o in mops:
+                        if "campaignAssetOperation" in o:
+                            assert o["campaignAssetOperation"]["create"]["asset"] in temp
+                    STATE["g_assets"].extend(mops)
+                    return self._json(200, {"mutateOperationResponses": out})
                 camp = next(o for o in mops if "campaignOperation" in o)["campaignOperation"]["create"]
                 assert camp["status"] == "PAUSED"
                 crn = temp[camp["resourceName"]]

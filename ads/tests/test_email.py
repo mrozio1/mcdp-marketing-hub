@@ -36,6 +36,7 @@ def hub(tmp_path, monkeypatch):
     yield c, db, pid
     c.__exit__(None, None, None)
     srv.shutdown()
+    srv.server_close()
     mp.reset()
 
 

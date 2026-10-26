@@ -39,6 +39,8 @@ FIELDS = (
     ("never_say", "Never say", "Words or phrases ads must not use (one per line), e.g. cheap, painless, best.", 3),
     ("locations", "Locations and service areas", "Cities and neighbourhoods to mention, one per line.", 2),
     ("doctors", "Doctors to name", "Only names the practice is happy to see in ads.", 2),
+    ("image_style", "Photo style", "For AI ad images, e.g. bright and airy, warm wood tones, teal accents, "
+                                   "families outdoors.", 2),
 )
 KEYS = tuple(k for k, *_ in FIELDS)
 OTHER = ("website",)                       # not part of the AI suggestions
