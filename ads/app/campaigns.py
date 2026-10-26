@@ -354,13 +354,35 @@ def policy_findings(payload, ops):
     return found
 
 
+POLICY_NOTES = {
+    "health in personalized advertising": (
+        "Normal for dental keywords: Google lets them show on search but not to personalized audiences "
+        "(remarketing, customer lists), which these campaigns don't use. Asking for a review is the usual step; "
+        "they then run as “Eligible (limited)”."),
+}
+
+
+def group_findings(found):
+    """[{policy, note, exemptible, items: [{what, text}]}] in first-seen order."""
+    groups = {}
+    for f in found or []:
+        g = groups.setdefault((f["policy"], f["exemptible"]), {
+            "policy": f["policy"], "exemptible": f["exemptible"], "entries": [],
+            "note": POLICY_NOTES.get(f["policy"].strip().lower(), f.get("about", ""))})
+        g["entries"].append({"what": f["what"], "text": f["text"]})
+    return list(groups.values())
+
+
 def explain_findings(found):
     parts = []
-    for f in found[:6]:
-        label = f"{f['what']} “{f['text']}”" if f["text"] else f["what"]
-        parts.append(f"{label}: {f['policy']}" + ("" if f["exemptible"] else " (can't be appealed; remove it)"))
-    more = f" and {len(found) - 6} more" if len(found) > 6 else ""
-    return "Google flagged " + "; ".join(parts) + more + "."
+    for g in group_findings(found):
+        texts = [f"“{i['text']}”" for i in g["entries"] if i["text"]]
+        whats = {i["what"] for i in g["entries"]}
+        what = (next(iter(whats)) if len(whats) == 1 else "item") + ("s" if len(g["entries"]) != 1 else "")
+        shown = ", ".join(texts[:4]) + (f" and {len(texts) - 4} more" if len(texts) > 4 else "")
+        parts.append(f"{len(g['entries'])} {what} for “{g['policy']}”" + (f" ({shown})" if shown else "")
+                     + ("" if g["exemptible"] else ", which can't be appealed"))
+    return "Google flagged " + "; ".join(parts) + "."
 
 
 def apply(ch, google_client, kit=None):
@@ -380,9 +402,8 @@ def apply(ch, google_client, kit=None):
             raise
         new_pl = dict(pl, flagged=found, review=False)
         db.update_change(ch["id"], payload=new_pl)
-        hint = (" Remove those under Edit the campaign, or tick “Ask Google to review the flagged items” there "
-                "if they're legitimate for this practice." if any(f["exemptible"] for f in found) else
-                " Remove those under Edit the campaign and try again.")
+        hint = (" See “Flagged by Google” on the draft." if all(f["exemptible"] for f in found) else
+                " Remove the ones that can't be appealed under Edit the campaign, then try again.")
         raise CampaignError(explain_findings(found) + hint) from None
     camp = next((r["campaignResult"]["resourceName"] for r in res if "campaignResult" in r), None)
     budget = next((r["campaignBudgetResult"]["resourceName"] for r in res if "campaignBudgetResult" in r), None)

@@ -233,7 +233,7 @@
             {% endif %}
             <ul>
             {% for ch in group %}
-              <li class="fix fix-{{ ch.status }}" id="fix-{{ ch.id }}">
+              <li class="fix fix-{{ ch.status }}{% if kind == 'draft_ad' %} has-extra{% endif %}" id="fix-{{ ch.id }}">
                 <label class="fix-main">
                   {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="{{ kind }}">{% endif %}
                   <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span> {{ ch.title }}
@@ -354,14 +354,16 @@
       {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/apply" class="fix-list camp-list" data-busy="Creating in Google Ads…"><input type="hidden" name="back" value="campaign">{% else %}<div>{% endif %}
       <ul>
       {% for ch in camp_drafts %}{% set pl = ch.payload %}
-        <li class="fix fix-{{ ch.status }}" id="camp-{{ ch.id }}">
+        <li class="fix fix-{{ ch.status }} has-extra" id="camp-{{ ch.id }}">
           <label class="fix-main">
             {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="camp">{% endif %}
             <span><span class="tag tag-google">Google</span> {{ ch.title }}<br><span class="muted small">{{ ch.detail }}</span>
             {% if ch.error %}<br><span class="fix-error small">Didn’t go through: {{ ch.error }}</span>{% endif %}
             {% if pl.flagged %}<span class="camp-flagged small"><strong>Flagged by Google</strong>
-              {% for f in pl.flagged %}<span class="flag-row">{{ f.what|capitalize }}{% if f.text %} “{{ f.text }}”{% endif %} — {{ f.policy }}{% if not f.exemptible %} <strong>(remove it; can’t be appealed)</strong>{% endif %}{% if f.about %}<span class="muted"> · {{ f.about }}</span>{% endif %}</span>{% endfor %}
-              {% if pl.review %}<span class="flag-row">Next Create asks Google to review the flagged items.</span>{% endif %}
+              {% for g in group_findings(pl.flagged) %}<span class="flag-row"><strong>{{ g.policy }}</strong>{% if not g.exemptible %} — can’t be appealed; remove these{% endif %}:
+                {% set whats = g.entries|map(attribute='what')|unique|list %}{{ whats|join(', ') }}{{ 's' if g.entries|length > 1 and whats|length == 1 }} ({{ g.entries|length }}): {% for i in g.entries %}{% if i.text %}“{{ i.text }}”{% else %}{{ i.what }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}
+                {% if g.note %}<span class="muted flag-note">{{ g.note }}</span>{% endif %}</span>{% endfor %}
+              {% if pl.review %}<span class="flag-row">The next Create asks Google to review these.</span>{% endif %}
             </span>{% endif %}
             <span class="ad-preview">
               <strong class="small">Ad group</strong> <span class="small">{{ pl.ad_group }}</span><br>
@@ -374,6 +376,9 @@
             </span></span>
           </label>
           <div class="ad-extra">
+            {% if can_edit and pl.flagged and (pl.flagged|rejectattr('exemptible')|list|length == 0) %}
+            <button class="btn btn-quiet review-btn" type="submit" form="camp-review-{{ ch.id }}" data-busy="Creating…">Ask Google to review and create (paused)</button>
+            {% endif %}
             {{ image_picker(ch, True, pl.images or [], 'google_square') }}
             {% if pl.dropped %}<details class="ad-dropped small"><summary>Left out ({{ pl.dropped|length }})</summary>
               <ul>{% for d in pl.dropped %}<li>“{{ d.text }}” <span class="muted">— {{ d.why }}</span></li>{% endfor %}</ul></details>{% endif %}
@@ -406,6 +411,7 @@
       {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button></form>
       {% for ch in camp_drafts %}<form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         <form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
+        <form id="camp-review-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/review-and-create" data-busy="Creating…" hidden></form>
         <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus }}"><input type="hidden" name="back" value="camp-{{ ch.id }}"></form>{% endfor %}
       {% else %}</div>{% endif %}
       {% endif %}

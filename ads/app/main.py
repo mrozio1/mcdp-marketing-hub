@@ -660,6 +660,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 camp_addresses=campaigns.office_addresses(pid), camp_job=_camp_job_view(request, pid),
                 brand_logo=images.logo(pid), brand_photos=images.assets(pid, "photo"),
                 brand_generated=images.assets(pid, "generated"), pickable=images.pickable(pid),
+                group_findings=campaigns.group_findings,
                 kit=brand.kit(pid), brand_fields=brand.FIELDS, brand_sources=brand.sources(pid),
                 kit_sources=[q for q in allp if q["id"] != pid and brand.has_kit(brand.kit(q["id"]))])
 
@@ -1184,6 +1185,30 @@ async def draft_images(request: Request, pid: int, cid: int):
     db.update_change(cid, payload=pl)
     flash(request, msg)
     return RedirectResponse(f"/p/{pid}#{anchor}", status_code=303)
+
+
+@app.post("/p/{pid}/campaign/{cid}/review-and-create")
+async def campaign_review_create(request: Request, pid: int, cid: int):
+    """One click for the usual case: every flagged item can be appealed, so ask Google to review and create."""
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if not ch or ch["practice_id"] != pid or ch["kind"] != campaigns.KIND:
+        return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+    pl = dict(ch["payload"])
+    if not pl.get("flagged") or not all(f["exemptible"] for f in pl["flagged"]):
+        flash(request, "Some flagged items can't be appealed; remove them under Edit the campaign first.", "error")
+        return RedirectResponse(f"/p/{pid}#camp-{cid}", status_code=303)
+    pl["review"] = True
+    db.update_change(cid, payload=pl, status="proposed")
+    ok, msg = await asyncio.to_thread(actions.apply_change, db.change(cid), actor(request))
+    if ok:
+        flash(request, "Created, paused, with a review request for the flagged items. Google usually marks them "
+                       "“Eligible (limited)” within a day or so; check the campaign in Google Ads before switching it on."
+              + (f" {msg}" if msg else ""))
+    else:
+        flash(request, f"Didn't go through: {msg}", "error")
+    return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
 
 
 # ---------- brand kits (per practice): rules every new ad is written and checked against ----------

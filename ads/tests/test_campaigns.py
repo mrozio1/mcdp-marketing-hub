@@ -147,8 +147,8 @@ def test_google_policy_findings_are_shown_and_review_can_be_requested(hub, monke
                                             "addresses": ADDR, "final_url": "https://heights.example/"})
     (ch,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "new_campaign"]
     r = c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(ch["id"])], "back": "campaign"})
-    assert "Google flagged keyword “invisalign near me”: Healthcare and medicines" in r.text
-    assert "“adult braces sterling heights”: Healthcare and medicines (can" in r.text
+    assert "Google flagged 1 keyword for “Healthcare and medicines” (“invisalign near me”)" in r.text
+    assert "1 keyword for “Healthcare and medicines” (“adult braces sterling heights”), which can" in r.text
     assert mp.STATE["g_new"] == {}
     page = c.get(f"/p/{pid}").text
     assert "Flagged by Google" in page and "Ask Google to review the flagged items" in page
@@ -190,3 +190,21 @@ def test_writing_runs_in_the_background(hub, monkeypatch):
         time.sleep(0.1)
     assert "Campaign drafted" in c.get(f"/p/{pid}").text
     assert "Campaign drafted" not in c.get(f"/p/{pid}").text                          # message shown once
+
+
+def test_one_click_review_for_health_keywords(hub, monkeypatch):
+    c, db, pid, ai = hub
+    monkeypatch.setenv("ADS_SYNC_JOBS", "1")
+    monkeypatch.setattr(ai, "AI_API_KEY", "k")
+    monkeypatch.setattr(ai, "generate_json", _fake({}))
+    mp.STATE["g_policy"] = {"invisalign near me": True, "adult braces sterling heights": True}
+    c.post(f"/p/{pid}/campaign/new", data={"focus": "Invisalign", "daily_budget": "10", "radius": "10",
+                                            "addresses": ADDR, "final_url": "https://heights.example/"})
+    (ch,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "new_campaign"]
+    r = c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(ch["id"])], "back": "campaign"})
+    assert "Google flagged 2 keywords for “Healthcare and medicines”" in r.text
+    page = c.get(f"/p/{pid}").text
+    assert "keywords (2): “invisalign near me”, “adult braces sterling heights”" in page
+    assert "Ask Google to review and create" in page
+    r = c.post(f"/p/{pid}/campaign/{ch['id']}/review-and-create")
+    assert "with a review request" in r.text and len(mp.STATE["g_new"]) == 1

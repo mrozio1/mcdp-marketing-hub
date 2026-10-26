@@ -832,3 +832,10 @@ li.fix:has(.ad-extra) > .fix-main { flex: 1 1 0; }
 .img-chosen img { width: 9rem; max-width: 45%; border-radius: var(--radius-s); }
 .img-pick { margin-top: 0.4rem; }
 .img-pick > summary { cursor: pointer; color: var(--teal); }
+
+li.fix.has-extra { flex-wrap: wrap; }
+li.fix.has-extra > .fix-main { flex: 1 1 0; min-width: 0; }
+li.fix.has-extra > .ad-extra { flex: 1 0 100%; order: 3; }
+.flag-row { display: block; margin-top: 0.35rem; }
+.flag-note { display: block; margin-top: 0.15rem; }
+.review-btn { margin: 0.5rem 0 0.2rem; }
