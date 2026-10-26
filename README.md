@@ -217,7 +217,10 @@ campaign. Needs the Google robot at Standard access.
 ### Tools (adapted from OpenAdKit, MIT)
 
 Each practice page has **Score this ad** on every drafted ad and campaign (hook, specificity,
-brand fit, call to action and healthcare care rules, a tier and the top 3 named fixes), and a
+brand fit, call to action and healthcare care rules, a tier and the top 3 named fixes) with
+**Apply these fixes** (swaps each fix into the draft, skipping any that break a rule). New ads
+and campaigns are scored, fixed and re-scored automatically as soon as they're written; the
+draft shows what changed and the before → after score. There is also a
 **Tools** section, run in the background on the brand kit and live numbers:
 - **Optimize:** fix low click rates (live Google ads with last-30-day numbers vs the practice's
   own average), Quality Score check, keyword ideas (each becomes an **Add keywords** proposal

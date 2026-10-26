@@ -172,6 +172,7 @@ def test_writing_runs_in_the_background(hub, monkeypatch):
     c, db, pid, ai = hub
     import threading
     from app import main
+    monkeypatch.delenv("ADS_SYNC_JOBS", raising=False)
     monkeypatch.setattr(ai, "AI_API_KEY", "k")
     gate = threading.Event()
 

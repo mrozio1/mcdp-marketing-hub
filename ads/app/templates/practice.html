@@ -1,12 +1,19 @@
 {% extends "base.html" %}
 {% from "_macros.html" import ruler %}
-{% macro score_box(ch) %}{% set sc = ch.payload.score %}
+{% macro score_box(ch) %}{% set sc = ch.payload.score %}{% set log = ch.payload.fix_log %}{% set before = ch.payload.score_before %}
+  {% if log and (log.applied or log.skipped) %}<div class="fix-log small">
+    {% if log.applied %}<p><strong>{{ 'Fixed automatically' if ch.payload.auto_polished else 'Fixes applied' }}{% if before and before.overall is not none %}{% if sc %}: {{ '%g'|format(before.overall) }} → {{ '%g'|format(sc.overall) }}/10{% else %} (was {{ '%g'|format(before.overall) }}/10){% endif %}{% endif %}</strong></p>
+    <ul>{% for a in log.applied %}<li>{{ a.where|capitalize }}: “{{ a.change }}” → “{{ a.to }}”</li>{% endfor %}</ul>{% endif %}
+    {% if log.skipped %}<p class="muted">Not applied: {% for k in log.skipped %}“{{ k.to }}” ({{ k.why }}){{ '; ' if not loop.last }}{% endfor %}</p>{% endif %}
+  </div>{% endif %}
+  {% if ch.payload.polish_error and not sc %}<p class="muted small">Couldn’t score this automatically ({{ ch.payload.polish_error }}). Use Score this ad.</p>{% endif %}
   {% if sc %}<div class="score-box tier-{{ sc.tier }}">
     <p class="score-head"><span class="score-num">{{ '%g'|format(sc.overall) }}<small>/10</small></span> <strong>{{ sc.tier_label }}</strong></p>
     {% if sc.verdict %}<p class="small">{{ sc.verdict }}</p>{% endif %}
     <ul class="score-levers small">{% for l in sc.levers %}<li><span class="lever-bar"><span style="width: {{ (l.score * 10)|round|int }}%"></span></span> <strong>{{ l.label }} {{ '%g'|format(l.score) }}</strong> — {{ l.reason }}</li>{% endfor %}</ul>
-    {% if sc.fixes %}<p class="small"><strong>Top fixes</strong></p><ol class="small score-fixes">{% for f in sc.fixes %}<li>{% if f.lever %}<span class="muted">{{ f.lever }}:</span> {% endif %}{% if f.change %}change “{{ f.change }}”{% endif %}{% if f.to %} → “{{ f.to }}”{% endif %}</li>{% endfor %}</ol>
-    {% if can_edit %}<p class="muted small">Make these under {{ 'Edit the campaign' if ch.kind == 'new_campaign' else 'Edit the text' }}.</p>{% endif %}{% endif %}
+    {% if sc.fixes %}<p class="small"><strong>{{ 'More fixes to consider' if log and log.applied else 'Top fixes' }}</strong></p><ol class="small score-fixes">{% for f in sc.fixes %}<li>{% if f.lever %}<span class="muted">{{ f.lever }}:</span> {% endif %}{% if f.change %}change “{{ f.change }}”{% endif %}{% if f.to %} → “{{ f.to }}”{% endif %}</li>{% endfor %}</ol>
+    {% if can_edit %}<button class="btn btn-quiet apply-fixes-btn" type="submit" form="applyfix-{{ ch.id }}">Apply these fixes</button>
+    <span class="muted small">Changes this draft only; you still review it and click {{ 'Create' if ch.kind == 'new_campaign' else 'Apply' }}.</span>{% endif %}{% endif %}
   </div>{% endif %}
   {% if can_edit %}<button class="linklike small" type="submit" form="score-{{ ch.id }}" {% if not ai_on %}disabled{% endif %}>{{ 'Score again' if sc else 'Score this ad' }}</button>{% endif %}
 {% endmacro %}
@@ -284,21 +291,23 @@
                     </details>
                     {% endif %}
                     {% if can_edit %}
-                    <details class="ad-edit"><summary class="small">Edit the text</summary>
+                    {% set u = (ch.payload.unsaved or {}).get('values') or {} %}
+                    <details class="ad-edit" {% if ch.payload.unsaved %}open{% endif %}><summary class="small">Edit the text</summary>
+                      {% if ch.payload.unsaved %}<p class="fix-error small edit-error" role="alert"><strong>Not saved yet:</strong> {{ ch.payload.unsaved.error }} Your changes are kept below; fix that and click Save text.</p>{% endif %}
                       {% if ch.platform == 'google' %}
                       <label class="small">Headlines, one per line (3–15, up to 30 characters)
-                        <textarea name="headlines" form="edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ ch.payload.headlines|join('\n') }}</textarea></label>
+                        <textarea name="headlines" form="edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ u.headlines if 'headlines' in u else ch.payload.headlines|join('\n') }}</textarea></label>
                       <label class="small">Descriptions, one per line (2–4, up to 90 characters)
-                        <textarea name="descriptions" form="edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ ch.payload.descriptions|join('\n') }}</textarea></label>
+                        <textarea name="descriptions" form="edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ u.descriptions if 'descriptions' in u else ch.payload.descriptions|join('\n') }}</textarea></label>
                       {% else %}
                       <label class="small">Primary text (up to 300 characters)
-                        <textarea name="primary_text" form="edit-{{ ch.id }}" rows="3" data-limit="300" data-single="1">{{ ch.payload.primary_text }}</textarea></label>
+                        <textarea name="primary_text" form="edit-{{ ch.id }}" rows="3" data-limit="300" data-single="1">{{ u.primary_text if 'primary_text' in u else ch.payload.primary_text }}</textarea></label>
                       <label class="small">Headline (up to 40)
-                        <input name="headline" form="edit-{{ ch.id }}" value="{{ ch.payload.headline }}" maxlength="40"></label>
+                        <input name="headline" form="edit-{{ ch.id }}" value="{{ u.headline if 'headline' in u else ch.payload.headline }}" maxlength="40"></label>
                       <label class="small">Description (optional, up to 60)
-                        <input name="description" form="edit-{{ ch.id }}" value="{{ ch.payload.description or '' }}" maxlength="60"></label>
+                        <input name="description" form="edit-{{ ch.id }}" value="{{ u.description if 'description' in u else (ch.payload.description or '') }}" maxlength="60"></label>
                       {% endif %}
-                      <button class="btn btn-quiet" type="submit" form="edit-{{ ch.id }}">Save text</button>
+                      <button class="btn btn-quiet" type="submit" form="edit-{{ ch.id }}">Save text</button>{% if (pl if ch.kind == 'new_campaign' else ch.payload).unsaved %} <button class="linklike small" type="submit" form="discard-{{ ch.id }}">Discard my changes</button>{% endif %}
                     </details>
                     {% endif %}
                 </div>{% endif %}
@@ -311,15 +320,19 @@
         {% endfor %}
         {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
       </form>{% else %}</div>{% endif %}
-      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
+      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="discard-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/discard-edit" hidden></form><form id="applyfix-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/apply-fixes" data-busy="Applying…" hidden></form><form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         {% if ch.platform == 'meta' %}<form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
         <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus or ch.payload.campaign }}"><input type="hidden" name="back" value="fix-{{ ch.id }}"></form>{% endif %}{% endfor %}{% endif %}
       {% endif %}
 
+      {% if ad_job %}
+      <p class="flash flash-ok" role="status">Writing the new ads, then scoring and fixing them… this page refreshes by itself; you can leave and come back.</p>
+      <script>setTimeout(() => location.reload(), 6000);</script>
+      {% endif %}
       {% set draftable = [] %}
       {% for v in views if v.campaigns and ((v.key == 'google' and p.google_customer_id and google_on) or (v.key == 'meta' and p.meta_account_id and meta_on)) %}{% set _ = draftable.append(v) %}{% endfor %}
       {% if draftable and can_edit %}
-      <form method="post" action="/p/{{ p.id }}/fixes/draft" class="fix-draft" data-busy="Writing the ads…">
+      <form method="post" action="/p/{{ p.id }}/fixes/draft" class="fix-draft" data-busy="Starting…">
         <label>New ad for
           <select name="target">
             {% for v in draftable %}
@@ -339,7 +352,7 @@
         <span class="muted small">
           {% if kit.voice or kit.services or kit.offers or kit.never_say or kit.key_messages %}Written with {{ p.name }}’s <a href="#brand">brand kit</a> and checked against it.
           {% else %}No <a href="#brand">brand kit</a> yet: ads follow the general dental rules only.{% endif %}
-          They appear above for review (edit if needed) and are created paused when applied.</span>
+          Each is scored and its fixes applied automatically; they appear above for review and are created paused when applied.</span>
       </form>
       {% endif %}
 
@@ -370,7 +383,7 @@
       <p class="muted">A complete Search campaign written from this practice’s {% if kit.voice or kit.services or kit.offers %}<a href="#brand">brand kit</a>{% else %}details (add a <a href="#brand">brand kit</a> for on-brand ads){% endif %}: keywords, one ad group and a responsive search ad, shown on Google search to people in or regularly in a radius around the office, bidding to get the most clicks for the budget. You check and edit everything first; Apply creates it <strong>paused</strong> in Google Ads, and Undo removes it.</p>
 
       {% if camp_job %}
-      <p class="flash flash-ok camp-running" role="status">Writing the campaign… this takes up to two minutes. This page refreshes by itself; you can leave and come back.</p>
+      <p class="flash flash-ok camp-running" role="status">Writing the campaign, then scoring and fixing it… this takes up to three minutes. This page refreshes by itself; you can leave and come back.</p>
       <script>setTimeout(() => location.reload(), 6000);</script>
       {% endif %}
       {% if camp_drafts %}
@@ -407,24 +420,26 @@
             {% if pl.dropped %}<details class="ad-dropped small"><summary>Left out ({{ pl.dropped|length }})</summary>
               <ul>{% for d in pl.dropped %}<li>“{{ d.text }}” <span class="muted">— {{ d.why }}</span></li>{% endfor %}</ul></details>{% endif %}
             {% if can_edit %}
-            <details class="ad-edit"><summary class="small">Edit the campaign</summary>
-              <label class="small">Campaign name <span class="muted">(must contain “{{ camp_name_word }}”)</span><input name="name" form="camp-edit-{{ ch.id }}" value="{{ pl.name }}" maxlength="120"></label>
+            {% set u = (pl.unsaved or {}).get('values') or {} %}
+            <details class="ad-edit" {% if pl.unsaved %}open{% endif %}><summary class="small">Edit the campaign</summary>
+              {% if pl.unsaved %}<p class="fix-error small edit-error" role="alert"><strong>Not saved yet:</strong> {{ pl.unsaved.error }} Your changes are kept below; fix that and click Save campaign.</p>{% endif %}
+              <label class="small">Campaign name <span class="muted">(must contain “{{ camp_name_word }}”)</span><input name="name" form="camp-edit-{{ ch.id }}" value="{{ u.name if 'name' in u else pl.name }}" maxlength="120"></label>
               <div class="camp-row">
-                <label class="small">Daily budget ($)<input name="daily_budget" form="camp-edit-{{ ch.id }}" type="number" min="1" max="1000" step="0.01" value="{{ '%.2f'|format(pl.daily_budget) }}"></label>
-                <label class="small">Max per click ($, optional)<input name="max_cpc" form="camp-edit-{{ ch.id }}" type="number" min="0.1" max="100" step="0.01" value="{{ '%.2f'|format(pl.max_cpc) if pl.max_cpc else '' }}"></label>
-                <label class="small">Radius (miles)<input name="radius" form="camp-edit-{{ ch.id }}" type="number" min="1" max="50" step="0.5" value="{{ '%g'|format(pl.radius) }}"></label>
+                <label class="small">Daily budget ($)<input name="daily_budget" form="camp-edit-{{ ch.id }}" type="number" min="1" max="1000" step="0.01" value="{{ u.daily_budget if 'daily_budget' in u else '%.2f'|format(pl.daily_budget) }}"></label>
+                <label class="small">Max per click ($, optional)<input name="max_cpc" form="camp-edit-{{ ch.id }}" type="number" min="0.1" max="100" step="0.01" value="{{ u.max_cpc if 'max_cpc' in u else ('%.2f'|format(pl.max_cpc) if pl.max_cpc else '') }}"></label>
+                <label class="small">Radius (miles)<input name="radius" form="camp-edit-{{ ch.id }}" type="number" min="1" max="50" step="0.5" value="{{ u.radius if 'radius' in u else '%g'|format(pl.radius) }}"></label>
               </div>
-              <label class="small">Office addresses, one per line (street, city, state ZIP)<textarea name="addresses" form="camp-edit-{{ ch.id }}" rows="3">{{ pl.addresses|join('\n') }}</textarea></label>
-              <label class="small">Landing page<input name="final_url" form="camp-edit-{{ ch.id }}" value="{{ pl.final_url }}" placeholder="https://…"></label>
-              <label class="small">Ad group name<input name="ad_group" form="camp-edit-{{ ch.id }}" value="{{ pl.ad_group }}" maxlength="80"></label>
-              <label class="small">Keywords, one per line (phrase match)<textarea name="keywords" form="camp-edit-{{ ch.id }}" rows="8">{{ pl.keywords|join('\n') }}</textarea></label>
-              <label class="small">Searches to never show for, one per line<textarea name="negatives" form="camp-edit-{{ ch.id }}" rows="3">{{ pl.negatives|join('\n') }}</textarea></label>
-              <label class="small">Headlines, one per line (3–15, up to 30 characters)<textarea name="headlines" form="camp-edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ pl.headlines|join('\n') }}</textarea></label>
-              <label class="small">Descriptions, one per line (2–4, up to 90 characters)<textarea name="descriptions" form="camp-edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ pl.descriptions|join('\n') }}</textarea></label>
+              <label class="small">Office addresses, one per line (street, city, state ZIP)<textarea name="addresses" form="camp-edit-{{ ch.id }}" rows="3">{{ u.addresses if 'addresses' in u else pl.addresses|join('\n') }}</textarea></label>
+              <label class="small">Landing page<input name="final_url" form="camp-edit-{{ ch.id }}" value="{{ u.final_url if 'final_url' in u else pl.final_url }}" placeholder="https://…"></label>
+              <label class="small">Ad group name<input name="ad_group" form="camp-edit-{{ ch.id }}" value="{{ u.ad_group if 'ad_group' in u else pl.ad_group }}" maxlength="80"></label>
+              <label class="small">Keywords, one per line (phrase match)<textarea name="keywords" form="camp-edit-{{ ch.id }}" rows="8">{{ u.keywords if 'keywords' in u else pl.keywords|join('\n') }}</textarea></label>
+              <label class="small">Searches to never show for, one per line<textarea name="negatives" form="camp-edit-{{ ch.id }}" rows="3">{{ u.negatives if 'negatives' in u else pl.negatives|join('\n') }}</textarea></label>
+              <label class="small">Headlines, one per line (3–15, up to 30 characters)<textarea name="headlines" form="camp-edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ u.headlines if 'headlines' in u else pl.headlines|join('\n') }}</textarea></label>
+              <label class="small">Descriptions, one per line (2–4, up to 90 characters)<textarea name="descriptions" form="camp-edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ u.descriptions if 'descriptions' in u else pl.descriptions|join('\n') }}</textarea></label>
               {% if pl.flagged and (pl.flagged|selectattr('exemptible')|list) %}
-              <label class="check small"><input type="checkbox" name="review" value="1" form="camp-edit-{{ ch.id }}" {% if pl.review %}checked{% endif %}> Ask Google to review the flagged items (for things that are legitimate for this practice; Google decides, and the campaign stays paused either way)</label>
+              <label class="check small"><input type="checkbox" name="review" value="1" form="camp-edit-{{ ch.id }}" {% if (u.review if 'review' in u else pl.review) %}checked{% endif %}> Ask Google to review the flagged items (for things that are legitimate for this practice; Google decides, and the campaign stays paused either way)</label>
               {% endif %}
-              <button class="btn btn-quiet" type="submit" form="camp-edit-{{ ch.id }}">Save campaign</button>
+              <button class="btn btn-quiet" type="submit" form="camp-edit-{{ ch.id }}">Save campaign</button>{% if (pl if ch.kind == 'new_campaign' else ch.payload).unsaved %} <button class="linklike small" type="submit" form="discard-{{ ch.id }}">Discard my changes</button>{% endif %}
             </details>
             {% endif %}
           </div>
@@ -433,7 +448,7 @@
       {% endfor %}
       </ul>
       {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button></form>
-      {% for ch in camp_drafts %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
+      {% for ch in camp_drafts %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="discard-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/discard-edit" hidden></form><form id="applyfix-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/apply-fixes" data-busy="Applying…" hidden></form><form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         <form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
         <form id="camp-review-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/review-and-create" data-busy="Creating…" hidden></form>
         <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus }}"><input type="hidden" name="back" value="camp-{{ ch.id }}"></form>{% endfor %}
@@ -454,7 +469,7 @@
             <textarea name="addresses" rows="3" placeholder="43767 Van Dyke Ave, Sterling Heights, MI 48314">{{ camp_addresses|join('\n') }}</textarea></label>
           <label>Landing page<input name="final_url" value="{{ kit.website or '' }}" placeholder="https://…"></label>
           <button class="btn" type="submit" {% if not ai_on %}disabled{% endif %}>Write the campaign</button>
-          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …” so its results show on this page. Writing takes up to two minutes and runs in the background.</span>
+          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …” so its results show on this page. Writing, scoring and fixing take up to three minutes and run in the background.</span>
         </form>
       </details>
       {% endif %}

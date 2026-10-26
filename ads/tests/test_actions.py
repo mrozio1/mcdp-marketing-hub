@@ -17,7 +17,8 @@ def hub(tmp_path, monkeypatch):
                  "ADS_DISABLE_SCHEDULER": "1", "GOOGLE_ADS_BASE": base, "GOOGLE_OAUTH_TOKEN_URL": base + "/token",
                  "GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "secret",
                  "GOOGLE_ADS_DEVELOPER_TOKEN": mp.GOOGLE_DEV, "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "",
-                 "META_ACCESS_TOKEN": mp.META_TOKEN, "META_GRAPH_BASE": base}.items():
+                 "META_ACCESS_TOKEN": mp.META_TOKEN, "META_GRAPH_BASE": base,
+                 "ADS_SYNC_JOBS": "1"}.items():
         monkeypatch.setenv(k, v)
     from app import actions, ai, connectors, db, main, sync
     for m in (connectors, db, sync, actions, main):

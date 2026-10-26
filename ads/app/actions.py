@@ -265,9 +265,11 @@ def draft_ad(practice, platform, campaign_name, write_fn, kit=None, focus=""):
 def _add_proposal(pid, prop):
     import json
     with db.conn() as c:
-        c.execute("INSERT INTO changes(practice_id, platform, account, kind, title, detail, payload, created_at) "
+        cur = c.execute("INSERT INTO changes(practice_id, platform, account, kind, title, detail, payload, created_at) "
                   "VALUES (?,?,?,?,?,?,?,?)", (pid, prop["platform"], prop["account"], prop["kind"], prop["title"],
                                                prop.get("detail", ""), json.dumps(prop["payload"]), db.now()))
+        prop["id"] = cur.lastrowid
+        return cur.lastrowid
 
 
 def _extra_context(p, kit, focus):

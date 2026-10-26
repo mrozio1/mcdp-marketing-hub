@@ -454,3 +454,104 @@ def keyword_proposals(practice, got):
             "ones you want and Apply.\n\n" + "\n".join(f"- **{k['text']}** — {k['why']}" for k in kws))
     db.save_ai(practice["id"], OUTPUT_PREFIX + "keywords", note)
     return note
+
+
+# ------------------------------------------------------------------ apply the score's fixes to a draft
+GOOGLE_LIMITS = {"headlines": ("headline", 30), "descriptions": ("description", 90)}
+META_LIMITS = {"primary_text": 300, "headline": 40, "description": 60}
+
+
+def _swap(text, old, new):
+    """Replace old with new in text: the whole line if it matches, else the phrase inside it (any case)."""
+    if text.strip().lower() == old.strip().lower():
+        return new.strip()
+    i = text.lower().find(old.strip().lower())
+    if i < 0:
+        return None
+    return " ".join((text[:i] + new.strip() + text[i + len(old.strip()):]).split())
+
+
+def apply_fixes(ch, kit, fixes=None):
+    """Put the score's fixes into a draft's text. Returns (payload, applied, skipped); each fix that would
+    break a rule (length, never-say, Google's ad rules) or whose text isn't in the draft is skipped."""
+    import copy
+    pl = copy.deepcopy(ch["payload"])
+    fixes = fixes if fixes is not None else ((pl.get("score") or {}).get("fixes") or [])
+    applied, skipped = [], []
+    meta = ch["kind"] == "draft_ad" and ch["platform"] == "meta"
+    for f in fixes:
+        old, new = (f.get("change") or "").strip(), (f.get("to") or "").strip()
+        if not old or not new or old.lower() == new.lower():
+            continue
+        done = False
+        if meta:
+            for field, limit in META_LIMITS.items():
+                cur = pl.get(field) or ""
+                swapped = _swap(cur, old, new) if cur else None
+                if swapped is None:
+                    continue
+                probs = brand.check_line(swapped, "meta", kit, limit)
+                if probs:
+                    skipped.append({"change": old, "to": new, "why": probs[0]})
+                else:
+                    pl[field] = swapped
+                    key = {"primary_text": "message", "headline": "name", "description": "description"}[field]
+                    pl["object_story_spec"]["link_data"][key] = swapped
+                    applied.append({"change": old, "to": new, "where": field.replace("_", " ")})
+                done = True
+                break
+        else:
+            for field, (kind, limit) in GOOGLE_LIMITS.items():
+                lines_ = pl.get(field) or []
+                for i, line in enumerate(lines_):
+                    swapped = _swap(line, old, new)
+                    if swapped is None:
+                        continue
+                    probs = brand.check_line(swapped, kind, kit, limit)
+                    if not probs and any(j != i and x.lower() == swapped.lower() for j, x in enumerate(lines_)):
+                        probs = ["it would repeat another line"]
+                    if probs:
+                        skipped.append({"change": old, "to": new, "why": probs[0]})
+                    else:
+                        lines_[i] = swapped
+                        applied.append({"change": old, "to": new, "where": kind})
+                    done = True
+                    break
+                if done:
+                    break
+        if not done:
+            skipped.append({"change": old, "to": new, "why": "that text isn't in the ad any more"})
+    if applied:
+        pl["score_before"] = {k: (pl.get("score") or {}).get(k) for k in ("overall", "tier_label")}
+        pl.pop("score", None)
+        pl.pop("unsaved", None)
+    pl["fix_log"] = {"applied": applied, "skipped": skipped, "at": db.now()}
+    return pl, applied, skipped
+
+
+def polish(practice, change_id):
+    """Straight after the AI writes a draft: score it, apply the fixes, and score it again.
+    Never blocks the draft: if the AI is busy, the draft simply stays unscored."""
+    ch = db.change(change_id)
+    if not ch:
+        return None
+    kit = brand.kit(practice["id"])
+    try:
+        first = score(practice, ch)
+    except ai.AIError as e:
+        db.update_change(change_id, payload={**ch["payload"], "polish_error": str(e)})
+        return None
+    ch["payload"] = {**ch["payload"], "score": first}
+    pl, applied, skipped = apply_fixes(ch, kit, first["fixes"])
+    if applied:
+        ch["payload"] = pl
+        try:
+            pl["score"] = score(practice, ch)
+        except ai.AIError:
+            pass
+    else:
+        pl = ch["payload"]
+        pl["fix_log"] = {"applied": [], "skipped": skipped, "at": db.now()}
+    pl["auto_polished"] = True
+    db.update_change(change_id, payload=pl)
+    return pl

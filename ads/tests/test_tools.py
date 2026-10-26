@@ -121,3 +121,76 @@ def test_viewers_can_see_but_not_run_tools(ready):
     from app import users
     page = c.get(f"/p/{pid}").text
     assert 'action="/p/%d/tools/ctr"' % pid in page
+
+
+SCORE_JSON = ('{"scores": {"hook": {"score": 6, "reason": "r"}, "specificity": {"score": 5, "reason": "r"}, '
+              '"brand_fit": {"score": 7, "reason": "r"}, "call_to_action": {"score": 6, "reason": "r"}, '
+              '"care": {"score": 9, "reason": "r"}}, "fixes": [%s], "verdict": "v"}')
+
+
+def test_apply_these_fixes(ready, monkeypatch):
+    c, db, pid, ai = ready
+    monkeypatch.setattr(ai, "generate_json", lambda k, ctx: {
+        "headlines": ["Invisalign In Sterling Heights", "Free Consultation", "Heights Orthodontics"],
+        "descriptions": ["Clear aligners for adults. Book a free consultation today.", "Evening appointments."]})
+    monkeypatch.setattr(ai, "_chat", lambda m, **k: (_ for _ in ()).throw(ai.AIError("busy")))   # no auto-polish
+    c.post(f"/p/{pid}/fixes/draft", data={"target": "google|Invisalign - Search"})
+    (d,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "draft_ad"]
+    assert "Couldn’t score this automatically" in c.get(f"/p/{pid}").text
+    fixes = ('{"lever": "specificity", "change": "Free Consultation", "to": "Free Invisalign Consult"},'
+             '{"lever": "hook", "change": "Evening appointments.", "to": "Evening and Saturday visits available."},'
+             '{"lever": "brand_fit", "change": "Not in the ad", "to": "Whatever"}')
+    monkeypatch.setattr(ai, "_chat", lambda m, **k: SCORE_JSON % fixes)
+    c.post(f"/p/{pid}/drafts/{d['id']}/score")
+    assert "Apply these fixes" in c.get(f"/p/{pid}").text
+    r = c.post(f"/p/{pid}/drafts/{d['id']}/apply-fixes")
+    assert "Applied 2 fixes to the draft; skipped 1" in r.text
+    pl = db.change(d["id"])["payload"]
+    assert pl["headlines"] == ["Invisalign In Sterling Heights", "Free Invisalign Consult", "Heights Orthodontics"]
+    assert pl["descriptions"][1] == "Evening and Saturday visits available."
+    whys = {s["to"]: s["why"] for s in pl["fix_log"]["skipped"]}
+    assert "isn't in the ad" in whys["Whatever"]
+    assert "score" not in pl and pl["score_before"]["overall"] == 6.5
+    page = c.get(f"/p/{pid}").text
+    assert "Fixes applied (was 6.5/10)" in page and "“Free Consultation” → “Free Invisalign Consult”" in page
+
+
+def test_new_drafts_are_scored_and_fixed_automatically(ready, monkeypatch):
+    c, db, pid, ai = ready
+    monkeypatch.setattr(ai, "generate_json", lambda k, ctx: {
+        "primary_text": "Thinking about braces? Meet our team for a free consult.",
+        "headline": "Free Orthodontic Consult", "description": "Book online"})
+    calls = []
+
+    def chat(m, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            return SCORE_JSON % '{"lever": "hook", "change": "Thinking about braces?", "to": "Braces at Heights Orthodontics."}'
+        return SCORE_JSON.replace('"score": 6', '"score": 9') % ""
+    monkeypatch.setattr(ai, "_chat", chat)
+    r = c.post(f"/p/{pid}/fixes/draft", data={"target": "meta|Heights - Free Consult Leads"})
+    assert "scored and fixed automatically (now" in r.text
+    (d,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "draft_ad"]
+    pl = d["payload"]
+    assert pl["primary_text"].startswith("Braces at Heights Orthodontics.")
+    assert pl["object_story_spec"]["link_data"]["message"].startswith("Braces at Heights Orthodontics.")
+    assert pl["auto_polished"] and pl["score"]["overall"] > pl["score_before"]["overall"]
+    assert "Fixed automatically: 6.5 →" in c.get(f"/p/{pid}").text
+    assert len(calls) == 2                                                        # score, fix, score again
+
+
+def test_fixes_that_break_rules_are_skipped():
+    from app import tools
+    ch = {"kind": "draft_ad", "platform": "google", "payload": {
+        "headlines": ["Heights Orthodontics", "Free Consult"], "descriptions": ["Book today.", "Evening hours."],
+        "score": {"overall": 6.0, "tier_label": "x", "fixes": []}}}
+    kit = {"never_say": "cheap"}
+    pl, applied, skipped = tools.apply_fixes(ch, kit, [
+        {"change": "Heights Orthodontics", "to": "The Cheap Choice In Sterling Heights"},
+        {"change": "Free Consult", "to": "Heights Orthodontics"},
+        {"change": "Book today.", "to": "Book your visit today!"}])
+    whys = [s["why"] for s in skipped]
+    assert any("limit 30" in w for w in whys)                       # too long (and "cheap")
+    assert any("repeat another line" in w for w in whys)            # duplicate headline
+    assert applied == [{"change": "Book today.", "to": "Book your visit today!", "where": "description"}]
+    assert pl["descriptions"][0] == "Book your visit today!"         # "!" is fine in descriptions

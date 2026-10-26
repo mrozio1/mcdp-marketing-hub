@@ -146,9 +146,10 @@ def draft(practice, write_fn, *, focus, daily_budget, max_cpc=None, radius=10, a
 
 def _store(pid, prop):
     with db.conn() as c:
-        c.execute("INSERT INTO changes(practice_id, platform, account, kind, title, detail, payload, created_at) "
+        cur = c.execute("INSERT INTO changes(practice_id, platform, account, kind, title, detail, payload, created_at) "
                   "VALUES (?,?,?,?,?,?,?,?)", (pid, prop["platform"], prop["account"], prop["kind"], prop["title"],
                                                prop.get("detail", ""), json.dumps(prop["payload"]), db.now()))
+        prop["id"] = cur.lastrowid
 
 
 def _dollars(v):

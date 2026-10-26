@@ -658,6 +658,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 camp_made=[c for c in db.changes(pid, ["applied"], limit=60) if c["kind"] == campaigns.KIND],
                 camp_account=campaigns.account_for(p, allp), camp_name_word=campaigns.name_word(p),
                 camp_addresses=campaigns.office_addresses(pid), camp_job=_camp_job_view(request, pid),
+                ad_job=_ad_job_view(request, pid),
                 brand_logo=images.logo(pid), brand_photos=images.assets(pid, "photo"),
                 brand_generated=images.assets(pid, "generated"), pickable=images.pickable(pid),
                 group_findings=campaigns.group_findings,
@@ -927,6 +928,63 @@ def fixes_dismiss(request: Request, pid: int, cid: int, back: str = Form("")):
     return _fix_back(pid, back)
 
 
+def _polish_note(pl):
+    if not pl or not pl.get("score"):
+        return "."
+    applied = len((pl.get("fix_log") or {}).get("applied") or [])
+    before = (pl.get("score_before") or {}).get("overall")
+    sc = pl["score"]["overall"]
+    if applied and before is not None:
+        return f", scored and improved: {before:g} → {sc:g}/10 after {applied} fix{'es' if applied != 1 else ''}."
+    return f" and scored {sc:g}/10."
+
+
+AD_JOBS = {}            # practice id -> {"state", "msg", "started"}
+
+
+def _ad_job_view(request, pid):
+    j = AD_JOBS.get(pid)
+    if not j:
+        return None
+    if j["state"] == "running" and _time.time() - j["started"] > CAMP_JOB_MAX:
+        j.update(state="error", msg="Writing the ads took too long and was stopped. Try again.")
+    if j["state"] == "running":
+        return j
+    AD_JOBS.pop(pid, None)
+    if not getattr(request.state, "camp_flash", None):
+        request.state.camp_flash = {"msg": j["msg"], "kind": "ok" if j["state"] == "done" else "error"}
+    return None
+
+
+def _run_ad_job(pid, platform, campaign, focus, count):
+    p = db.practice(pid)
+    kit = brand.kit(pid)
+    made, err, notes = 0, "", []
+    for _ in range(count):
+        try:
+            prop = actions.draft_ad(p, platform, campaign, ai.generate_json, kit, focus)
+            made += 1
+            AD_JOBS[pid]["msg"] = f"scoring {made}"
+            pl = tools.polish(p, prop["id"])
+            if pl and pl.get("score"):
+                notes.append(f"{pl['score']['overall']:g}")
+        except (actions.ActionError, ai.AIError, cx.ConnectorError) as e:
+            err = str(e)
+            break
+        except Exception as e:
+            err = f"Something went wrong: {e}"
+            break
+    if made:
+        msg = (f"{made} new ads" if made > 1 else "New ad") + f" written for {campaign}" + \
+              (" with the brand kit" if brand.has_kit(kit) else "") + \
+              (f", scored and fixed automatically (now {', '.join(notes)}/10)" if notes else "") + \
+              ". Review below (edit if needed), then tick and Apply to create " + ("them" if made > 1 else "it") + \
+              " paused." + (f" One more didn't work: {err}" if err else "")
+        AD_JOBS[pid] = {"state": "done", "started": _time.time(), "msg": msg}
+    else:
+        AD_JOBS[pid] = {"state": "error", "started": _time.time(), "msg": err or "No ad was written."}
+
+
 @app.post("/p/{pid}/fixes/draft")
 async def fixes_draft(request: Request, pid: int, target: str = Form(""), focus: str = Form(""),
                       count: int = Form(1)):
@@ -937,23 +995,61 @@ async def fixes_draft(request: Request, pid: int, target: str = Form(""), focus:
     if not p or platform not in ("google", "meta") or not campaign:
         flash(request, "Pick a campaign for the new ad.", "error")
         return _fix_back(pid)
-    kit = brand.kit(pid)
+    j = AD_JOBS.get(pid)
+    if j and j["state"] == "running":
+        flash(request, "Ads are already being written for this practice; they appear here when ready.")
+        return _fix_back(pid)
     count = min(max(count, 1), 3)
-    made, err = 0, ""
-    for _ in range(count):
-        try:
-            await asyncio.to_thread(actions.draft_ad, p, platform, campaign, ai.generate_json, kit, focus)
-            made += 1
-        except (actions.ActionError, ai.AIError, cx.ConnectorError) as e:
-            err = str(e)
-            break
-    if made:
-        flash(request, (f"{made} new ads" if made > 1 else "New ad") + f" written for {campaign}"
-              + (" with the brand kit" if brand.has_kit(kit) else "") + ". Review below (edit if needed), then tick "
-              "and Apply to create " + ("them" if made > 1 else "it") + " paused." + (f" One more didn't work: {err}" if err else ""))
+    AD_JOBS[pid] = {"state": "running", "started": _time.time(), "msg": ""}
+    if os.environ.get("ADS_SYNC_JOBS") == "1":
+        _run_ad_job(pid, platform, campaign, focus, count)
     else:
-        flash(request, err, "error")
+        _threading.Thread(target=_run_ad_job, args=(pid, platform, campaign, focus, count), daemon=True).start()
     return _fix_back(pid)
+
+
+@app.post("/p/{pid}/drafts/{cid}/apply-fixes")
+def draft_apply_fixes(request: Request, pid: int, cid: int):
+    """Put the score's suggested fixes into the draft (the draft only; nothing is sent to Google or Meta)."""
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if not ch or ch["practice_id"] != pid or ch["kind"] not in ("draft_ad", campaigns.KIND) \
+            or ch["status"] not in ("proposed", "failed", "stale"):
+        return _fix_back(pid)
+    pl, applied, skipped = tools.apply_fixes(ch, brand.kit(pid))
+    db.update_change(cid, payload=pl)
+    anchor = f"camp-{cid}" if ch["kind"] == campaigns.KIND else f"fix-{cid}"
+    if applied:
+        flash(request, f"Applied {len(applied)} fix{'es' if len(applied) != 1 else ''} to the draft"
+              + (f"; skipped {len(skipped)} (see the draft)" if skipped else "") + ". Score it again to check.")
+    else:
+        flash(request, "No fixes could be applied: " + "; ".join(f"“{s['change']}”: {s['why']}" for s in skipped[:3]), "error")
+    return RedirectResponse(f"/p/{pid}#{anchor}", status_code=303)
+
+
+EDIT_FIELDS = ("name", "daily_budget", "max_cpc", "radius", "addresses", "final_url", "ad_group", "keywords",
+               "negatives", "headlines", "descriptions", "review", "primary_text", "headline", "description")
+
+
+def _keep_unsaved(ch, form, err):
+    """An edit that can't be saved yet: keep exactly what was typed, with the reason, on the draft itself, so
+    the edit box reopens with the person's text and the problem right there (not lost at the top of the page)."""
+    typed = {k: str(form.get(k) or "") for k in EDIT_FIELDS if k in form}
+    db.update_change(ch["id"], payload={**ch["payload"], "unsaved": {"values": typed, "error": str(err)}})
+
+
+@app.post("/p/{pid}/drafts/{cid}/discard-edit")
+def discard_edit(request: Request, pid: int, cid: int):
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if ch and ch["practice_id"] == pid and ch["payload"].get("unsaved"):
+        pl = dict(ch["payload"])
+        pl.pop("unsaved", None)
+        db.update_change(cid, payload=pl)
+    anchor = f"camp-{cid}" if ch and ch["kind"] == campaigns.KIND else f"fix-{cid}"
+    return RedirectResponse(f"/p/{pid}#{anchor}", status_code=303)
 
 
 @app.post("/p/{pid}/fixes/{cid}/edit")
@@ -971,8 +1067,9 @@ async def fixes_edit(request: Request, pid: int, cid: int):
     try:
         payload = actions.edit_draft(ch, values, brand.kit(pid))
     except actions.ActionError as e:
-        flash(request, f"Not saved: {e}", "error")
+        _keep_unsaved(ch, form, e)
         return RedirectResponse(f"/p/{pid}#fix-{cid}", status_code=303)
+    payload.pop("unsaved", None)
     db.update_change(cid, payload=payload, status="proposed", error="")
     flash(request, "Ad text saved. Tick it and Apply to create it (paused).")
     return RedirectResponse(f"/p/{pid}#fix-{cid}", status_code=303)
@@ -998,9 +1095,12 @@ def camp_job(pid):
 def _run_camp_job(pid, kwargs):
     p = db.practice(pid)
     try:
-        campaigns.draft(p, ai.generate_json, practices=db.practices(), **kwargs)
-        CAMP_JOBS[pid] = {"state": "done", "started": _time.time(), "msg": "Campaign drafted. Check every part "
-                          "below (edit if needed), then tick it and click Create to make it, paused, in Google Ads."}
+        prop = campaigns.draft(p, ai.generate_json, practices=db.practices(), **kwargs)
+        CAMP_JOBS[pid]["msg"] = "scoring"
+        pl = tools.polish(p, prop["id"])
+        CAMP_JOBS[pid] = {"state": "done", "started": _time.time(), "msg": "Campaign drafted" + _polish_note(pl) +
+                          " Check every part below (edit if needed), then tick it and click Create to make it, paused, "
+                          "in Google Ads."}
     except (campaigns.CampaignError, actions.ActionError, ai.AIError, cx.ConnectorError) as e:
         CAMP_JOBS[pid] = {"state": "error", "started": _time.time(), "msg": str(e)}
     except Exception as e:      # never leave the page stuck on "Writing…"
@@ -1051,11 +1151,13 @@ async def campaign_edit(request: Request, pid: int, cid: int):
     ch, p = db.change(cid), db.practice(pid)
     if not ch or not p or ch["practice_id"] != pid:
         return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+    form = await request.form()
     try:
-        payload = campaigns.edit(ch, await request.form(), brand.kit(pid), p)
+        payload = campaigns.edit(ch, form, brand.kit(pid), p)
     except campaigns.CampaignError as e:
-        flash(request, f"Not saved: {e}", "error")
+        _keep_unsaved(ch, form, e)
         return RedirectResponse(f"/p/{pid}#camp-{cid}", status_code=303)
+    payload.pop("unsaved", None)
     db.update_change(cid, payload=payload, status="proposed", error="",
                      title=f"New Search campaign “{payload['name']}” (created paused)",
                      detail=campaigns.summary_detail(payload))
