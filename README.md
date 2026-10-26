@@ -198,7 +198,25 @@ against the live Google Ads and Meta accounts:
   percentage so the month lands on the practice's budget; at most halved or +50% per step.
   Shared Google budgets and Meta lifetime budgets are left alone.
 - **New ads** — the AI writes a Google responsive search ad or a Meta ad (copying an
-  existing ad's image, landing page and button); always created **paused**.
+  existing ad's image, landing page and button); always created **paused**. Pick the
+  campaign, an optional focus ("Invisalign for adults") and 1–3 versions. Each draft can be
+  edited before applying (live character counts), and edits are checked again.
+
+### Brand kits (per practice)
+
+The practice page's **Brand kit** drop-down holds the rules new ads are written with:
+voice, audience, services, proof points, approved offers, calls to action, phrases to
+always include, words never to use, locations and doctors. Fill it by hand, upload the
+practice's brand guide (PDF, Word, PowerPoint or text), or **Read the website** (home page
+plus a few service / about pages), then **Fill the kit from these**: the AI suggests each
+field and nothing is used until someone checks it and clicks Save. A kit can be copied
+from another practice as a starting point.
+
+After writing, every line is checked: lines over the length limit, using a "never say"
+word, with an exclamation mark in a Google headline, a phone number, a guarantee or
+unprovable claim ("best", "painless"), a price that isn't an approved offer, capitals, or
+wording that implies knowing the reader's health are left out (listed under "Lines left
+out"). A missing "always include" phrase is flagged on the draft.
 
 Nothing changes until someone ticks changes and clicks **Apply**. Before applying (and
 undoing), the current value is read again; if it was changed in Google or Meta meanwhile,

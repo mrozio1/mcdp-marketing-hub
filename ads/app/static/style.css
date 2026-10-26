@@ -776,3 +776,26 @@ table.practices tr:has(+ tr.organic-row) th, table.practices tr:has(+ tr.organic
 .rv-report-state.stale { border-left-color: #B26B1F; background: #FBF4EA; }
 .rv-report-state p { margin: 0.2rem 0; }
 .rv-removed-note { color: #0A5654; }
+
+/* Brand kits and editable new ads */
+.brand-site, .brand-copy { margin-top: 0.9rem; }
+.brand-copy { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; }
+.brand-copy label { flex: 1 1 12rem; }
+.brand-sources { list-style: none; padding: 0; margin: 1rem 0 0.6rem; }
+.brand-sources li { display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0; border-bottom: 1px solid var(--hair); overflow-wrap: anywhere; }
+.brand-form { margin-top: 1.2rem; }
+.brand-form textarea { width: 100%; }
+.brand-view dt { font-weight: 600; margin-top: 0.6rem; }
+.brand-view dd { margin: 0.1rem 0 0; }
+.tag-new { background: #FFF4D6; color: #7A5A00; }
+.fix-count { flex: 0 0 auto !important; }
+.ad-dropped, .ad-edit { margin-top: 0.4rem; }
+.ad-dropped ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.ad-edit label { display: block; margin-top: 0.5rem; }
+.ad-edit textarea, .ad-edit input { width: 100%; font: inherit; }
+.ad-edit button { margin-top: 0.5rem; }
+.char-note { display: block; font-size: 0.8rem; color: var(--ink-soft); }
+.char-note.over { color: #B42318; }
+li.fix:has(.ad-extra) { flex-wrap: wrap; }
+.ad-extra { flex: 1 0 100%; order: 3; padding-left: 1.65rem; min-width: 0; }
+li.fix:has(.ad-extra) > .fix-main { flex: 1 1 0; }

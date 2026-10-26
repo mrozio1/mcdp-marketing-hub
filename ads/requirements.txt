@@ -7,3 +7,4 @@ markdown==3.7
 google-auth==2.38.0
 psycopg[binary]==3.2.3
 openpyxl==3.1.5
+pypdf==6.21.2

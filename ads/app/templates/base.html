@@ -76,6 +76,20 @@
     });
     sync();
   }
+  // Ad text boxes: live character counts per line, and line counts.
+  document.querySelectorAll('textarea[data-limit]').forEach(t => {
+    const note = document.createElement('span'); note.className = 'char-note'; t.after(note);
+    const lim = +t.dataset.limit;
+    const upd = () => {
+      if (t.dataset.single) { note.textContent = `${t.value.length}/${lim}`; note.classList.toggle('over', t.value.length > lim); return; }
+      const ls = t.value.split('\n').map(x => x.trim()).filter(Boolean);
+      const over = ls.filter(x => x.length > lim);
+      const few = ls.length < +t.dataset.min, many = ls.length > +t.dataset.max;
+      note.textContent = `${ls.length} line${ls.length === 1 ? '' : 's'}` + (over.length ? ` · too long: ${over.map(x => `“${x.slice(0, 24)}…” (${x.length})`).join(', ')}` : ` · longest ${Math.max(0, ...ls.map(x => x.length))}/${lim}`) + (few ? ` · need ${t.dataset.min}+` : many ? ` · max ${t.dataset.max}` : '');
+      note.classList.toggle('over', over.length > 0 || few || many);
+    };
+    t.addEventListener('input', upd); upd();
+  });
   document.querySelectorAll('form[data-confirm]').forEach(f => f.addEventListener('submit', e => {
     if (!window.confirm(f.dataset.confirm)) e.preventDefault();
   }));

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, db, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
+from . import actions, ai, brand, db, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -147,6 +147,7 @@ def _startup():
     field.init()
     salesforce.init()
     reviews.init()
+    brand.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
         reviews.start_scheduler()
@@ -651,7 +652,9 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 added_norm={scope.norm(n) for n in scope.added_campaigns(p)},
                 fixes_open=db.changes(pid, ["proposed", "failed", "stale"]),
                 fixes_done=db.changes(pid, ["applied", "undone"], limit=40),
-                kind_labels=actions.KIND_LABELS)
+                kind_labels=actions.KIND_LABELS,
+                kit=brand.kit(pid), brand_fields=brand.FIELDS, brand_sources=brand.sources(pid),
+                kit_sources=[q for q in allp if q["id"] != pid and brand.has_kit(brand.kit(q["id"]))])
 
 
 @app.post("/p/{pid}/settings")
@@ -834,7 +837,8 @@ async def ai_generate(request: Request, pid: int, kind: str):
               "error")
         return RedirectResponse(f"/p/{pid}", status_code=303)
     try:
-        text = await asyncio.to_thread(ai.generate, kind, ai.build_context(p, views, org))
+        brand_text = brand.context(brand.kit(pid)) if kind == "creative" else ""
+        text = await asyncio.to_thread(ai.generate, kind, ai.build_context(p, views, org, brand_text))
     except ai.AIError as e:
         flash(request, str(e), "error")
         return RedirectResponse(f"/p/{pid}#ai-{kind}", status_code=303)
@@ -910,7 +914,8 @@ def fixes_dismiss(request: Request, pid: int, cid: int):
 
 
 @app.post("/p/{pid}/fixes/draft")
-async def fixes_draft(request: Request, pid: int, target: str = Form("")):
+async def fixes_draft(request: Request, pid: int, target: str = Form(""), focus: str = Form(""),
+                      count: int = Form(1)):
     if (r := guard(request)):
         return r
     p = db.practice(pid)
@@ -918,13 +923,149 @@ async def fixes_draft(request: Request, pid: int, target: str = Form("")):
     if not p or platform not in ("google", "meta") or not campaign:
         flash(request, "Pick a campaign for the new ad.", "error")
         return _fix_back(pid)
-    try:
-        await asyncio.to_thread(actions.draft_ad, p, platform, campaign, ai.generate_json)
-        flash(request, f"New ad written for {campaign}. Review it below, then tick it and Apply to create it "
-                       "(it's created paused).")
-    except (actions.ActionError, ai.AIError, cx.ConnectorError) as e:
-        flash(request, str(e), "error")
+    kit = brand.kit(pid)
+    count = min(max(count, 1), 3)
+    made, err = 0, ""
+    for _ in range(count):
+        try:
+            await asyncio.to_thread(actions.draft_ad, p, platform, campaign, ai.generate_json, kit, focus)
+            made += 1
+        except (actions.ActionError, ai.AIError, cx.ConnectorError) as e:
+            err = str(e)
+            break
+    if made:
+        flash(request, (f"{made} new ads" if made > 1 else "New ad") + f" written for {campaign}"
+              + (" with the brand kit" if brand.has_kit(kit) else "") + ". Review below (edit if needed), then tick "
+              "and Apply to create " + ("them" if made > 1 else "it") + " paused." + (f" One more didn't work: {err}" if err else ""))
+    else:
+        flash(request, err, "error")
     return _fix_back(pid)
+
+
+@app.post("/p/{pid}/fixes/{cid}/edit")
+async def fixes_edit(request: Request, pid: int, cid: int):
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if not ch or ch["practice_id"] != pid:
+        return _fix_back(pid)
+    form = await request.form()
+    split = lambda k: [x for x in str(form.get(k) or "").replace("\r", "").split("\n")]
+    values = {"headlines": split("headlines"), "descriptions": split("descriptions"),
+              "primary_text": form.get("primary_text", ""), "headline": form.get("headline", ""),
+              "description": form.get("description", "")}
+    try:
+        payload = actions.edit_draft(ch, values, brand.kit(pid))
+    except actions.ActionError as e:
+        flash(request, f"Not saved: {e}", "error")
+        return RedirectResponse(f"/p/{pid}#fix-{cid}", status_code=303)
+    db.update_change(cid, payload=payload, status="proposed", error="")
+    flash(request, "Ad text saved. Tick it and Apply to create it (paused).")
+    return RedirectResponse(f"/p/{pid}#fix-{cid}", status_code=303)
+
+
+# ---------- brand kits (per practice): rules every new ad is written and checked against ----------
+def _brand_back(pid):
+    return RedirectResponse(f"/p/{pid}#brand", status_code=303)
+
+
+@app.post("/p/{pid}/brand")
+async def brand_save(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    if not db.practice(pid):
+        return RedirectResponse("/practices", status_code=303)
+    form = await request.form()
+    brand.save(pid, {k: form.get(k, "") for k in brand.KEYS + brand.OTHER}, actor(request))
+    flash(request, "Brand kit saved. New ads for this practice follow it.")
+    return _brand_back(pid)
+
+
+@app.post("/p/{pid}/brand/upload")
+async def brand_upload(request: Request, pid: int, file: UploadFile = File(...)):
+    if (r := guard(request)):
+        return r
+    if not db.practice(pid):
+        return RedirectResponse("/practices", status_code=303)
+    data = await file.read(brand.FILE_MAX + 1)
+    try:
+        text = await asyncio.to_thread(brand.extract_text, data, file.filename or "")
+    except brand.BrandError as e:
+        flash(request, str(e), "error")
+        return _brand_back(pid)
+    brand.add_source(pid, file.filename or "document", "document", text, actor(request))
+    flash(request, f"Read {len(text):,} characters from {file.filename}. Click “Fill the kit from these” to "
+                   "turn them into brand rules.")
+    return _brand_back(pid)
+
+
+@app.post("/p/{pid}/brand/website")
+async def brand_website(request: Request, pid: int, url: str = Form("")):
+    if (r := guard(request)):
+        return r
+    url = url.strip()
+    if url and not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    try:
+        n = await asyncio.to_thread(brand.add_website, pid, url, actor(request))
+    except brand.BrandError as e:
+        flash(request, str(e), "error")
+        return _brand_back(pid)
+    k = brand.kit(pid)
+    if not k.get("website"):
+        brand.save(pid, {**{x: k[x] for x in brand.KEYS}, "website": url}, k.get("updated_by") or actor(request))
+    flash(request, f"Read {n} page{'s' if n != 1 else ''} of the website.")
+    return _brand_back(pid)
+
+
+@app.post("/p/{pid}/brand/fill")
+async def brand_fill(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/practices", status_code=303)
+    try:
+        await asyncio.to_thread(brand.fill_from_sources, p, ai.generate_json)
+    except (brand.BrandError, ai.AIError) as e:
+        flash(request, str(e), "error")
+        return _brand_back(pid)
+    flash(request, "Suggestions filled in below from your materials. Check each one, then Save the kit.")
+    return _brand_back(pid)
+
+
+@app.post("/p/{pid}/brand/discard")
+def brand_discard(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    brand.set_suggested(pid, None)
+    flash(request, "Suggestions discarded; the saved kit is unchanged.")
+    return _brand_back(pid)
+
+
+@app.post("/p/{pid}/brand/copy")
+def brand_copy(request: Request, pid: int, source: str = Form("")):
+    if (r := guard(request)):
+        return r
+    src = db.practice(int(source)) if source.isdigit() else None
+    if not src or src["id"] == pid:
+        flash(request, "Pick the practice to copy from.", "error")
+        return _brand_back(pid)
+    try:
+        brand.copy_kit(src["id"], pid, actor(request))
+        flash(request, f"Copied {src['name']}'s brand kit. Change the practice name, locations and doctors to this practice's.")
+    except brand.BrandError as e:
+        flash(request, str(e), "error")
+    return _brand_back(pid)
+
+
+@app.post("/p/{pid}/brand/sources/{sid}/delete")
+def brand_source_delete(request: Request, pid: int, sid: int):
+    if (r := guard(request)):
+        return r
+    brand.delete_source(pid, sid)
+    flash(request, "Removed. The saved kit is unchanged.")
+    return _brand_back(pid)
 
 
 @app.post("/p/{pid}/ai/{kind}/delete")

@@ -217,7 +217,7 @@
             {% endif %}
             <ul>
             {% for ch in group %}
-              <li class="fix fix-{{ ch.status }}">
+              <li class="fix fix-{{ ch.status }}" id="fix-{{ ch.id }}">
                 <label class="fix-main">
                   {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="{{ kind }}">{% endif %}
                   <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span> {{ ch.title }}
@@ -231,11 +231,37 @@
                       <strong class="small">Text</strong> <span class="small">{{ ch.payload.primary_text }}</span><br>
                       <strong class="small">Headline</strong> <span class="small">{{ ch.payload.headline }}</span>{% if ch.payload.description %} · <span class="small">{{ ch.payload.description }}</span>{% endif %}
                     {% endif %}
+                    {% if ch.payload.edited %}<br><span class="muted small">Edited by hand.</span>{% endif %}
                     </span>
                   {% endif %}
                   {% if ch.error %}<br><span class="fix-error small">{{ 'Out of date' if ch.status == 'stale' else 'Didn’t go through' }}: {{ ch.error }}</span>{% endif %}
                   </span>
                 </label>
+                {% if kind == 'draft_ad' %}<div class="ad-extra">
+                    {% if ch.payload.dropped %}
+                    <details class="ad-dropped small"><summary>Lines left out ({{ ch.payload.dropped|length }})</summary>
+                      <ul>{% for d in ch.payload.dropped %}<li>“{{ d.text }}” <span class="muted">— {{ d.why }}</span></li>{% endfor %}</ul>
+                    </details>
+                    {% endif %}
+                    {% if can_edit %}
+                    <details class="ad-edit"><summary class="small">Edit the text</summary>
+                      {% if ch.platform == 'google' %}
+                      <label class="small">Headlines, one per line (3–15, up to 30 characters)
+                        <textarea name="headlines" form="edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ ch.payload.headlines|join('\n') }}</textarea></label>
+                      <label class="small">Descriptions, one per line (2–4, up to 90 characters)
+                        <textarea name="descriptions" form="edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ ch.payload.descriptions|join('\n') }}</textarea></label>
+                      {% else %}
+                      <label class="small">Primary text (up to 300 characters)
+                        <textarea name="primary_text" form="edit-{{ ch.id }}" rows="3" data-limit="300" data-single="1">{{ ch.payload.primary_text }}</textarea></label>
+                      <label class="small">Headline (up to 40)
+                        <input name="headline" form="edit-{{ ch.id }}" value="{{ ch.payload.headline }}" maxlength="40"></label>
+                      <label class="small">Description (optional, up to 60)
+                        <input name="description" form="edit-{{ ch.id }}" value="{{ ch.payload.description or '' }}" maxlength="60"></label>
+                      {% endif %}
+                      <button class="btn btn-quiet" type="submit" form="edit-{{ ch.id }}">Save text</button>
+                    </details>
+                    {% endif %}
+                </div>{% endif %}
                 {% if can_edit %}<button class="linklike small" type="submit" formaction="/p/{{ p.id }}/fixes/{{ ch.id }}/dismiss" data-busy="…">Dismiss</button>{% endif %}
               </li>
             {% endfor %}
@@ -245,12 +271,13 @@
         {% endfor %}
         {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
       </form>{% else %}</div>{% endif %}
+      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>{% endfor %}{% endif %}
       {% endif %}
 
       {% set draftable = [] %}
       {% for v in views if v.campaigns and ((v.key == 'google' and p.google_customer_id and google_on) or (v.key == 'meta' and p.meta_account_id and meta_on)) %}{% set _ = draftable.append(v) %}{% endfor %}
       {% if draftable and can_edit %}
-      <form method="post" action="/p/{{ p.id }}/fixes/draft" class="fix-draft" data-busy="Writing the ad…">
+      <form method="post" action="/p/{{ p.id }}/fixes/draft" class="fix-draft" data-busy="Writing the ads…">
         <label>New ad for
           <select name="target">
             {% for v in draftable %}
@@ -260,8 +287,17 @@
             {% endfor %}
           </select>
         </label>
-        <button class="btn btn-quiet" type="submit" {% if not ai_on %}disabled{% endif %}>Write a new ad</button>
-        <span class="muted small">The AI writes it from what’s working; it appears above for review and is created paused when applied.</span>
+        <label>Focus <span class="muted small">(optional)</span>
+          <input name="focus" maxlength="200" placeholder="e.g. Invisalign for adults, new Saturday hours">
+        </label>
+        <label class="fix-count">How many
+          <select name="count"><option>1</option><option>2</option><option>3</option></select>
+        </label>
+        <button class="btn btn-quiet" type="submit" {% if not ai_on %}disabled{% endif %}>Write new ads</button>
+        <span class="muted small">
+          {% if kit.voice or kit.services or kit.offers or kit.never_say or kit.key_messages %}Written with {{ p.name }}’s <a href="#brand">brand kit</a> and checked against it.
+          {% else %}No <a href="#brand">brand kit</a> yet: ads follow the general dental rules only.{% endif %}
+          They appear above for review (edit if needed) and are created paused when applied.</span>
       </form>
       {% endif %}
 
@@ -416,6 +452,60 @@
       {% if is_admin %}<form method="post" action="/p/{{ p.id }}/delete" class="drawer-danger" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
         <button class="linklike danger" type="submit">Delete this practice</button>
       </form>{% endif %}
+      </div>
+    </details>
+
+    {% set has_kit2 = kit.voice or kit.audience or kit.services or kit.key_messages or kit.offers or kit.ctas or kit.must_say or kit.never_say or kit.locations or kit.doctors %}
+    <details class="drawer" id="brand" {% if kit.suggested %}open{% endif %}>
+      <summary><span class="drawer-title">Brand kit</span><span class="drawer-hint">{% if has_kit2 %}Saved{% if kit.updated_at %} {{ kit.updated_at[:10] }}{% if kit.updated_by %} by {{ kit.updated_by }}{% endif %}{% endif %}; new ads follow it{% else %}Voice, offers and words to avoid for new ads{% endif %}</span></summary>
+      <div class="drawer-body">
+      {% if can_edit %}
+      <p class="muted small">Upload this practice’s brand guide, or read its website, then let the AI fill the kit. You check it and Save. Every new ad is written with the kit and checked against it.</p>
+      <form method="post" action="/p/{{ p.id }}/brand/upload" enctype="multipart/form-data" class="stack" data-busy="Reading…">
+        <label>Brand document <span class="muted small">PDF, Word, PowerPoint or text, up to 10 MB</span>
+          <input type="file" name="file" accept=".pdf,.docx,.pptx,.txt,.md,.html,.htm" required></label>
+        <button type="submit" class="btn btn-quiet">Upload</button>
+      </form>
+      <form method="post" action="/p/{{ p.id }}/brand/website" class="stack brand-site" data-busy="Reading the website…">
+        <label>Practice website<input name="url" value="{{ kit.website or '' }}" placeholder="https://…" required></label>
+        <button type="submit" class="btn btn-quiet">Read the website</button>
+      </form>
+      {% if brand_sources %}
+      <ul class="brand-sources small">
+        {% for s in brand_sources %}
+        <li><span>{{ 'Website' if s.kind == 'website' else 'Document' }}: {{ s.name }} <span class="muted">· {{ '{:,}'.format(s.chars) }} characters · {{ s.added_at[:10] }}</span></span>
+          <form method="post" action="/p/{{ p.id }}/brand/sources/{{ s.id }}/delete" data-confirm="Remove {{ s.name }}? The saved kit stays as it is."><button class="x-btn" type="submit" aria-label="Remove {{ s.name }}" title="Remove">&times;</button></form></li>
+        {% endfor %}
+      </ul>
+      <form method="post" action="/p/{{ p.id }}/brand/fill" data-busy="Reading your materials…">
+        <button class="btn" type="submit" {% if not ai_on %}disabled{% endif %}>Fill the kit from these</button>
+      </form>
+      {% endif %}
+      {% if kit_sources %}
+      <form method="post" action="/p/{{ p.id }}/brand/copy" class="brand-copy" {% if has_kit2 %}data-confirm="Replace this practice's brand kit with the copy?"{% endif %}>
+        <label class="small">Or start from another practice’s kit
+          <select name="source">{% for q in kit_sources %}<option value="{{ q.id }}">{{ q.name }}</option>{% endfor %}</select></label>
+        <button class="btn btn-quiet" type="submit">Copy</button>
+      </form>
+      {% endif %}
+
+      {% set src = kit.suggested or kit %}
+      {% if kit.suggested %}<p class="flash flash-ok small">Suggested from your materials. Check each box (they aren’t used until you Save).</p>{% endif %}
+      <form method="post" action="/p/{{ p.id }}/brand" class="stack brand-form">
+        {% for key, label, hint, rows in brand_fields %}
+        <label>{{ label }}{% if kit.suggested and kit.suggested[key] != kit[key] %} <span class="tag tag-new">suggested</span>{% endif %}
+          <textarea name="{{ key }}" rows="{{ rows }}" maxlength="1500" placeholder="{{ hint }}">{{ src[key] or '' }}</textarea>
+        </label>
+        {% endfor %}
+        <input type="hidden" name="website" value="{{ kit.website or '' }}">
+        <button type="submit" class="btn">{{ 'Save the kit' if kit.suggested else 'Save' }}</button>
+      </form>
+      {% if kit.suggested %}<form method="post" action="/p/{{ p.id }}/brand/discard"><button class="linklike small" type="submit">Discard suggestions</button></form>{% endif %}
+      {% elif has_kit2 %}
+      <dl class="brand-view small">
+        {% for key, label, hint, rows in brand_fields if kit[key] %}<dt>{{ label }}</dt><dd>{{ kit[key]|replace('\n', ' · ') }}</dd>{% endfor %}
+      </dl>
+      {% else %}<p class="muted small">No brand kit yet.</p>{% endif %}
       </div>
     </details>
 
