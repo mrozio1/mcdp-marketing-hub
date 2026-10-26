@@ -839,3 +839,25 @@ li.fix.has-extra > .ad-extra { flex: 1 0 100%; order: 3; }
 .flag-row { display: block; margin-top: 0.35rem; }
 .flag-note { display: block; margin-top: 0.15rem; }
 .review-btn { margin: 0.5rem 0 0.2rem; }
+
+/* Score this ad */
+.score-box { margin: 0.5rem 0; padding: 0.6rem 0.75rem; border-radius: var(--radius-s); background: #F4F7F7; border-left: 3px solid var(--teal); }
+.score-box.tier-rewrite { border-left-color: #B7791F; background: #FBF6EC; }
+.score-box.tier-restart { border-left-color: #B42318; background: #FDF2F1; }
+.score-head { margin: 0 0 0.3rem; display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.score-num { font-family: var(--serif); font-size: 1.6rem; line-height: 1; }
+.score-num small { font-size: 0.8rem; color: var(--ink-soft); }
+.score-levers { list-style: none; padding: 0; margin: 0.3rem 0; }
+.score-levers li { margin: 0.25rem 0; }
+.lever-bar { display: inline-block; width: 3.5rem; height: 0.4rem; background: #E2E8E9; border-radius: 1rem; vertical-align: middle; overflow: hidden; }
+.lever-bar span { display: block; height: 100%; background: var(--teal); }
+.score-fixes { margin: 0.2rem 0 0.3rem 1.1rem; padding: 0; }
+/* Tools */
+.tool-group { font-family: var(--serif); font-weight: 400; font-size: 1.15rem; margin: 1.4rem 0 0.4rem; }
+.tool-list { border-top: 1px solid var(--hair); }
+details.tool { border-bottom: 1px solid var(--hair); padding: 0.55rem 0; }
+details.tool > summary { cursor: pointer; }
+.tool-title { font-weight: 600; color: var(--ink); }
+.tool-form { margin: 0.5rem 0; max-width: 40rem; }
+.tool-form input, .tool-form textarea { width: 100%; }
+.tool-out { margin-top: 0.6rem; }

@@ -1,5 +1,15 @@
 {% extends "base.html" %}
 {% from "_macros.html" import ruler %}
+{% macro score_box(ch) %}{% set sc = ch.payload.score %}
+  {% if sc %}<div class="score-box tier-{{ sc.tier }}">
+    <p class="score-head"><span class="score-num">{{ '%g'|format(sc.overall) }}<small>/10</small></span> <strong>{{ sc.tier_label }}</strong></p>
+    {% if sc.verdict %}<p class="small">{{ sc.verdict }}</p>{% endif %}
+    <ul class="score-levers small">{% for l in sc.levers %}<li><span class="lever-bar"><span style="width: {{ (l.score * 10)|round|int }}%"></span></span> <strong>{{ l.label }} {{ '%g'|format(l.score) }}</strong> — {{ l.reason }}</li>{% endfor %}</ul>
+    {% if sc.fixes %}<p class="small"><strong>Top fixes</strong></p><ol class="small score-fixes">{% for f in sc.fixes %}<li>{% if f.lever %}<span class="muted">{{ f.lever }}:</span> {% endif %}{% if f.change %}change “{{ f.change }}”{% endif %}{% if f.to %} → “{{ f.to }}”{% endif %}</li>{% endfor %}</ol>
+    {% if can_edit %}<p class="muted small">Make these under {{ 'Edit the campaign' if ch.kind == 'new_campaign' else 'Edit the text' }}.</p>{% endif %}{% endif %}
+  </div>{% endif %}
+  {% if can_edit %}<button class="linklike small" type="submit" form="score-{{ ch.id }}" {% if not ai_on %}disabled{% endif %}>{{ 'Score again' if sc else 'Score this ad' }}</button>{% endif %}
+{% endmacro %}
 {% macro image_picker(ch, multi, selected, variant) %}
   <details class="img-pick"{% if selected %} open{% endif %}><summary class="small">Images{% if selected %} ({{ selected|length }} picked){% endif %}</summary>
     {% if selected %}<div class="img-chosen">{% for i in selected %}<img src="/brand-images/{{ i }}?v={{ variant }}" alt="Picked image" loading="lazy">{% endfor %}</div>
@@ -16,7 +26,19 @@
     {% endif %}
   </details>
 {% endmacro %}
-{% block title %}{{ p.name }}{% endblock %}
+{% block title %}{{ p.name }}<script>
+  // Competitor teardown: the Meta Ad Library link searches for the name typed.
+  document.querySelectorAll('input[data-libs]').forEach(inp => {
+    const box = document.getElementById(inp.dataset.libs);
+    const upd = () => {
+      const q = inp.value.trim();
+      box.querySelector('[data-meta]').href = q ? 'https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&search_type=keyword_unordered&q=' + encodeURIComponent(q) : 'https://www.facebook.com/ads/library/';
+      box.querySelector('[data-hint]').textContent = q ? `(search “${q}” there)` : '';
+    };
+    inp.addEventListener('input', upd); upd();
+  });
+</script>
+{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/practices">Practices</a></p>
 <h1>{{ p.name }}</h1>
@@ -254,6 +276,7 @@
                   </span>
                 </label>
                 {% if kind == 'draft_ad' %}<div class="ad-extra">
+                    {{ score_box(ch) }}
                     {% if ch.platform == 'meta' %}{{ image_picker(ch, False, [ch.payload.image_id] if ch.payload.image_id else [], 'meta_square') }}{% endif %}
                     {% if ch.payload.dropped %}
                     <details class="ad-dropped small"><summary>Lines left out ({{ ch.payload.dropped|length }})</summary>
@@ -288,7 +311,7 @@
         {% endfor %}
         {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
       </form>{% else %}</div>{% endif %}
-      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
+      {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         {% if ch.platform == 'meta' %}<form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
         <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus or ch.payload.campaign }}"><input type="hidden" name="back" value="fix-{{ ch.id }}"></form>{% endif %}{% endfor %}{% endif %}
       {% endif %}
@@ -376,6 +399,7 @@
             </span></span>
           </label>
           <div class="ad-extra">
+            {{ score_box(ch) }}
             {% if can_edit and pl.flagged and (pl.flagged|rejectattr('exemptible')|list|length == 0) %}
             <button class="btn btn-quiet review-btn" type="submit" form="camp-review-{{ ch.id }}" data-busy="Creating…">Ask Google to review and create (paused)</button>
             {% endif %}
@@ -409,7 +433,7 @@
       {% endfor %}
       </ul>
       {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button></form>
-      {% for ch in camp_drafts %}<form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
+      {% for ch in camp_drafts %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         <form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
         <form id="camp-review-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/review-and-create" data-busy="Creating…" hidden></form>
         <form id="imggen-{{ ch.id }}" method="post" action="/p/{{ p.id }}/brand/images/generate" data-busy="Making images…" hidden><input type="hidden" name="focus" value="{{ ch.payload.focus }}"><input type="hidden" name="back" value="camp-{{ ch.id }}"></form>{% endfor %}
@@ -479,6 +503,44 @@
       {% endfor %}
     </section>
     {% endif %}
+
+    <section class="ai tools" id="tools">
+      <h2>Tools</h2>
+      <p class="muted">Adapted from the open-source OpenAdKit and run on this practice’s brand kit{% if has_data %} and ad numbers{% endif %}. Each takes up to two minutes and runs in the background; results are suggestions to review.</p>
+      {% if tool_job %}
+      <p class="flash flash-ok" role="status">{{ tools[tool_job.kind].title }} is running… this page refreshes by itself.</p>
+      <script>setTimeout(() => location.reload(), 6000);</script>
+      {% endif %}
+      {% for group in tool_groups %}
+      <h3 class="tool-group">{{ group }}</h3>
+      <div class="tool-list">
+      {% for key, t in tools.items() if t.group == group %}{% set out = tool_out[key] %}
+        <details class="tool" id="tool-{{ key }}" {% if out or (tool_job and tool_job.kind == key) %}open{% endif %}>
+          <summary><span class="tool-title">{{ t.title }}</span>{% if out %}<span class="muted small"> · last run {{ out.created_at.replace('T', ' ')[:16] }}</span>{% endif %}</summary>
+          <p class="muted small">{{ t.blurb }}</p>
+          {% if t.needs_ads and not has_data %}<p class="small muted">Needs this practice’s ad numbers first (sync or upload).</p>
+          {% elif can_edit %}
+          <form method="post" action="/p/{{ p.id }}/tools/{{ key }}" class="stack tool-form" data-busy="Starting…">
+            {% for name, label, ph, req in t.inputs %}
+              {% if name == 'ads' %}<label class="small">{{ label }}<textarea name="{{ name }}" rows="6" placeholder="{{ ph }}" {% if req %}required{% endif %}></textarea></label>
+              {% else %}<label class="small">{{ label }}<input name="{{ name }}" placeholder="{{ ph }}" {% if req %}required{% endif %}{% if name == 'url' %} value="{{ kit.website or '' }}"{% endif %}{% if name == 'competitor' %} data-libs="lib-{{ key }}"{% endif %}></label>{% endif %}
+            {% endfor %}
+            {% if key == 'teardown' %}<p class="small" id="lib-{{ key }}">Find their ads: <a href="https://www.facebook.com/ads/library/" target="_blank" rel="noopener" data-meta>Meta Ad Library</a> · <a href="https://adstransparency.google.com/?region=US" target="_blank" rel="noopener">Google Ads Transparency Center</a> <span class="muted" data-hint></span></p>{% endif %}
+            <button class="btn btn-quiet" type="submit" {% if not ai_on or tool_job %}disabled{% endif %}>Run</button>
+          </form>
+          {% endif %}
+          {% if out %}
+          <article class="writeup tool-out">
+            <div class="writeup-head"><h3 class="small">Latest result</h3>
+              {% if can_edit %}<form method="post" action="/p/{{ p.id }}/tools/{{ key }}/delete" data-confirm="Remove this result?"><button class="x-btn" type="submit" aria-label="Remove this result" title="Remove">&times;</button></form>{% endif %}</div>
+            <div class="prose">{{ out.content|markdown|safe }}</div>
+          </article>
+          {% endif %}
+        </details>
+      {% endfor %}
+      </div>
+      {% endfor %}
+    </section>
   </div>
 
   <aside class="side-col">
@@ -712,4 +774,16 @@
     </details>
   </aside>
 </div>
+<script>
+  // Competitor teardown: the Meta Ad Library link searches for the name typed.
+  document.querySelectorAll('input[data-libs]').forEach(inp => {
+    const box = document.getElementById(inp.dataset.libs);
+    const upd = () => {
+      const q = inp.value.trim();
+      box.querySelector('[data-meta]').href = q ? 'https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&search_type=keyword_unordered&q=' + encodeURIComponent(q) : 'https://www.facebook.com/ads/library/';
+      box.querySelector('[data-hint]').textContent = q ? `(search “${q}” there)` : '';
+    };
+    inp.addEventListener('input', upd); upd();
+  });
+</script>
 {% endblock %}

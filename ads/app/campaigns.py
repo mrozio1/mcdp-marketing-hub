@@ -239,7 +239,7 @@ def edit(ch, form, kit=None, practice=None):
         final_url=str(form.get("final_url") or "").strip(), keywords=keywords, negatives=negatives,
         headlines=list(dict.fromkeys(" ".join(x.split()) for x in lines("headlines"))),
         descriptions=list(dict.fromkeys(" ".join(x.split()) for x in lines("descriptions"))),
-        dropped=[], edited=True, review=bool(form.get("review")))
+        dropped=[], edited=True, review=bool(form.get("review")), score=None)
     if pl.get("flagged"):
         texts = {"keyword": {k.lower() for k in pl["keywords"]}}
         pl["flagged"] = [f for f in pl["flagged"] if f["what"] != "keyword" or f["text"].lower() in texts["keyword"]]

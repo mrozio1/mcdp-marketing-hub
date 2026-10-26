@@ -45,3 +45,30 @@ procedures, thinking framework, copy frameworks and compliance guidance.
 - Lead with the patient's goal and a concrete next step (book a free consult, call,
   see availability). Use the practice's name and local area where known.
 - Base angles on what is already working (converting search terms and campaigns).
+
+## Ad-writing method
+Adapted from OpenAdKit (github.com/IamRamgarhia/OpenAdKit-Open-Source-AI-Marketing-Tool,
+MIT License, (c) Dicecodes and AdForge contributors), which credits
+coreyhaines31/marketingskills (MIT) for these patterns.
+- Choose angles before writing: pain, outcome, social proof, curiosity, comparison,
+  urgency, identity, contrarian. Use 3-5 different angles across one ad's lines.
+  For healthcare, prefer outcome, social proof (only real proof from the brand kit),
+  convenience and identity; keep urgency honest (real dates or availability only).
+- Google headline mix for a 15-headline ad: about 4 led by the keyword or service,
+  4 by a benefit, 3 by specifics or proof, 3 by a call to action or approved offer,
+  1 by the practice name. Descriptions: one benefit with proof, one feature with its
+  outcome, one proof with a call to action, one convenience or availability with a
+  call to action.
+- Every headline must read well on its own and next to any other (Google mixes them);
+  no pronouns that need another line. Vary the first word across headlines.
+- Calls to action name the outcome: "Book Your Free Consult", not "Learn More",
+  "Submit" or "Click Here".
+- Avoid empty words: streamline, optimize, innovative, leverage, transform, very,
+  really; and superlatives without proof (best, #1, leading, world-class).
+- Honesty: never invent statistics, reviews, awards or partnerships. If the brand kit
+  can't support a result, phrase it as what the practice offers, not what it achieves.
+- Numbers and ranges: use the practice's own numbers (show the sum), or say plainly
+  that something is an estimate. Never invent a web address.
+- Testing order, biggest effect first: angle, then headline/hook, then image, then body
+  text, then call to action. Change one layer per test. Give an ad at least 1,000
+  impressions or 50 clicks before calling it a loser.

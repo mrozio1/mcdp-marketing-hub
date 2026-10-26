@@ -214,6 +214,19 @@ the radius, a few standard negative keywords (jobs, careers, school…). The nam
 contains the practice's campaign word so its results show on its page. **Undo** removes the
 campaign. Needs the Google robot at Standard access.
 
+### Tools (adapted from OpenAdKit, MIT)
+
+Each practice page has **Score this ad** on every drafted ad and campaign (hook, specificity,
+brand fit, call to action and healthcare care rules, a tier and the top 3 named fixes), and a
+**Tools** section, run in the background on the brand kit and live numbers:
+- **Optimize:** fix low click rates (live Google ads with last-30-day numbers vs the practice's
+  own average), Quality Score check, keyword ideas (each becomes an **Add keywords** proposal
+  under Make the fixes: phrase match, Apply/Undo; health-term flags get an automatic review
+  request), ad fatigue (week-by-week CTR and CPM from the synced daily rows), landing-page check.
+- **Research:** competitor ad teardown with three better versions; links to the Meta Ad Library
+  and Google Ads Transparency Center. The Export Map List competition rows link there too.
+- **Social & leads:** content calendar, Reel ideas, Meta lead form, email subject lines.
+
 ### Ad images
 
 Under **Brand kit → Ad images** each practice keeps a logo, a library of its own photos, and

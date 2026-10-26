@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, campaigns, db, images, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
+from . import actions, ai, brand, campaigns, db, images, tools, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -661,6 +661,8 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 brand_logo=images.logo(pid), brand_photos=images.assets(pid, "photo"),
                 brand_generated=images.assets(pid, "generated"), pickable=images.pickable(pid),
                 group_findings=campaigns.group_findings,
+                tools=tools.TOOLS, tool_groups=tools.GROUPS, tool_job=_tool_job_view(request, pid),
+                tool_out={k: db.latest_ai(pid, tools.OUTPUT_PREFIX + k) for k in tools.TOOLS},
                 kit=brand.kit(pid), brand_fields=brand.FIELDS, brand_sources=brand.sources(pid),
                 kit_sources=[q for q in allp if q["id"] != pid and brand.has_kit(brand.kit(q["id"]))])
 
@@ -1209,6 +1211,99 @@ async def campaign_review_create(request: Request, pid: int, cid: int):
     else:
         flash(request, f"Didn't go through: {msg}", "error")
     return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+
+
+# ---------- tools adapted from OpenAdKit: Score this ad, optimizers, research, social & leads ----------
+@app.post("/p/{pid}/drafts/{cid}/score")
+async def draft_score(request: Request, pid: int, cid: int):
+    if (r := guard(request)):
+        return r
+    ch, p = db.change(cid), db.practice(pid)
+    if not ch or not p or ch["practice_id"] != pid or ch["kind"] not in ("draft_ad", campaigns.KIND):
+        return _fix_back(pid)
+    anchor = f"camp-{cid}" if ch["kind"] == campaigns.KIND else f"fix-{cid}"
+    try:
+        result = await asyncio.to_thread(tools.score, p, ch)
+        db.update_change(cid, payload={**ch["payload"], "score": result})
+        flash(request, f"Scored {result['overall']:g}/10: {result['tier_label']}.")
+    except ai.AIError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/p/{pid}#{anchor}", status_code=303)
+
+
+TOOL_JOBS = {}          # practice id -> {"state", "kind", "msg", "started"}
+
+
+def _tool_job(pid):
+    j = TOOL_JOBS.get(pid)
+    if j and j["state"] == "running" and _time.time() - j["started"] > CAMP_JOB_MAX:
+        j.update(state="error", msg="The tool took too long and was stopped. Try again.")
+    return j
+
+
+def _tool_job_view(request, pid):
+    j = _tool_job(pid)
+    if not j:
+        return None
+    if j["state"] == "running":
+        return j
+    TOOL_JOBS.pop(pid, None)
+    if not getattr(request.state, "camp_flash", None):
+        request.state.camp_flash = {"msg": j["msg"], "kind": "ok" if j["state"] == "done" else "error"}
+    return None
+
+
+def _run_tool_job(pid, kind, form, by):
+    p = db.practice(pid)
+    try:
+        tools.run(kind, p, practice_views(p), form, by)
+        title = tools.TOOLS[kind]["title"]
+        TOOL_JOBS[pid] = {"state": "done", "kind": kind, "started": _time.time(),
+                          "msg": f"{title}: done. It's below under Tools." + (
+                              " The keywords are waiting under Make the fixes." if kind == "keywords" else "")}
+    except (ai.AIError, brand.BrandError, actions.ActionError, cx.ConnectorError) as e:
+        TOOL_JOBS[pid] = {"state": "error", "kind": kind, "started": _time.time(), "msg": str(e)}
+    except Exception as e:
+        TOOL_JOBS[pid] = {"state": "error", "kind": kind, "started": _time.time(), "msg": f"Something went wrong: {e}"}
+
+
+@app.post("/p/{pid}/tools/{kind}")
+async def tool_run(request: Request, pid: int, kind: str):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p or kind not in tools.TOOLS:
+        return RedirectResponse("/practices", status_code=303)
+    back = RedirectResponse(f"/p/{pid}#tool-{kind}", status_code=303)
+    j = _tool_job(pid)
+    if j and j["state"] == "running":
+        flash(request, "Another tool is still running for this practice; try again when it's done.", "error")
+        return back
+    if not ai.available():
+        flash(request, "AI isn't switched on for the Ads page. Run: sh enable-ads.sh", "error")
+        return back
+    form = dict(await request.form())
+    try:
+        tools._clean_inputs(tools.TOOLS[kind], form)       # missing fields show straight away
+    except ai.AIError as e:
+        flash(request, str(e), "error")
+        return back
+    TOOL_JOBS[pid] = {"state": "running", "kind": kind, "started": _time.time(), "msg": ""}
+    if os.environ.get("ADS_SYNC_JOBS") == "1":
+        _run_tool_job(pid, kind, form, actor(request))
+    else:
+        _threading.Thread(target=_run_tool_job, args=(pid, kind, form, actor(request)), daemon=True).start()
+    return back
+
+
+@app.post("/p/{pid}/tools/{kind}/delete")
+def tool_delete(request: Request, pid: int, kind: str):
+    if (r := guard(request)):
+        return r
+    if kind in tools.TOOLS:
+        db.delete_ai(pid, tools.OUTPUT_PREFIX + kind)
+        flash(request, "Removed.")
+    return RedirectResponse(f"/p/{pid}#tool-{kind}", status_code=303)
 
 
 # ---------- brand kits (per practice): rules every new ad is written and checked against ----------

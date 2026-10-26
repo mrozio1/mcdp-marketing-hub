@@ -128,6 +128,15 @@
       const links = el("td", "ref-links");
       const a = el("a", "small", "Google Maps"); a.href = r.maps_url; a.target = "_blank"; a.rel = "noopener"; links.append(a);
       if (r.place_id) links.append(el("span", "small muted ref-sub", "on our map"));
+      if (state.kind === "competitor") {       // see what they advertise (public ad libraries)
+        const q = encodeURIComponent(r.name);
+        const m = el("a", "small ref-sub", "Their Meta ads");
+        m.href = `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&search_type=keyword_unordered&q=${q}`;
+        m.target = "_blank"; m.rel = "noopener"; links.append(m);
+        const gg = el("a", "small ref-sub", "Their Google ads");
+        gg.href = "https://adstransparency.google.com/?region=US"; gg.target = "_blank"; gg.rel = "noopener";
+        gg.title = `Search “${r.name}” there`; links.append(gg);
+      }
       if (CAN_LOG) {
         const lv = el("a", "small ref-sub", "Log visit");
         lv.href = "/field/log?" + new URLSearchParams({ npi: r.key, back: location.pathname + location.search });

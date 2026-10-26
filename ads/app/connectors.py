@@ -814,7 +814,7 @@ class GoogleClient:
         try:
             res = _http(url, data={"operations": operations}, headers=self._headers(self._login_for(cid)))
         except ConnectorError as e:
-            raise ConnectorError(_write_hint(str(e), "google")) from None
+            raise ConnectorError(_write_hint(str(e), "google"), payload=e.payload) from None
         return res.get("results", [])
 
     def mutate_all(self, customer_id, mutate_operations):

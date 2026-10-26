@@ -135,7 +135,8 @@ def build_context(practice, platforms, org=None, brand_text=""):
 
 JSON_TASKS = {
     "google_ad": (
-        "Write one new Google responsive search ad for this campaign. Return JSON only: "
+        "Write one new Google responsive search ad for this campaign, following the ad-writing method in the "
+        "guide (angles first, the headline and description mix, combinable lines). Return JSON only: "
         '{"headlines": [10 to 15 strings, each 30 characters or fewer], '
         '"descriptions": [4 strings, each 90 characters or fewer]}. Count characters carefully. '
         "Vary the angles (offer, trust, convenience, outcome, call to action); include the location or "
@@ -146,7 +147,8 @@ JSON_TASKS = {
         "claims, no prices unless they're in the approved offers)."
     ),
     "meta_ad": (
-        "Write one new Meta (Facebook/Instagram) ad for this campaign, as a fresh angle on what the "
+        "Write one new Meta (Facebook/Instagram) ad for this campaign, as a fresh angle (see the ad-writing "
+        "method in the guide) on what the "
         'current ad says. Return JSON only: {"primary_text": "1-3 short sentences, under 200 characters", '
         '"headline": "40 characters or fewer", "description": "under 30 characters"}. If a brand kit is '
         "given, write in its voice and obey its never-say list; if a focus is given, the ad should serve it. "
@@ -154,7 +156,8 @@ JSON_TASKS = {
         "unless they're in the approved offers)."
     ),
     "google_campaign": (
-        "Plan one new Google Search campaign for this practice, promoting what the context says. Return JSON "
+        "Plan one new Google Search campaign for this practice, promoting what the context says. Write the ad "
+        "with the ad-writing method in the guide (angles first, the headline and description mix). Return JSON "
         'only: {"ad_group_name": "short name, under 40 characters", "keywords": [15 to 25 search phrases '
         'people near the practice would type, lowercase, 1 to 5 words each, no brand names of competitors], '
         '"headlines": [12 to 15 strings, each 30 characters or fewer], "descriptions": [4 strings, each 90 '

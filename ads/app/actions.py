@@ -29,7 +29,8 @@ MIN_DAILY_BUDGET = 1.0
 FIX_KINDS = ("negative_keyword", "pause", "budget")
 KIND_LABELS = {"negative_keyword": "Block wasted searches", "pause": "Pause campaigns",
                "budget": "Bring budgets in line", "draft_ad": "New ads (created paused)",
-               "new_campaign": "New campaigns (created paused)"}
+               "new_campaign": "New campaigns (created paused)",
+               "add_keyword": "Add keywords"}
 
 
 class ActionError(RuntimeError):
@@ -458,6 +459,7 @@ def edit_draft(ch, values, kit=None):
         else:
             pl["object_story_spec"]["link_data"].pop("description", None)
     pl["edited"] = True
+    pl.pop("score", None)          # the old score was for the old text
     return pl
 
 
@@ -491,6 +493,25 @@ def _apply_google(ch):
     if kind == "budget":
         _google_set_budget(g, cid, pl["budget_rn"], expect=pl["old"], new=pl["new"], name=pl["campaign"])
         return {}
+    if kind == "add_keyword":
+        have = g.search(cid, "SELECT ad_group_criterion.keyword.text FROM ad_group_criterion WHERE "
+                             "ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED' AND "
+                             f"ad_group.resource_name = '{pl['ad_group_rn']}'")
+        if any(((r.get("adGroupCriterion") or {}).get("keyword") or {}).get("text", "").lower() == pl["text"] for r in have):
+            raise _stale(f"“{pl['text']}” is already a keyword in {pl['ad_group']}.")
+        op = {"create": {"adGroup": pl["ad_group_rn"], "status": "ENABLED",
+                         "keyword": {"text": pl["text"], "matchType": "PHRASE"}}}
+        try:
+            res = g.mutate(cid, "adGroupCriteria", [op])
+            return {"resource": res[0]["resourceName"]}
+        except cx.ConnectorError as e:
+            keys = _exemptible_keys(e.payload)
+            if not keys:
+                raise
+            res = g.mutate(cid, "adGroupCriteria", [{**op, "exemptPolicyViolationKeys": keys}])
+            return {"resource": res[0]["resourceName"], "review": True,
+                    "warning": f"Google asked for a review of “{pl['text']}” (health term); it usually shows as "
+                               "Eligible (limited) within a day."}
     if kind == "draft_ad":
         res = g.mutate(cid, "adGroupAds", [{"create": {
             "adGroup": pl["ad_group_rn"], "status": "PAUSED",
@@ -499,6 +520,23 @@ def _apply_google(ch):
                 "descriptions": [{"text": d} for d in pl["descriptions"]]}}}}])
         return {"resource": res[0]["resourceName"]}
     raise ActionError("Unknown change.")
+
+
+def _exemptible_keys(payload):
+    """Policy keys from a Google error when every violation in it can be appealed, else []."""
+    err = (payload[0] if isinstance(payload, list) and payload else payload or {})
+    err = err.get("error", err) if isinstance(err, dict) else {}
+    keys, blocked = [], False
+    for d in err.get("details") or []:
+        for e in d.get("errors") or []:
+            pv = (e.get("details") or {}).get("policyViolationDetails")
+            if not pv:
+                blocked = True
+            elif pv.get("isExemptible") and pv.get("key"):
+                keys.append(pv["key"])
+            else:
+                blocked = True
+    return [] if blocked else keys
 
 
 def _google_set_budget(g, cid, rn, expect, new, name):
@@ -514,8 +552,8 @@ def _google_set_budget(g, cid, rn, expect, new, name):
 
 def _undo_google(ch):
     g, cid, pl, kind, res = _google(), ch["account"], ch["payload"], ch["kind"], ch["result"]
-    if kind in ("negative_keyword", "draft_ad"):
-        service = "campaignCriteria" if kind == "negative_keyword" else "adGroupAds"
+    if kind in ("negative_keyword", "draft_ad", "add_keyword"):
+        service = {"negative_keyword": "campaignCriteria", "draft_ad": "adGroupAds", "add_keyword": "adGroupCriteria"}[kind]
         g.mutate(cid, service, [{"remove": res["resource"]}])
     elif kind == "pause":
         cur = _gaql_one(g, cid, f"SELECT campaign.status FROM campaign WHERE campaign.id = {int(pl['campaign_id'])}")

@@ -70,7 +70,8 @@ def _fresh_state():
         "g_ads": {},             # resource -> payload
         "g_new": {},             # campaign resource -> the mutateOperations that created it
         "g_policy": {},
-        "g_assets": [],          # image asset operations sent to Google
+        "g_assets": [],
+        "g_keywords": {"customers/4445556666/adGroupCriteria/71~1": ("adGroups/71", "invisalign heights", None)},          # image asset operations sent to Google
         "m_images": {},          # hash -> jpeg bytes uploaded to Meta
         "cf_prompts": [],        # prompts sent to the image service          # keyword text -> exemptible?  (Google's policy check on new keywords)
         "m_objects": {"c1": {"name": "Heights - Free Consult Leads", "status": "ACTIVE", "daily_budget": "2000"},
@@ -378,6 +379,20 @@ class H(BaseHTTPRequestHandler):
                     rn = f"customers/4445556666/campaignCriteria/{camp}~{STATE['seq']}"
                     STATE["g_negatives"][rn] = (camp, c["keyword"]["text"].lower())
                     results.append({"resourceName": rn})
+                elif "create" in op and service == "adGroupCriteria":
+                    c = op["create"]
+                    text = c["keyword"]["text"]
+                    if text in STATE["g_policy"] and not op.get("exemptPolicyViolationKeys"):
+                        return self._json(400, {"error": {"code": 400, "message": "Request contains an invalid argument.",
+                            "details": [{"errors": [{"errorCode": {"policyViolationError": "POLICY_ERROR"},
+                                "message": "A policy was violated. See PolicyViolationDetails for more detail.",
+                                "details": {"policyViolationDetails": {"externalPolicyName": "Health in personalized advertising",
+                                    "key": {"policyName": "HEALTH_TEST", "violatingText": text},
+                                    "isExemptible": STATE["g_policy"][text]}}}]}]}})
+                    STATE["seq"] += 1
+                    rn = f"customers/4445556666/adGroupCriteria/71~{STATE['seq']}"
+                    STATE["g_keywords"][rn] = (c["adGroup"], text, op.get("exemptPolicyViolationKeys"))
+                    results.append({"resourceName": rn})
                 elif "create" in op and service == "adGroupAds":
                     c = op["create"]
                     assert c["status"] == "PAUSED"
@@ -389,7 +404,8 @@ class H(BaseHTTPRequestHandler):
                     if STATE["g_new"].pop(op["remove"], None) is not None:
                         STATE["g_campaigns"].pop(op["remove"].rsplit("/", 1)[1], None)
                 elif "remove" in op:
-                    STATE["g_negatives"].pop(op["remove"], None) or STATE["g_ads"].pop(op["remove"], None)
+                    (STATE["g_negatives"].pop(op["remove"], None) or STATE["g_ads"].pop(op["remove"], None)
+                     or STATE["g_keywords"].pop(op["remove"], None))
                     results.append({"resourceName": op["remove"]})
                 elif "update" in op and service == "campaigns":
                     cid = op["update"]["resourceName"].rsplit("/", 1)[1]
@@ -437,6 +453,21 @@ class H(BaseHTTPRequestHandler):
                     {"campaign": {"id": c}, "campaignCriterion": {"resourceName": rn, "keyword": {"text": t}}}
                     for rn, (c, t) in STATE["g_negatives"].items()
                     if "campaign.id = " not in q or q.split("campaign.id = ")[1].split()[0] == c]}])
+            if "FROM ad_group_criterion" in q:
+                return self._json(200, [{"results": [
+                    {"adGroupCriterion": {"resourceName": rn, "keyword": {"text": t}}}
+                    for rn, (ag, t, _) in STATE["g_keywords"].items()]}])
+            if "FROM ad_group_ad" in q and "campaign.id" not in q:      # live ads with numbers
+                return self._json(200, [{"results": [
+                    {"campaign": {"name": "Invisalign - Search"}, "adGroup": {"name": "Invisalign general"},
+                     "adGroupAd": {"ad": {"finalUrls": ["https://heightsortho.example/invisalign"],
+                                          "responsiveSearchAd": {"headlines": [{"text": "Invisalign in Heights"}],
+                                                                 "descriptions": [{"text": "Book a consult."}]}}},
+                     "metrics": {"impressions": "5200", "clicks": "120", "conversions": 6.0, "costMicros": "410000000"}}]}])
+            if "FROM ad_group " in q:
+                return self._json(200, [{"results": [
+                    {"adGroup": {"resourceName": f"{cust}/adGroups/71", "name": "Invisalign general"},
+                     "metrics": {"costMicros": "300000000"}}]}])
             if "FROM ad_group_ad" in q:
                 if "901" not in q:
                     return self._json(200, [])
