@@ -68,6 +68,7 @@ def _fresh_state():
         "g_budgets": {"b1": {"micros": 50_000_000, "shared": False}, "b2": {"micros": 20_000_000, "shared": False}},
         "g_negatives": {},       # resource -> (campaign_id, text)
         "g_ads": {},             # resource -> payload
+        "g_new": {},             # campaign resource -> the mutateOperations that created it
         "m_objects": {"c1": {"name": "Heights - Free Consult Leads", "status": "ACTIVE", "daily_budget": "2000"},
                       "c2": {"name": "Heights - Smile Gallery Video", "status": "ACTIVE"},
                       "as2": {"name": "Video viewers", "status": "ACTIVE", "daily_budget": "1500", "campaign_id": "c2"}},
@@ -296,6 +297,33 @@ class H(BaseHTTPRequestHandler):
                 return self._json(403, {"error": {"code": 403, "message": "The caller does not have permission",
                                                   "details": [{"errors": [{"message": "The user is not permitted to perform this action."}]}]}})
             service = u.path.rsplit("/", 1)[1].split(":")[0]
+            if service == "googleAds":
+                mops = json.loads(body)["mutateOperations"]
+                out, temp = [], {}
+                for op in mops:
+                    (kind, inner), = op.items()
+                    c = inner["create"]
+                    STATE["seq"] += 1
+                    rn = c.get("resourceName", "")
+                    if rn:
+                        real = rn.rsplit("/", 1)[0] + f"/{STATE['seq']}"
+                        temp[rn] = real
+                    else:
+                        real = f"customers/4445556666/{kind}/{STATE['seq']}"
+                    for k in ("campaignBudget", "campaign", "adGroup"):      # references must be to earlier ops
+                        if k in c and c[k].rsplit("/", 1)[1].startswith("-"):
+                            assert c[k] in temp, f"{k} refers to an unknown temp id"
+                    out.append({kind.replace("Operation", "Result"): {"resourceName": real}})
+                camp = next(o for o in mops if "campaignOperation" in o)["campaignOperation"]["create"]
+                assert camp["status"] == "PAUSED"
+                crn = temp[camp["resourceName"]]
+                STATE["g_new"][crn] = mops
+                bid = "new" + crn.rsplit("/", 1)[1]
+                STATE["g_budgets"][bid] = {"micros": int(mops[0]["campaignBudgetOperation"]["create"]["amountMicros"]),
+                                           "shared": False}
+                STATE["g_campaigns"][crn.rsplit("/", 1)[1]] = {"name": camp["name"], "status": "PAUSED",
+                                                               "channel": "SEARCH", "budget": bid}
+                return self._json(200, {"mutateOperationResponses": out})
             ops = json.loads(body)["operations"]
             results = []
             for op in ops:
@@ -313,6 +341,9 @@ class H(BaseHTTPRequestHandler):
                     rn = f"{c['adGroup'].replace('adGroups', 'adGroupAds')}~{STATE['seq']}"
                     STATE["g_ads"][rn] = c
                     results.append({"resourceName": rn})
+                elif "remove" in op and service in ("campaigns", "campaignBudgets"):
+                    if STATE["g_new"].pop(op["remove"], None) is not None:
+                        STATE["g_campaigns"].pop(op["remove"].rsplit("/", 1)[1], None)
                 elif "remove" in op:
                     STATE["g_negatives"].pop(op["remove"], None) or STATE["g_ads"].pop(op["remove"], None)
                     results.append({"resourceName": op["remove"]})
@@ -402,7 +433,15 @@ class H(BaseHTTPRequestHandler):
 
 
 def start(port=9944):
-    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    import time
+    for attempt in range(20):          # the previous test's server may still be letting go of the port
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+            break
+        except OSError:
+            if attempt == 19:
+                raise
+            time.sleep(0.25)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, db, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
+from . import actions, ai, brand, campaigns, db, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
@@ -650,9 +650,13 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 assign_targets=[q for q in allp if q["id"] != pid],
                 added=scope.added_campaigns(p), all_practices=allp,
                 added_norm={scope.norm(n) for n in scope.added_campaigns(p)},
-                fixes_open=db.changes(pid, ["proposed", "failed", "stale"]),
+                fixes_open=[c for c in db.changes(pid, ["proposed", "failed", "stale"]) if c["kind"] != campaigns.KIND],
                 fixes_done=db.changes(pid, ["applied", "undone"], limit=40),
-                kind_labels=actions.KIND_LABELS,
+                kind_labels={k: v for k, v in actions.KIND_LABELS.items() if k != campaigns.KIND},
+                camp_drafts=[c for c in db.changes(pid, ["proposed", "failed", "stale"]) if c["kind"] == campaigns.KIND],
+                camp_made=[c for c in db.changes(pid, ["applied"], limit=60) if c["kind"] == campaigns.KIND],
+                camp_account=campaigns.account_for(p, allp), camp_name_word=campaigns.name_word(p),
+                camp_addresses=campaigns.office_addresses(pid),
                 kit=brand.kit(pid), brand_fields=brand.FIELDS, brand_sources=brand.sources(pid),
                 kit_sources=[q for q in allp if q["id"] != pid and brand.has_kit(brand.kit(q["id"]))])
 
@@ -850,8 +854,8 @@ async def ai_generate(request: Request, pid: int, kind: str):
 
 
 # ---------- fixes: proposed in the page, applied in Google / Meta only on click ----------
-def _fix_back(pid):
-    return RedirectResponse(f"/p/{pid}#fixes", status_code=303)
+def _fix_back(pid, back=""):
+    return RedirectResponse(f"/p/{pid}#{'new-campaign' if back == 'campaign' else 'fixes'}", status_code=303)
 
 
 @app.post("/p/{pid}/fixes/prepare")
@@ -889,28 +893,28 @@ async def fixes_apply(request: Request, pid: int):
     if problems:
         msg += f" {len(problems)} didn't go through — " + problems[0] + (" (see the list for the rest)" if len(problems) > 1 else "")
     flash(request, msg, "error" if problems else "ok")
-    return _fix_back(pid)
+    return _fix_back(pid, form.get("back", ""))
 
 
 @app.post("/p/{pid}/fixes/{cid}/undo")
-async def fixes_undo(request: Request, pid: int, cid: int):
+async def fixes_undo(request: Request, pid: int, cid: int, back: str = Form("")):
     if (r := guard(request)):
         return r
     ch = db.change(cid)
     if ch and ch["practice_id"] == pid:
         ok, msg = await asyncio.to_thread(actions.undo_change, ch, actor(request))
         flash(request, f"Undone: {ch['title']}." if ok else f"Couldn't undo: {msg}", "ok" if ok else "error")
-    return _fix_back(pid)
+    return _fix_back(pid, back)
 
 
 @app.post("/p/{pid}/fixes/{cid}/dismiss")
-def fixes_dismiss(request: Request, pid: int, cid: int):
+def fixes_dismiss(request: Request, pid: int, cid: int, back: str = Form("")):
     if (r := guard(request)):
         return r
     ch = db.change(cid)
     if ch and ch["practice_id"] == pid and ch["status"] in ("proposed", "failed", "stale"):
         db.update_change(cid, status="dismissed")
-    return _fix_back(pid)
+    return _fix_back(pid, back)
 
 
 @app.post("/p/{pid}/fixes/draft")
@@ -962,6 +966,47 @@ async def fixes_edit(request: Request, pid: int, cid: int):
     db.update_change(cid, payload=payload, status="proposed", error="")
     flash(request, "Ad text saved. Tick it and Apply to create it (paused).")
     return RedirectResponse(f"/p/{pid}#fix-{cid}", status_code=303)
+
+
+# ---------- brand-new Google Search campaigns (drafted from the brand kit, created paused on Apply) ----------
+@app.post("/p/{pid}/campaign/new")
+async def campaign_new(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if not p:
+        return RedirectResponse("/practices", status_code=303)
+    f = await request.form()
+    addrs = [x.strip() for x in str(f.get("addresses") or "").replace("\r", "").split("\n") if x.strip()]
+    try:
+        await asyncio.to_thread(campaigns.draft, p, ai.generate_json, focus=f.get("focus", ""),
+                                daily_budget=f.get("daily_budget"), max_cpc=f.get("max_cpc") or None,
+                                radius=f.get("radius") or 10, addresses=addrs, landing_url=f.get("final_url", ""),
+                                practices=db.practices())
+        flash(request, "Campaign drafted. Check every part below (edit if needed), then tick it and Apply to create "
+                       "it, paused, in Google Ads.")
+    except (campaigns.CampaignError, actions.ActionError, ai.AIError) as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+
+
+@app.post("/p/{pid}/campaign/{cid}/edit")
+async def campaign_edit(request: Request, pid: int, cid: int):
+    if (r := guard(request)):
+        return r
+    ch, p = db.change(cid), db.practice(pid)
+    if not ch or not p or ch["practice_id"] != pid:
+        return RedirectResponse(f"/p/{pid}#new-campaign", status_code=303)
+    try:
+        payload = campaigns.edit(ch, await request.form(), brand.kit(pid), p)
+    except campaigns.CampaignError as e:
+        flash(request, f"Not saved: {e}", "error")
+        return RedirectResponse(f"/p/{pid}#camp-{cid}", status_code=303)
+    db.update_change(cid, payload=payload, status="proposed", error="",
+                     title=f"New Search campaign “{payload['name']}” (created paused)",
+                     detail=campaigns.summary_detail(payload))
+    flash(request, "Campaign saved. Tick it and Apply to create it (paused).")
+    return RedirectResponse(f"/p/{pid}#camp-{cid}", status_code=303)
 
 
 # ---------- brand kits (per practice): rules every new ad is written and checked against ----------

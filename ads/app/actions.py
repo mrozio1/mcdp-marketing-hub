@@ -28,7 +28,8 @@ BUDGET_DEADBAND = 0.10          # ignore drift under 10%
 MIN_DAILY_BUDGET = 1.0
 FIX_KINDS = ("negative_keyword", "pause", "budget")
 KIND_LABELS = {"negative_keyword": "Block wasted searches", "pause": "Pause campaigns",
-               "budget": "Bring budgets in line", "draft_ad": "New ads (created paused)"}
+               "budget": "Bring budgets in line", "draft_ad": "New ads (created paused)",
+               "new_campaign": "New campaigns (created paused)"}
 
 
 class ActionError(RuntimeError):
@@ -590,10 +591,17 @@ def _undo_meta(ch):
 
 def apply_change(ch, by=""):
     """Returns (ok, message)."""
+    from . import campaigns
     if ch["status"] not in ("proposed", "failed"):
         return False, "That change was already handled."
     try:
-        result = (_apply_google if ch["platform"] == "google" else _apply_meta)(ch)
+        if ch["kind"] == "new_campaign":
+            result = campaigns.apply(ch, _google(), brand.kit(ch["practice_id"]))
+        else:
+            result = (_apply_google if ch["platform"] == "google" else _apply_meta)(ch)
+    except campaigns.CampaignError as e:
+        db.update_change(ch["id"], status="failed", error=str(e))
+        return False, str(e)
     except ActionError as e:
         db.update_change(ch["id"], status="stale", error=str(e))
         return False, str(e)
@@ -607,9 +615,13 @@ def apply_change(ch, by=""):
 def undo_change(ch, by=""):
     if ch["status"] != "applied":
         return False, "Only applied changes can be undone."
+    from . import campaigns
     try:
-        (_undo_google if ch["platform"] == "google" else _undo_meta)(ch)
-    except (ActionError, cx.ConnectorError) as e:
+        if ch["kind"] == "new_campaign":
+            campaigns.undo(ch, _google())
+        else:
+            (_undo_google if ch["platform"] == "google" else _undo_meta)(ch)
+    except (ActionError, campaigns.CampaignError, cx.ConnectorError) as e:
         db.update_change(ch["id"], error=str(e))
         return False, str(e)
     db.update_change(ch["id"], status="undone", error="", undone_at=db.now(), undone_by=by)

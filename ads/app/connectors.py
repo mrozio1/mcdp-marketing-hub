@@ -815,6 +815,18 @@ class GoogleClient:
             raise ConnectorError(_write_hint(str(e), "google")) from None
         return res.get("results", [])
 
+    def mutate_all(self, customer_id, mutate_operations):
+        """GoogleAdsService.Mutate: several kinds of change in one all-or-nothing request (temporary
+        negative IDs link the new objects together). Returns mutateOperationResponses."""
+        cid = _clean_id(customer_id)
+        url = f"{GOOGLE_BASE}/{GOOGLE_VERSION}/customers/{cid}/googleAds:mutate"
+        try:
+            res = _http(url, data={"mutateOperations": mutate_operations},
+                        headers=self._headers(self._login_for(cid)), timeout=120)
+        except ConnectorError as e:
+            raise ConnectorError(_write_hint(str(e), "google")) from None
+        return res.get("mutateOperationResponses", [])
+
     def search(self, customer_id, gaql):
         return self.query(customer_id, gaql, login_cid=self._login_for(customer_id))
 

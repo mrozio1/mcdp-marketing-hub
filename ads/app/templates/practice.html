@@ -322,6 +322,88 @@
     </section>
     {% endif %}
 
+    {% if google_on and camp_account and (can_edit or camp_drafts or camp_made) %}
+    <section class="fixes new-campaign" id="new-campaign">
+      <h2>New Google campaign</h2>
+      <p class="muted">A complete Search campaign written from this practice’s {% if kit.voice or kit.services or kit.offers %}<a href="#brand">brand kit</a>{% else %}details (add a <a href="#brand">brand kit</a> for on-brand ads){% endif %}: keywords, one ad group and a responsive search ad, shown on Google search to people in or regularly in a radius around the office, bidding to get the most clicks for the budget. You check and edit everything first; Apply creates it <strong>paused</strong> in Google Ads, and Undo removes it.</p>
+
+      {% if camp_drafts %}
+      {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/apply" class="fix-list camp-list" data-busy="Creating in Google Ads…"><input type="hidden" name="back" value="campaign">{% else %}<div>{% endif %}
+      <ul>
+      {% for ch in camp_drafts %}{% set pl = ch.payload %}
+        <li class="fix fix-{{ ch.status }}" id="camp-{{ ch.id }}">
+          <label class="fix-main">
+            {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="camp">{% endif %}
+            <span><span class="tag tag-google">Google</span> {{ ch.title }}<br><span class="muted small">{{ ch.detail }}</span>
+            {% if ch.error %}<br><span class="fix-error small">Didn’t go through: {{ ch.error }}</span>{% endif %}
+            <span class="ad-preview">
+              <strong class="small">Ad group</strong> <span class="small">{{ pl.ad_group }}</span><br>
+              <strong class="small">Keywords</strong> <span class="small">{{ pl.keywords|join(' · ') }}</span><br>
+              <strong class="small">Headlines</strong> <span class="small">{{ pl.headlines|join(' · ') }}</span><br>
+              <strong class="small">Descriptions</strong> <span class="small">{{ pl.descriptions|join(' · ') }}</span><br>
+              <strong class="small">Landing page</strong> <span class="small">{{ pl.final_url or '—' }}</span><br>
+              <strong class="small">Around</strong> <span class="small">{{ pl.addresses|join(' · ') or 'no address yet' }} ({{ '%g'|format(pl.radius) }} mi)</span>
+            </span></span>
+          </label>
+          <div class="ad-extra">
+            {% if pl.dropped %}<details class="ad-dropped small"><summary>Left out ({{ pl.dropped|length }})</summary>
+              <ul>{% for d in pl.dropped %}<li>“{{ d.text }}” <span class="muted">— {{ d.why }}</span></li>{% endfor %}</ul></details>{% endif %}
+            {% if can_edit %}
+            <details class="ad-edit"><summary class="small">Edit the campaign</summary>
+              <label class="small">Campaign name <span class="muted">(must contain “{{ camp_name_word }}”)</span><input name="name" form="camp-edit-{{ ch.id }}" value="{{ pl.name }}" maxlength="120"></label>
+              <div class="camp-row">
+                <label class="small">Daily budget ($)<input name="daily_budget" form="camp-edit-{{ ch.id }}" type="number" min="1" max="1000" step="0.01" value="{{ '%.2f'|format(pl.daily_budget) }}"></label>
+                <label class="small">Max per click ($, optional)<input name="max_cpc" form="camp-edit-{{ ch.id }}" type="number" min="0.1" max="100" step="0.01" value="{{ '%.2f'|format(pl.max_cpc) if pl.max_cpc else '' }}"></label>
+                <label class="small">Radius (miles)<input name="radius" form="camp-edit-{{ ch.id }}" type="number" min="1" max="50" step="0.5" value="{{ '%g'|format(pl.radius) }}"></label>
+              </div>
+              <label class="small">Office addresses, one per line (street, city, state ZIP)<textarea name="addresses" form="camp-edit-{{ ch.id }}" rows="3">{{ pl.addresses|join('\n') }}</textarea></label>
+              <label class="small">Landing page<input name="final_url" form="camp-edit-{{ ch.id }}" value="{{ pl.final_url }}" placeholder="https://…"></label>
+              <label class="small">Ad group name<input name="ad_group" form="camp-edit-{{ ch.id }}" value="{{ pl.ad_group }}" maxlength="80"></label>
+              <label class="small">Keywords, one per line (phrase match)<textarea name="keywords" form="camp-edit-{{ ch.id }}" rows="8">{{ pl.keywords|join('\n') }}</textarea></label>
+              <label class="small">Searches to never show for, one per line<textarea name="negatives" form="camp-edit-{{ ch.id }}" rows="3">{{ pl.negatives|join('\n') }}</textarea></label>
+              <label class="small">Headlines, one per line (3–15, up to 30 characters)<textarea name="headlines" form="camp-edit-{{ ch.id }}" rows="8" data-limit="30" data-min="3" data-max="15">{{ pl.headlines|join('\n') }}</textarea></label>
+              <label class="small">Descriptions, one per line (2–4, up to 90 characters)<textarea name="descriptions" form="camp-edit-{{ ch.id }}" rows="4" data-limit="90" data-min="2" data-max="4">{{ pl.descriptions|join('\n') }}</textarea></label>
+              <button class="btn btn-quiet" type="submit" form="camp-edit-{{ ch.id }}">Save campaign</button>
+            </details>
+            {% endif %}
+          </div>
+          {% if can_edit %}<button class="linklike small" type="submit" formaction="/p/{{ p.id }}/fixes/{{ ch.id }}/dismiss" data-busy="…">Dismiss</button>{% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+      {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button></form>
+      {% for ch in camp_drafts %}<form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>{% endfor %}
+      {% else %}</div>{% endif %}
+      {% endif %}
+
+      {% if can_edit %}
+      <details class="camp-new" {% if not camp_drafts and not camp_made %}open{% endif %}>
+        <summary>Draft a new campaign</summary>
+        <form method="post" action="/p/{{ p.id }}/campaign/new" class="stack camp-form" data-busy="Writing the campaign…">
+          <label>What should it promote?<input name="focus" maxlength="120" placeholder="e.g. Invisalign for adults, emergency dentist, braces for kids" required></label>
+          <div class="camp-row">
+            <label>Daily budget ($)<input name="daily_budget" type="number" min="1" max="1000" step="0.01" value="20" required></label>
+            <label>Max per click ($, optional)<input name="max_cpc" type="number" min="0.1" max="100" step="0.01" placeholder="no limit"></label>
+            <label>Radius (miles)<input name="radius" type="number" min="1" max="50" step="0.5" value="10" required></label>
+          </div>
+          <label>Office addresses, one per line <span class="muted small">(street, city, state ZIP{% if camp_addresses %}; from the map offices linked to this practice{% endif %})</span>
+            <textarea name="addresses" rows="3" placeholder="43767 Van Dyke Ave, Sterling Heights, MI 48314">{{ camp_addresses|join('\n') }}</textarea></label>
+          <label>Landing page<input name="final_url" value="{{ kit.website or '' }}" placeholder="https://…"></label>
+          <button class="btn" type="submit" {% if not ai_on %}disabled{% endif %}>Write the campaign</button>
+          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …” so its results show on this page. Takes up to a minute.</span>
+        </form>
+      </details>
+      {% endif %}
+
+      {% if camp_made %}
+      <details class="fix-history"><summary>Campaigns created here ({{ camp_made|length }})</summary>
+        <ul>{% for ch in camp_made %}<li><span>{{ ch.title }} <span class="muted small">applied {{ ch.applied_at.replace('T', ' ')[:16] }}{% if ch.applied_by %} by {{ ch.applied_by }}{% endif %}</span></span>
+          {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/undo" data-busy="Removing…" data-confirm="Remove this campaign from Google Ads? Its ad group, keywords and ad go with it."><input type="hidden" name="back" value="campaign"><button class="linklike small" type="submit">Undo (remove)</button></form>{% endif %}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
+
     {% endif %}{# end paid-only #}
 
     {% if show != 'paid' and org.linked %}

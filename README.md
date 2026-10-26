@@ -202,6 +202,18 @@ against the live Google Ads and Meta accounts:
   campaign, an optional focus ("Invisalign for adults") and 1–3 versions. Each draft can be
   edited before applying (live character counts), and edits are checked again.
 
+### New Google campaigns
+
+**New Google campaign** on a practice page drafts a complete Search campaign from the brand
+kit: say what it promotes, the daily budget, an optional max cost per click and a radius;
+office addresses come from the map offices linked to the practice (or type them). The AI
+writes the keywords (phrase match), an ad group and a responsive search ad; everything is
+checked against the kit and editable. **Create in Google Ads** sends it in one all-or-nothing
+request, **paused**: Search network only, Maximize clicks, English, people in or regularly in
+the radius, a few standard negative keywords (jobs, careers, school…). The name always
+contains the practice's campaign word so its results show on its page. **Undo** removes the
+campaign. Needs the Google robot at Standard access.
+
 ### Brand kits (per practice)
 
 The practice page's **Brand kit** drop-down holds the rules new ads are written with:

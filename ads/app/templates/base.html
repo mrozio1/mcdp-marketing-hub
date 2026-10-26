@@ -56,14 +56,14 @@
     });
   }));
   // Fixes list: "select all" per group, and keep the Apply button's count current.
-  const fixForm = document.querySelector('form.fix-list');
-  if (fixForm) {
+  document.querySelectorAll('form.fix-list').forEach(fixForm => {
     const boxes = () => [...fixForm.querySelectorAll('input[name=ids]')];
     const btn = fixForm.querySelector('.apply-btn');
+    const label = fixForm.classList.contains('camp-list') ? 'Create in Google Ads (paused)' : null;
     const sync = () => {
       const n = boxes().filter(b => b.checked).length;
       btn.disabled = n === 0;
-      btn.textContent = n ? `Apply ${n} change${n === 1 ? '' : 's'}` : 'Tick the changes to apply';
+      btn.textContent = n ? (label || `Apply ${n} change${n === 1 ? '' : 's'}`) : (label ? 'Tick the campaign to create' : 'Tick the changes to apply');
       fixForm.querySelectorAll('input[data-all]').forEach(a => {
         const g = boxes().filter(b => b.dataset.group === a.dataset.all);
         a.checked = g.length > 0 && g.every(b => b.checked);
@@ -75,7 +75,7 @@
       sync();
     });
     sync();
-  }
+  });
   // Ad text boxes: live character counts per line, and line counts.
   document.querySelectorAll('textarea[data-limit]').forEach(t => {
     const note = document.createElement('span'); note.className = 'char-note'; t.after(note);

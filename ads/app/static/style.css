@@ -799,3 +799,11 @@ table.practices tr:has(+ tr.organic-row) th, table.practices tr:has(+ tr.organic
 li.fix:has(.ad-extra) { flex-wrap: wrap; }
 .ad-extra { flex: 1 0 100%; order: 3; padding-left: 1.65rem; min-width: 0; }
 li.fix:has(.ad-extra) > .fix-main { flex: 1 1 0; }
+
+.camp-row { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; }
+.camp-row label { flex: 1 1 9rem; min-width: 0; }
+.camp-row input { width: 100%; }
+.camp-new { margin-top: 1.2rem; }
+.camp-new > summary { cursor: pointer; color: var(--teal); font-weight: 600; }
+.camp-form { margin-top: 0.8rem; }
+.camp-form textarea, .camp-form input { width: 100%; }

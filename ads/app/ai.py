@@ -153,6 +153,18 @@ JSON_TASKS = {
         "Follow the dental advertising care rules strictly (no guarantees, no before/after claims, no prices "
         "unless they're in the approved offers)."
     ),
+    "google_campaign": (
+        "Plan one new Google Search campaign for this practice, promoting what the context says. Return JSON "
+        'only: {"ad_group_name": "short name, under 40 characters", "keywords": [15 to 25 search phrases '
+        'people near the practice would type, lowercase, 1 to 5 words each, no brand names of competitors], '
+        '"headlines": [12 to 15 strings, each 30 characters or fewer], "descriptions": [4 strings, each 90 '
+        "characters or fewer]}. Count characters carefully. Keywords: mix service + location (e.g. 'invisalign "
+        "sterling heights'), service + 'near me', and plain service terms; no keywords about jobs or schools. "
+        "Ad text: vary the angles (offer, trust, convenience, outcome, call to action); use the practice name "
+        "and town in a few headlines; no exclamation marks in headlines, no phone numbers, no words in "
+        "capitals. If a brand kit is given, write in its voice, use only its approved offers and obey its "
+        "never-say list. Follow the dental advertising care rules strictly."
+    ),
     "brand_fill": "",   # the task text lives in brand.FILL_TASK
 }
 
@@ -178,7 +190,7 @@ def generate_json(kind, context):
     else:
         system = ("You write ad copy for a group of dental and orthodontic practices. "
                   "Reply with a single JSON object and nothing else.\n\n" + GUIDE)
-        task, temp, tokens = JSON_TASKS[kind], 0.7, 1500
+        task, temp, tokens = JSON_TASKS[kind], 0.7, (3000 if kind == "google_campaign" else 1500)
     text = _chat([
         {"role": "system", "content": system},
         {"role": "user", "content": task + "\n\n--- CONTEXT ---\n" + context},
