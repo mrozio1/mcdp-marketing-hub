@@ -1781,7 +1781,7 @@ def reviews_page(request: Request):
         pid = None
     tab = "score" if q.get("tab") == "score" else "inbox"
     src = q.get("src") if q.get("src") in ("google", "facebook", "instagram") else "all"
-    status = "done" if q.get("status") == "done" else "open"
+    status = q.get("status") if q.get("status") in ("done", "reported") else "open"
     filt = q.get("filter") if q.get("filter") in ("under", "quiet") else "all"
     items, counts = reviews.inbox(pid, src, status, plist)
     sel = _num(q.get("item"))
@@ -1807,7 +1807,9 @@ def reviews_page(request: Request):
                 gbp_client=all(cx.gbp_client()), gbp_on=reviews.gbp_connected(), locations=reviews.locations(),
                 gbp_redirect=_gbp_redirect(request), overdue=reviews.overdue_hours(), every=reviews.check_minutes(),
                 month_opts=month_opts, man_month=man_month, manual=manual, month_label=reviews.month_label,
-                meta_on=cx.meta_configured(), fb_linked=any(db.social_ids(p, "fb") or db.social_ids(p, "ig") for p in plist))
+                meta_on=cx.meta_configured(), fb_linked=any(db.social_ids(p, "fb") or db.social_ids(p, "ig") for p in plist),
+                reported_n=reviews.reported_count(pid, plist), report_reasons=reviews.REPORT_REASONS,
+                report_tool=reviews.REPORT_TOOL, followup_days=reviews.REPORT_FOLLOWUP_DAYS)
 
 
 @app.get("/reviews.xlsx")
@@ -1820,7 +1822,10 @@ def reviews_export(request: Request):
 
 
 DONE_MSG = {"reply": "Reply posted.", "like": "Liked. Marked done.", "hide": "Comment hidden. Marked done.",
-            "done": "Marked done.", "reopen": "Moved back to Needs reply."}
+            "done": "Marked done.", "reopen": "Moved back to Needs reply.",
+            "report": "Marked as reported. Finish the report in Google's form (it opened in a new tab); "
+                      "the hub checks every half hour and marks it Removed by Google when it's gone.",
+            "unreport": "Report undone."}
 
 
 @app.post("/reviews/items/{iid}/{action}")
@@ -1841,7 +1846,12 @@ async def reviews_act(request: Request, iid: int, action: str):
     if action not in DONE_MSG:
         return RedirectResponse(back, status_code=303)
     try:
-        await asyncio.to_thread(reviews.act, iid, action, actor(request), message)
+        if action == "report":
+            reviews.report(iid, str(form.get("reason") or ""), str(form.get("note") or ""), actor(request))
+        elif action == "unreport":
+            reviews.unreport(iid)
+        else:
+            await asyncio.to_thread(reviews.act, iid, action, actor(request), message)
         flash(request, DONE_MSG[action])
     except (reviews.ReviewsError, cx.ConnectorError) as e:
         if action == "reply" and message.strip():

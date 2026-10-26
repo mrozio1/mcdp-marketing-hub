@@ -94,9 +94,31 @@ class ReviewsError(ValueError):
     pass
 
 
+# Reporting a Google review for removal. Google's API can't do it, so the hub opens Google's own
+# Reviews Management Tool and keeps track: reported, then removed by Google or still up.
+REPORT_TOOL = "https://support.google.com/business/workflow/9945796"
+REPORT_FOLLOWUP_DAYS = 7
+REPORT_REASONS = {   # Google's report reasons, in the order its form lists them, with when to use each
+    "off_topic": ("Off topic", "Not about an experience at this business"),
+    "spam": ("Spam", "Fake, posted by a bot or someone who was never here, or repeated"),
+    "conflict": ("Conflict of interest", "A competitor, a former employee, or someone with a stake"),
+    "profanity": ("Profanity", "Swearing or sexually explicit language"),
+    "harassment": ("Bullying or harassment", "Personal attacks on a named person"),
+    "hate": ("Discrimination or hate speech", "Harmful language about a group"),
+    "personal": ("Personal information", "Shares someone's address, phone or other private details"),
+    "not_helpful": ("Not helpful", "Doesn't help anyone decide about this business"),
+}
+REPORT_COLS = {"report_reason": "TEXT DEFAULT ''", "report_note": "TEXT DEFAULT ''", "reported_by": "TEXT DEFAULT ''",
+               "reported_at": "TEXT", "removed_at": "TEXT"}
+
+
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        have = {r["name"] for r in c.execute("PRAGMA table_info(inbox)")}
+        for col, ddl in REPORT_COLS.items():
+            if col not in have:
+                c.execute(f"ALTER TABLE inbox ADD COLUMN {col} {ddl}")
 
 
 # ------------------------------------------------------------------ small helpers
@@ -330,6 +352,11 @@ def _decorate(rows, owners, plist, names, now):
         r["handled_ago"] = ago(r["handled_at"], now) if r.get("handled_at") else ""
         r["flag"] = flags(r)
         r["hours"] = hours_since(r["created"], now)
+        if r.get("reported_at"):
+            r["report_label"] = REPORT_REASONS.get(r.get("report_reason") or "", ("Reported", ""))[0]
+            r["report_days"] = int(hours_since(r["reported_at"], now) // 24)
+            r["report_ago"] = ago(r["reported_at"], now)
+            r["report_stale"] = r["status"] == "reported" and r["report_days"] >= REPORT_FOLLOWUP_DAYS
         out.append(r)
     return out
 
@@ -344,6 +371,8 @@ def inbox(practice_id=None, source="all", status="open", plist=None):
     with db.conn() as c:
         if status == "done":
             rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='done' ORDER BY handled_at DESC, id DESC")]
+        elif status == "reported":
+            rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='reported' ORDER BY reported_at, id")]
         else:
             rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='open' ORDER BY created, id")]
     rows = _decorate(rows, owners, plist, names, now)
@@ -357,6 +386,62 @@ def inbox(practice_id=None, source="all", status="open", plist=None):
     else:
         rows.sort(key=lambda r: (0 if r["flag"] == "unhappy" else 1, r["created"]))
     return rows, counts
+
+
+def reported_count(practice_id=None, plist=None):
+    try:
+        return len(inbox(practice_id, "all", "reported", plist)[0])
+    except Exception:
+        return 0
+
+
+def report(iid, reason, note, user_name):
+    """Record that a Google review was reported for removal (the report itself is made in Google's tool)."""
+    it = item(iid)
+    if not it:
+        raise ReviewsError("That review isn't in the inbox any more.")
+    if it["source"] != "google":
+        raise ReviewsError("Only Google reviews are reported this way. Hide Facebook and Instagram comments instead.")
+    if reason not in REPORT_REASONS:
+        raise ReviewsError("Pick the reason you gave Google.")
+    if it["status"] == "reported":
+        raise ReviewsError("This review is already marked as reported.")
+    if it.get("removed_at"):
+        raise ReviewsError("Google has already removed this review.")
+    with db.conn() as c:
+        c.execute("UPDATE inbox SET status='reported', report_reason=?, report_note=?, reported_by=?, reported_at=?, "
+                  "removed_at=NULL WHERE id=?", (reason, (note or "").strip()[:1000], user_name, _iso(utcnow()), iid))
+    return item(iid)
+
+
+def unreport(iid):
+    """Undo 'reported' (e.g. the report wasn't sent after all): back to Needs reply, or Done if it was answered."""
+    it = item(iid)
+    if not it or it["status"] != "reported":
+        raise ReviewsError("This review isn't marked as reported.")
+    with db.conn() as c:
+        c.execute("UPDATE inbox SET status=?, report_reason='', report_note='', reported_by='', reported_at=NULL "
+                  "WHERE id=?", ("done" if it["handled_at"] else "open", iid))
+    return item(iid)
+
+
+def _mark_removed(location, present_ids, complete):
+    """After pulling a location's reviews: reported reviews Google no longer returns were removed. Only when the
+    pull was complete (every page), so a short page never looks like a removal. Returns how many were removed."""
+    if not complete:
+        return 0
+    now = _iso(utcnow())
+    with db.conn() as c:
+        gone = [r for r in c.execute("SELECT id, external_id FROM inbox WHERE source='google' AND account_id=? "
+                                     "AND status='reported'", (location,)) if r["external_id"] not in present_ids]
+        for r in gone:
+            c.execute("UPDATE inbox SET status='done', outcome='removed', removed_at=?, handled_by='Removed by Google', "
+                      "handled_at=? WHERE id=?", (now, now, r["id"]))
+        stored = [r["id"] for r in c.execute("SELECT id FROM gbp_reviews WHERE location=?", (location,))]
+        stale = [i for i in stored if i not in present_ids]
+        if stale:   # removed reviews stop counting on the scoreboard
+            c.executemany("DELETE FROM gbp_reviews WHERE id=?", [(i,) for i in stale])
+    return len(gone)
 
 
 def open_count(practice_id=None):
@@ -436,8 +521,12 @@ def sync_google(today=None):
     except cx.ConnectorError as e:
         return {l["name"]: {"ok": False, "error": str(e)} for l in linked}
     out, now = {}, utcnow()
+    with db.conn() as c:
+        watching = {r["account_id"] for r in c.execute("SELECT DISTINCT account_id FROM inbox WHERE source='google' "
+                                                        "AND status='reported'")}
     for loc in linked:
-        full = not loc["full_at"] or hours_since(loc["full_at"], now) > 20
+        # a reported review is looked for on every check, so a removal shows within the half hour
+        full = not loc["full_at"] or hours_since(loc["full_at"], now) > 20 or loc["name"] in watching
         try:
             revs, avg, total = client.reviews(loc["name"], all_pages=full)
         except cx.ConnectorError as e:
@@ -455,7 +544,9 @@ def sync_google(today=None):
                       (avg, total, _iso(now), *((_iso(now),) if full else ()), loc["name"]))
         new = upsert_items("google", loc["name"], [{**r, "replied": bool(r["reply"]), "reply_text": r["reply"]}
                                                    for r in revs], "Answered on Google")
-        out[loc["name"]] = {"ok": True, "reviews": len(revs), "new": new}
+        complete = full and total is not None and len({r["id"] for r in revs}) >= int(total)
+        removed = _mark_removed(loc["name"], {r["id"] for r in revs}, complete)
+        out[loc["name"]] = {"ok": True, "reviews": len(revs), "new": new, "removed": removed}
     return out
 
 
@@ -776,10 +867,17 @@ def scoreboard(practice_id=None, today=None, plist=None):
     now = utcnow()
     open_by_p = {}
     owners = account_practice(db.practices())
+    rep_by_p, rem_by_p = {}, {}
     with db.conn() as c:
         for r in c.execute("SELECT source, account_id FROM inbox WHERE status='open'"):
             pid = owners.get((r["source"], r["account_id"]))
             open_by_p[pid] = open_by_p.get(pid, 0) + 1
+        for r in c.execute("SELECT account_id, status, outcome FROM inbox WHERE source='google' AND reported_at IS NOT NULL"):
+            pid = owners.get(("google", r["account_id"]))
+            if r["status"] == "reported":
+                rep_by_p[pid] = rep_by_p.get(pid, 0) + 1
+            elif r["outcome"] == "removed":
+                rem_by_p[pid] = rem_by_p.get(pid, 0) + 1
     for p in plist:
         d = data[p["id"]]
         got = d["series"][-1]
@@ -792,6 +890,7 @@ def scoreboard(practice_id=None, today=None, plist=None):
                      "known6": sum(1 for v, _ in last6 if v is not None),
                      "last": ago(d["last"], now) if d["last"] else None, "days": days,
                      "waiting": open_by_p.get(p["id"], 0), "source": d["source"], "linked": d["linked"],
+                     "reported": rep_by_p.get(p["id"], 0), "removed": rem_by_p.get(p["id"], 0),
                      "avg6": (sum(v for v, _ in last6 if v is not None) / max(1, sum(1 for v, _ in last6 if v is not None)))
                      if any(v is not None for v, _ in last6) else None})
     sel = [r for r in rows if not practice_id or r["id"] == practice_id]
@@ -803,6 +902,7 @@ def scoreboard(practice_id=None, today=None, plist=None):
             "at_goal": sum(1 for r in sel if r["met"]), "reporting": reporting[-1], "of": len(ids),
             "rating": (sum(r * t for r, t in rated) / n) if n else None, "total": n or None,
             "quiet": sum(1 for r in sel if r["days"] is not None and r["days"] > 30),
+            "reported": sum(r["reported"] for r in sel), "removed": sum(r["removed"] for r in sel),
             "current_label": month_label(cur), "default_goal": goal_for(0, cur, grows)}
 
 

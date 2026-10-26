@@ -45,6 +45,7 @@
   </nav>
   <nav class="seg" aria-label="Status">
     <a href="/reviews?{{ dict(qs, status='open')|urlencode }}" {% if status == 'open' %}aria-current="page"{% endif %}>Needs reply</a>
+    <a href="/reviews?{{ dict(qs, status='reported')|urlencode }}" {% if status == 'reported' %}aria-current="page"{% endif %}>Reported{% if reported_n %} <span class="rv-count">{{ reported_n }}</span>{% endif %}</a>
     <a href="/reviews?{{ dict(qs, status='done')|urlencode }}" {% if status == 'done' %}aria-current="page"{% endif %}>Done</a>
   </nav>
 </div>
@@ -54,24 +55,27 @@
 </div>
 
 {% if not items %}
-<p class="empty">{% if status == 'open' %}All caught up — nothing waiting here.{% else %}Nothing handled here yet.{% endif %}
+<p class="empty">{% if status == 'open' %}All caught up — nothing waiting here.{% elif status == 'reported' %}No reviews are waiting on Google. Report a false review from its page in Needs reply or Done.{% else %}Nothing handled here yet.{% endif %}
   {% if not inbox_status.at and status == 'open' %}<br><span class="small">Once Google reviews or Facebook and Instagram are set up (below), new reviews and comments land here.</span>{% endif %}</p>
 {% else %}
 <div class="rv-inbox">
   <div class="rv-list">
-    <p class="small muted">{{ 'Unhappy first, then oldest first, so nothing slips' if status == 'open' else 'Most recently handled first' }}</p>
+    <p class="small muted">{{ {'open': 'Unhappy first, then oldest first, so nothing slips', 'reported': 'Reported to Google, oldest report first', 'done': 'Most recently handled first'}[status] }}</p>
     <ul>
       {% for it in items %}
       <li><a class="rv-item{% if cur and it.id == cur.id %} on{% endif %}" href="/reviews?{{ dict(qs, item=it.id)|urlencode }}#detail" {% if cur and it.id == cur.id %}aria-current="true"{% endif %}>
         <span class="rv-item-top">
           <span class="rv-tags"><span class="tag rv-src-{{ it.source }}">{{ it.source_label }}</span>
             {% if it.stars %}<span class="rv-stars{% if it.stars <= 2 %} low{% endif %}" aria-label="{{ it.stars }} of 5 stars">{{ '★' * it.stars }}{{ '☆' * (5 - it.stars) }}</span>{% endif %}
-            {% if it.flag %}<span class="tag rv-flag rv-flag-{{ it.flag }}">{{ flag_text[it.flag] }}</span>{% endif %}</span>
+            {% if it.status == 'reported' %}<span class="tag rv-reported{% if it.report_stale %} stale{% endif %}">{{ 'Still up ' ~ it.report_days ~ 'd' if it.report_stale else 'Reported' }}</span>
+            {% elif it.outcome == 'removed' %}<span class="tag rv-removed">Removed by Google</span>
+            {% elif it.flag %}<span class="tag rv-flag rv-flag-{{ it.flag }}">{{ flag_text[it.flag] }}</span>{% endif %}</span>
           <span class="muted">{{ it.ago }}</span>
         </span>
         <span class="rv-who"><strong>{{ it.author }}</strong> · <span class="muted">{{ it.account_name }}</span></span>
         <span class="rv-snippet">{{ it.text|truncate(110) if it.text else '(rating only, no text)' }}</span>
-        {% if it.status == 'done' %}<span class="small rv-handled">{{ {'replied': 'Replied', 'liked': 'Liked', 'hidden': 'Hidden', 'done': 'Marked done', 'outside': ''}[it.outcome] }}{% if it.outcome != 'outside' %} by {% endif %}{{ it.handled_by }} · {{ it.handled_ago }}</span>{% endif %}
+        {% if it.status == 'reported' %}<span class="small rv-handled">Reported as {{ it.report_label }} by {{ it.reported_by }} · {{ it.report_ago }}</span>
+        {% elif it.status == 'done' %}<span class="small rv-handled">{% if it.outcome == 'removed' %}Removed by Google · {{ it.handled_ago }}{% else %}{{ {'replied': 'Replied', 'liked': 'Liked', 'hidden': 'Hidden', 'done': 'Marked done', 'outside': ''}[it.outcome] }}{% if it.outcome != 'outside' %} by {% endif %}{{ it.handled_by }} · {{ it.handled_ago }}{% endif %}</span>{% endif %}
       </a></li>
       {% endfor %}
     </ul>
@@ -91,10 +95,31 @@
     <p class="rv-text">{{ cur.text or '(They left a rating without words.)' }}</p>
 
     {% set back = '/reviews?' ~ (qs|urlencode) %}
-    {% if cur.status == 'done' %}
-      <p class="rv-done-note">{% if cur.outcome == 'outside' %}{{ cur.handled_by }}{% else %}{{ {'replied': 'Replied', 'liked': 'Liked', 'hidden': 'Hidden', 'done': 'Marked done'}[cur.outcome] }} by {{ cur.handled_by }}{% endif %} · {{ cur.handled_ago }}</p>
+    {% if cur.status == 'reported' %}
+      <div class="rv-report-state{% if cur.report_stale %} stale{% endif %}">
+        <p><strong>Reported to Google</strong> as <em>{{ cur.report_label }}</em> by {{ cur.reported_by }} · {{ cur.report_ago }}</p>
+        {% if cur.report_note %}<p class="small">Note: {{ cur.report_note }}</p>{% endif %}
+        {% if cur.report_stale %}
+        <p class="small">Still up after {{ cur.report_days }} days. Google may have turned the report down: check its status in Google's tool, where you can also appeal.</p>
+        {% else %}
+        <p class="small muted">Google usually decides within a few days. The hub looks for it every half hour and marks it <em>Removed by Google</em> when it's gone.</p>
+        {% endif %}
+      </div>
       {% if cur.reply %}<blockquote class="rv-reply">{{ cur.reply }}</blockquote>{% endif %}
-      {% if can_edit %}<form method="post" action="/reviews/items/{{ cur.id }}/reopen"><input type="hidden" name="back" value="{{ back }}"><button class="btn btn-quiet" type="submit">Move back to Needs reply</button></form>{% endif %}
+      {% if can_edit %}
+      <div class="rv-actions">
+        <a class="btn btn-quiet" href="{{ report_tool }}" target="_blank" rel="noopener">{{ 'Check status or appeal' if cur.report_stale else 'Open Google’s report tool' }} ↗</a>
+        <form method="post" action="/reviews/items/{{ cur.id }}/unreport" data-confirm="Undo the report? Use this if it was never sent to Google."><input type="hidden" name="back" value="{{ back }}"><button class="linklike small" type="submit">Undo report</button></form>
+      </div>
+      {% endif %}
+    {% elif cur.status == 'done' %}
+      {% if cur.outcome == 'removed' %}
+      <p class="rv-done-note rv-removed-note">Removed by Google · {{ cur.handled_ago }}{% if cur.reported_by %} · reported as {{ cur.report_label }} by {{ cur.reported_by }}{% endif %}</p>
+      {% else %}
+      <p class="rv-done-note">{% if cur.outcome == 'outside' %}{{ cur.handled_by }}{% else %}{{ {'replied': 'Replied', 'liked': 'Liked', 'hidden': 'Hidden', 'done': 'Marked done'}[cur.outcome] }} by {{ cur.handled_by }}{% endif %} · {{ cur.handled_ago }}</p>
+      {% endif %}
+      {% if cur.reply %}<blockquote class="rv-reply">{{ cur.reply }}</blockquote>{% endif %}
+      {% if can_edit and cur.outcome != 'removed' %}<form method="post" action="/reviews/items/{{ cur.id }}/reopen"><input type="hidden" name="back" value="{{ back }}"><button class="btn btn-quiet" type="submit">Move back to Needs reply</button></form>{% endif %}
     {% elif not can_edit %}
       <p class="small muted">You have view-only access. An editor can reply to this.</p>
     {% elif cur.flag == 'spam' %}
@@ -119,6 +144,30 @@
           {% if cur.source != 'google' %}<button class="linklike small danger" type="submit" formaction="/reviews/items/{{ cur.id }}/hide" formnovalidate>Hide comment</button>{% endif %}
         </div>
       </form>
+    {% endif %}
+    {% if can_edit and cur.source == 'google' and cur.status != 'reported' and cur.outcome != 'removed' %}
+    <details class="rv-report" id="report">
+      <summary>Report to Google <span class="small muted">· fake, off-topic or breaks Google's rules</span></summary>
+      <form method="post" action="/reviews/items/{{ cur.id }}/report" class="stack" id="report-form">
+        <input type="hidden" name="back" value="{{ back }}">
+        <fieldset class="rv-reasons">
+          <legend class="small">Reason (pick the same one in Google's form)</legend>
+          {% for k, (label, hint) in report_reasons.items() %}
+          <label class="rv-reason"><input type="radio" name="reason" value="{{ k }}" required {% if k == 'spam' %}checked{% endif %}><span><strong>{{ label }}</strong> <span class="small muted">{{ hint }}</span></span></label>
+          {% endfor %}
+        </fieldset>
+        <label class="small">Note for the team <span class="muted">(optional, e.g. "no patient by this name")</span><input name="note" maxlength="1000" autocomplete="off"></label>
+        <ol class="small rv-report-steps">
+          <li>Google's form opens in a new tab. Pick <strong>{{ cur.account_name }}</strong>, then <em>Report a new review for removal</em>.</li>
+          <li>Find the review by <strong>{{ cur.author }}</strong> from {{ cur.created[:10] }}{% if cur.stars %} ({{ cur.stars }}★){% endif %}, click <em>Report</em> and choose the same reason.</li>
+          <li>Google decides, usually within a few days. Google doesn't remove reviews just because they're negative.</li>
+        </ol>
+        <div class="rv-actions"><button class="btn" type="submit" id="report-go">Open Google's form and mark reported ↗</button></div>
+      </form>
+    </details>
+    <script>
+      document.getElementById("report-form").addEventListener("submit", () => { window.open({{ report_tool|tojson }}, "_blank", "noopener"); });
+    </script>
     {% endif %}
   </section>
   {% endif %}
@@ -262,7 +311,7 @@
     </nav>
   </div>
   <div class="table-scroll"><table class="practices rv-table">
-    <thead><tr><th>Practice</th><th>Rating</th><th>This month</th><th>Goal met, last 6 mo.</th><th>Last review</th><th>Inbox</th></tr></thead>
+    <thead><tr><th>Practice</th><th>Rating</th><th>This month</th><th>Goal met, last 6 mo.</th><th>Last review</th><th>Inbox</th><th>Reported / removed</th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>
@@ -273,9 +322,10 @@
         <td>{% if r.known6 %}{{ r.met6 }} of {{ r.known6 }}{% else %}—{% endif %}</td>
         <td class="{{ 'rv-warn' if r.days is not none and r.days > 30 else '' }}">{{ r.last or '—' }}</td>
         <td>{% if r.waiting %}<a href="/reviews?{{ {'practice': r.id}|urlencode }}">{{ r.waiting }} waiting</a>{% else %}—{% endif %}</td>
+        <td>{% if r.reported or r.removed %}<a href="/reviews?{{ {'practice': r.id, 'status': 'reported'}|urlencode }}">{{ r.reported }} waiting</a> · {{ r.removed }} removed{% else %}—{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="6" class="muted">No practices match.</td></tr>
+      <tr><td colspan="7" class="muted">No practices match.</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
