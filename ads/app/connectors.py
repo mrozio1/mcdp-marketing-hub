@@ -106,6 +106,12 @@ def _explain(code, j, raw):
                         "(the manager account, or each practice account): Admin → Access and security → Users → +, "
                         "add the robot account's email with Standard access (Read only also works if you only want reports), then click Refresh account lists. "
                         f"(HTTP {code})")
+            if "not yet enabled or has been deactivated" in msg:
+                return ("Google won't use this ad account: it was never finished (no billing set up) or it was "
+                        "cancelled. Either finish or reactivate it in Google Ads (open the account → Billing to add "
+                        "payment, or Admin → Account settings → Account status → Reactivate), or point this practice "
+                        "at the account its campaigns really run in (Linked accounts → Google Ads account, e.g. the "
+                        f"MCDP Master Account) and save. (HTTP {code})")
             if msg:
                 return f"{msg} (HTTP {code})"
         elif isinstance(err, str):

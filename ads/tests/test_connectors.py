@@ -176,3 +176,10 @@ def test_google_via_service_account_and_page_keys(env, monkeypatch):
     finally:
         for k in ("google_service_account_json", "google_ads_login_customer_id", "meta_access_token"):
             db.set_setting(k, None)
+
+
+def test_disabled_google_account_is_explained():
+    from app import connectors as cx
+    msg = cx._explain(403, {"error": {"code": 403, "message": "x", "details": [{"errors": [{"message":
+        "The customer account can't be accessed because it is not yet enabled or has been deactivated."}]}]}}, "")
+    assert "never finished (no billing set up) or it was cancelled" in msg and "Linked accounts" in msg
