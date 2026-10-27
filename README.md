@@ -150,6 +150,23 @@ marked **Removed by Google** and stops counting on the scoreboard. A report stil
 flagged with a link to check its status or appeal. **Undo report** puts it back if it was never sent.
 The scoreboard shows reported and removed counts per practice.
 
+### Master Reports (monthly and weekly)
+
+**Master Reports** at the bottom of the welcome page opens a report across every practice: **Monthly**
+(defaults to the last full month; any of the last 12, including this month to date) or a **Weekly**
+snapshot (last full Monday–Sunday week). The cover has the period's headline numbers with the change
+against the period before, a daily ad spend chart, a short summary and up to five suggestions for the
+next period; then a master overview of paid ads, organic posts, Google reviews and field visits with
+practices ranked and the highs and lows called out; then half a page per practice with its locations,
+its numbers (previous period in brackets), daily spend, top campaigns and notes. **Save as PDF** prints
+it on Letter pages: cover, overview, two practices per page.
+
+Ad numbers come from a daily archive the sync fills in (synced exports only keep the latest month), so
+reports work for any past period from the first sync on; the first sync after installing also pulls
+the previous month once so comparisons work straight away. Shared accounts are counted once in the
+totals, and the master record isn't listed as a practice (its spend outside any practice shows as
+"not assigned to a practice"). Words in the summary and suggestions are built from the numbers, not guessed.
+
 ### Boosted posts and reels
 
 A boost (from a Page, Instagram or the Meta Business Suite "Ads" tab) is a Meta campaign with an

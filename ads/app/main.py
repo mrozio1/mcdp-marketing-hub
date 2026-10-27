@@ -20,6 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import actions, ai, brand, campaigns, db, images, tools, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
+from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
 
@@ -146,6 +147,10 @@ def _startup():
     referrals.init()
     field.init()
     salesforce.init()
+    try:
+        db.seed_archive()          # reports read the daily archive; fill it from what's already synced
+    except Exception:
+        pass
     reviews.init()
     brand.init()
     images.init()
@@ -580,6 +585,20 @@ def organic_summary(p, allp):
     except Exception:
         return []
     return [n for n in org["networks"] if n.get("count")]
+
+
+@app.get("/reports", response_class=HTMLResponse)
+def master_reports(request: Request, kind: str = "month", key: str = ""):
+    """Master Reports: every practice for a month, or a weekly snapshot."""
+    if (r := guard(request)):
+        return r
+    kind = "week" if kind == "week" else "month"
+    rep = master_report.build(kind, key or None)
+    opts = master_report.week_options() if kind == "week" else master_report.month_options()
+    if rep["period"]["key"] not in [k for k, _ in opts]:
+        opts = [(rep["period"]["key"], rep["period"]["label"])] + opts
+    return page(request, "master_report.html", rep=rep, options=opts, money=master_report.money, num=master_report.num,
+                pct=master_report.pct, meter=master_report.meter, colors=master_report.COLOR, cats_order=master_report.CATS)
 
 
 @app.get("/practices", response_class=HTMLResponse)

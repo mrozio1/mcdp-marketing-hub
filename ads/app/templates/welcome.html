@@ -57,9 +57,26 @@
     </div>
   </section>
 
+  <section class="master-reports" aria-labelledby="mr-btn">
+    <details class="mr-menu">
+      <summary class="btn mr-btn" id="mr-btn">Master Reports <span class="mr-caret" aria-hidden="true">▾</span></summary>
+      <div class="mr-list" role="menu">
+        <a role="menuitem" href="/reports?kind=month"><strong>Monthly</strong><span>All practices, last full month, with suggestions for the next</span></a>
+        <a role="menuitem" href="/reports?kind=week"><strong>Weekly</strong><span>A snapshot of last week</span></a>
+      </div>
+    </details>
+  </section>
+
   <p class="small muted">Every page has a “Where do I get this?” guide if you get stuck.</p>
 </div>
 <script>
+  // Close the Master Reports menu when clicking elsewhere or pressing Escape.
+  (() => {
+    const m = document.querySelector(".mr-menu");
+    if (!m) return;
+    document.addEventListener("click", e => { if (m.open && !m.contains(e.target)) m.open = false; });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") m.open = false; });
+  })();
   // Greet by the time of day where the viewer is (their computer's clock and time zone).
   (() => {
     const h = new Date().getHours();

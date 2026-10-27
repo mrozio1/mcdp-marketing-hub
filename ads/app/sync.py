@@ -181,7 +181,7 @@ def _extra_meta_rows(p, since, until, cache, owners):
             all_rows = _fetch(cache, ("meta", acct), lambda a=acct: cx.meta_campaign_rows(a, since, until))
         except cx.ConnectorError:
             continue
-        rows += [r for r in all_rows if norm(r["campaign"]) in names]
+        rows += [{**r, "account": acct} for r in all_rows if norm(r["campaign"]) in names]
     return rows
 
 
@@ -194,9 +194,10 @@ def sync_practice(p, since, until, google=None, cache=None, owners=None):
         try:
             acct = p.get("meta_account_id")
             rows = _fetch(cache, ("meta", acct), lambda: cx.meta_campaign_rows(acct, since, until)) if acct else []
-            rows = rows + extra
+            rows = [{**r, "account": acct} for r in rows] + extra
             db.save_upload(p["id"], _parsed(rows, "meta", "campaign", since, until),
                            f"Synced from Meta ({len(rows)} campaign-days)", source="sync")
+            db.archive_rows(p["id"], "meta", rows, since, until)
             db.prune_synced(p["id"], "meta", "campaign")
             out["meta"] = {"ok": True, "rows": len(rows)}
         except cx.ConnectorError as e:
@@ -207,6 +208,7 @@ def sync_practice(p, since, until, google=None, cache=None, owners=None):
             rows = _fetch(cache, ("google", cid), lambda: google.campaign_rows(cid, since, until))
             db.save_upload(p["id"], _parsed(rows, "google", "campaign", since, until),
                            f"Synced from Google Ads ({len(rows)} campaign-days)", source="sync")
+            db.archive_rows(p["id"], "google", [{**r, "account": cid} for r in rows], since, until)
             db.prune_synced(p["id"], "google", "campaign")
             terms = _fetch(cache, ("google-terms", cid), lambda: google.search_term_rows(cid, since, until))
             if terms:
@@ -272,6 +274,39 @@ def sync_social(practices, today=None):
     return out
 
 
+def backfill_previous_month(practices, google=None, today=None):
+    """Reports compare with the month before, which the normal month-to-date pull doesn't cover: fill it into the
+    archive once (each account pulled once). Returns how many practices were filled."""
+    today = today or date.today()
+    first = today.replace(day=1)
+    end = first - timedelta(days=1)
+    start = end.replace(day=1)
+    key = start.strftime("%Y-%m")
+    if key in (db.get_setting("archive_backfilled") or "").split(","):
+        return 0
+    cache, n = {}, 0
+    for p in practices:
+        if p.get("meta_account_id") and cx.meta_configured():
+            acct = p["meta_account_id"]
+            try:
+                rows = _fetch(cache, ("meta", acct), lambda a=acct: cx.meta_campaign_rows(a, start, end))
+                db.archive_rows(p["id"], "meta", [{**r, "account": acct} for r in rows], start, end)
+                n += 1
+            except cx.ConnectorError:
+                pass
+        if p.get("google_customer_id") and google is not None:
+            cid = p["google_customer_id"]
+            try:
+                rows = _fetch(cache, ("google", cid), lambda c=cid: google.campaign_rows(c, start, end))
+                db.archive_rows(p["id"], "google", [{**r, "account": cid} for r in rows], start, end)
+                n += 1
+            except cx.ConnectorError:
+                pass
+    done = [m for m in (db.get_setting("archive_backfilled") or "").split(",") if m]
+    db.set_setting("archive_backfilled", ",".join(done + [key]))
+    return n
+
+
 def sync_all(today=None, refresh_lists=False):
     if not _lock.acquire(blocking=False):
         return {"busy": True}
@@ -301,6 +336,10 @@ def sync_all(today=None, refresh_lists=False):
                 r["google"] = {"ok": False, "error": google_error}
             if r:
                 results[str(p["id"])] = {"name": p["name"], **r}
+        try:
+            backfill_previous_month(practices, google, today)
+        except Exception:   # history is a bonus; never fail the sync over it
+            pass
         social = sync_social(practices, today)
         if social:
             db.set_setting("social_status", json.dumps({"at": db.now(), "accounts": social}))

@@ -126,7 +126,12 @@ def test_shared_account_pulled_once_per_sync(client):
     assert all(r["google"]["ok"] for r in status["results"].values())
     pulls = [l for l in mp.LOG if l[0] == "POST" and l[1].endswith("searchStream") and "FROM campaign" in l[3]
              and "4445556666" in l[1]]
-    assert len(pulls) == 1
+    month = [l for l in pulls if "2026-10-01" in l[3]]
+    assert len(month) == 1                                       # this month: once for all three practices
+    assert len(pulls) == 2 and "2026-09-01" in [l for l in pulls if l not in month][0][3]   # last month, once, for reports
+    mp.LOG.clear()
+    sync.sync_all(today=date(2026, 10, 12))
+    assert len([l for l in mp.LOG if l[0] == "POST" and "FROM campaign" in l[3] and "4445556666" in l[1]]) == 1
 
 
 def test_suggestions_group_related_campaigns():
