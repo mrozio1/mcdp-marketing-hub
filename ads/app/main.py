@@ -658,7 +658,8 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 camp_made=[c for c in db.changes(pid, ["applied"], limit=60) if c["kind"] == campaigns.KIND],
                 camp_account=campaigns.account_for(p, allp), camp_name_word=campaigns.name_word(p),
                 camp_addresses=campaigns.office_addresses(pid), camp_job=_camp_job_view(request, pid),
-                ad_job=_ad_job_view(request, pid),
+                ad_job=_ad_job_view(request, pid), writeup_job=_writeup_job_view(request, pid),
+                writeup_labels=WRITEUP_LABELS,
                 brand_logo=images.logo(pid), brand_photos=images.assets(pid, "photo"),
                 brand_generated=images.assets(pid, "generated"), pickable=images.pickable(pid),
                 group_findings=campaigns.group_findings,
@@ -847,17 +848,55 @@ async def ai_generate(request: Request, pid: int, kind: str):
         flash(request, "No numbers for this practice yet: upload an export or sync, and check its campaign filter.",
               "error")
         return RedirectResponse(f"/p/{pid}", status_code=303)
+    # Write-ups can take longer than the Cloudflare tunnel waits (100 s), so they run in the background and
+    # the page refreshes itself until the write-up is there.
+    j = WRITEUP_JOBS.get(pid)
+    if j and j["state"] == "running" and _time.time() - j["started"] < CAMP_JOB_MAX:
+        flash(request, "A write-up is already being written for this practice; it appears here when ready.")
+        return RedirectResponse(f"/p/{pid}#ai", status_code=303)
+    if not ai.available():
+        flash(request, "AI isn't switched on for the Ads page. Run: sh enable-ads.sh", "error")
+        return RedirectResponse(f"/p/{pid}#ai", status_code=303)
+    brand_text = brand.context(brand.kit(pid)) if kind == "creative" else ""
+    context = ai.build_context(p, views, org, brand_text)
+    WRITEUP_JOBS[pid] = {"state": "running", "kind": kind, "started": _time.time(), "msg": ""}
+    if os.environ.get("ADS_SYNC_JOBS") == "1":
+        _run_writeup(pid, kind, context)
+    else:
+        _threading.Thread(target=_run_writeup, args=(pid, kind, context), daemon=True).start()
+    return RedirectResponse(f"/p/{pid}#ai", status_code=303)
+
+
+WRITEUP_JOBS = {}       # practice id -> {"state", "kind", "msg", "started"}
+WRITEUP_LABELS = {"fixes": "Fix list", "creative": "Ad ideas", "report": "Monthly report"}
+
+
+def _run_writeup(pid, kind, context):
     try:
-        brand_text = brand.context(brand.kit(pid)) if kind == "creative" else ""
-        text = await asyncio.to_thread(ai.generate, kind, ai.build_context(p, views, org, brand_text))
+        text = ai.generate(kind, context)
+        db.save_ai(pid, kind, text)
+        msg = (f"{WRITEUP_LABELS[kind]} written." + (" Open it with “Open last report”." if kind == "report" else ""))
+        WRITEUP_JOBS[pid] = {"state": "done", "kind": kind, "started": _time.time(), "msg": msg}
     except ai.AIError as e:
-        flash(request, str(e), "error")
-        return RedirectResponse(f"/p/{pid}#ai-{kind}", status_code=303)
-    db.save_ai(pid, kind, text)
-    if kind == "report":
-        return RedirectResponse(f"/p/{pid}/report", status_code=303)
-    flash(request, {"fixes": "Fix list written.", "creative": "Ad ideas written."}[kind])
-    return RedirectResponse(f"/p/{pid}#ai-{kind}", status_code=303)
+        WRITEUP_JOBS[pid] = {"state": "error", "kind": kind, "started": _time.time(), "msg": str(e)}
+    except Exception as e:      # never leave the page stuck on "Writing…"
+        WRITEUP_JOBS[pid] = {"state": "error", "kind": kind, "started": _time.time(),
+                             "msg": f"Something went wrong writing the {WRITEUP_LABELS[kind].lower()}: {e}"}
+
+
+def _writeup_job_view(request, pid):
+    j = WRITEUP_JOBS.get(pid)
+    if not j:
+        return None
+    if j["state"] == "running" and _time.time() - j["started"] > CAMP_JOB_MAX:
+        j.update(state="error", msg="The write-up took too long and was stopped. Try again in a minute.")
+    if j["state"] == "running":
+        return j
+    WRITEUP_JOBS.pop(pid, None)
+    if not getattr(request.state, "camp_flash", None):
+        request.state.camp_flash = {"msg": j["msg"], "kind": "ok" if j["state"] == "done" else "error"}
+    return None
+
 
 
 # ---------- fixes: proposed in the page, applied in Google / Meta only on click ----------

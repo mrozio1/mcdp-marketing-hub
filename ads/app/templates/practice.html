@@ -492,16 +492,20 @@
     {% if has_data or (org.totals and org.totals.count) %}
     <section class="ai" id="ai">
       <h2>Write-ups</h2>
+      {% if writeup_job %}
+      <p class="flash flash-ok" role="status">Writing the {{ writeup_labels[writeup_job.kind]|lower }}… this takes up to two minutes. This page refreshes by itself; you can leave and come back.</p>
+      <script>setTimeout(() => location.reload(), 6000);</script>
+      {% endif %}
       {% if not ai_on and can_edit %}<p class="flash flash-error">AI isn’t switched on for this page yet. Run <code>sh enable-ads.sh</code> on the server.</p>{% endif %}
       <div class="ai-actions">
         {% if can_edit %}
-        <form method="post" action="/p/{{ p.id }}/ai/fixes" data-busy="Writing fixes…"><button type="submit" class="btn" {% if not ai_on %}disabled{% endif %}>Explain and fix</button></form>
-        <form method="post" action="/p/{{ p.id }}/ai/creative" data-busy="Writing ideas…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write ad ideas</button></form>
-        <form method="post" action="/p/{{ p.id }}/ai/report" data-busy="Writing report…"><button type="submit" class="btn btn-quiet" {% if not ai_on %}disabled{% endif %}>Write monthly report</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/fixes" data-busy="Starting…"><button type="submit" class="btn" {% if not ai_on or writeup_job %}disabled{% endif %}>Explain and fix</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/creative" data-busy="Starting…"><button type="submit" class="btn btn-quiet" {% if not ai_on or writeup_job %}disabled{% endif %}>Write ad ideas</button></form>
+        <form method="post" action="/p/{{ p.id }}/ai/report" data-busy="Starting…"><button type="submit" class="btn btn-quiet" {% if not ai_on or writeup_job %}disabled{% endif %}>Write monthly report</button></form>
         {% endif %}
         {% if ai_out.report %}<span class="report-chip"><a class="btn btn-quiet" href="/p/{{ p.id }}/report">Open last report</a>{% if can_edit %}<form method="post" action="/p/{{ p.id }}/ai/report/delete" data-confirm="Remove the monthly report?"><button class="x-btn" type="submit" aria-label="Remove the monthly report" title="Remove">&times;</button></form>{% endif %}</span>{% elif not can_edit %}<span class="muted small">No monthly report written yet.</span>{% endif %}
       </div>
-      {% if can_edit %}<p class="muted small">Write-ups take about 20–60 seconds. They use only the numbers above and are suggestions to review before changing anything in Google or Meta.</p>{% endif %}
+      {% if can_edit %}<p class="muted small">Write-ups take up to two minutes and run in the background. They use only the numbers above and are suggestions to review before changing anything in Google or Meta.</p>{% endif %}
       {% for kind, title in [('fixes', 'What to fix'), ('creative', 'Ad ideas')] %}
         {% set out = ai_out[kind] %}
         {% if out %}

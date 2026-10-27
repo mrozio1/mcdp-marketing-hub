@@ -194,3 +194,39 @@ def test_fixes_that_break_rules_are_skipped():
     assert any("repeat another line" in w for w in whys)            # duplicate headline
     assert applied == [{"change": "Book today.", "to": "Book your visit today!", "where": "description"}]
     assert pl["descriptions"][0] == "Book your visit today!"         # "!" is fine in descriptions
+
+
+def test_writeups_run_in_the_background(ready, monkeypatch):
+    c, db, pid, ai = ready
+    import threading, time
+    from app import main
+    monkeypatch.delenv("ADS_SYNC_JOBS", raising=False)
+    gate = threading.Event()
+
+    def slow(kind, ctx):
+        assert kind == "creative" and "Brand kit for this practice" in ctx
+        gate.wait(5)
+        return "## Ad ideas\nTen headlines."
+    monkeypatch.setattr(ai, "generate", slow)
+    t0 = time.time()
+    r = c.post(f"/p/{pid}/ai/creative")
+    assert time.time() - t0 < 3 and "Writing the ad ideas" in r.text and "location.reload" in r.text
+    assert "already being written" in c.post(f"/p/{pid}/ai/fixes").text
+    gate.set()
+    for _ in range(50):
+        if main.WRITEUP_JOBS.get(pid, {}).get("state") != "running":
+            break
+        time.sleep(0.1)
+    page = c.get(f"/p/{pid}").text
+    assert "Ad ideas written." in page and "Ten headlines." in page
+    assert "Ad ideas written." not in c.get(f"/p/{pid}").text                    # message shown once
+
+    def busy(kind, ctx):
+        raise ai.AIError("Google's free AI is busy right now")
+    monkeypatch.setattr(ai, "generate", busy)
+    first = c.post(f"/p/{pid}/ai/fixes").text
+    for _ in range(50):
+        if main.WRITEUP_JOBS.get(pid, {}).get("state") != "running":
+            break
+        time.sleep(0.1)
+    assert "free AI is busy" in first + c.get(f"/p/{pid}").text

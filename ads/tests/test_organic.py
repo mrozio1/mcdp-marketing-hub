@@ -115,6 +115,7 @@ def test_organic_in_email_and_ai_context(hub, monkeypatch):
     seen = {}
     monkeypatch.setattr(ai, "AI_API_KEY", "k")
     monkeypatch.setattr(ai, "generate", lambda kind, ctx: seen.setdefault("ctx", ctx) and "## Report\nok")
+    monkeypatch.setenv("ADS_SYNC_JOBS", "1")
     c.post(f"/p/{heights}/ai/report")
     assert "Organic (unpaid) social posts" in seen["ctx"] and "instagram | @heightsortho | 5200 | 210" in seen["ctx"]
 
