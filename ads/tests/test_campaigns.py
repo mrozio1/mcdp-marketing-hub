@@ -209,3 +209,20 @@ def test_one_click_review_for_health_keywords(hub, monkeypatch):
     assert "Ask Google to review and create" in page
     r = c.post(f"/p/{pid}/campaign/{ch['id']}/review-and-create")
     assert "with a review request" in r.text and len(mp.STATE["g_new"]) == 1
+
+
+def test_create_uses_the_practices_current_account(hub, monkeypatch):
+    c, db, pid, ai = hub
+    monkeypatch.setenv("ADS_SYNC_JOBS", "1")
+    monkeypatch.setattr(ai, "AI_API_KEY", "k")
+    monkeypatch.setattr(ai, "generate_json", _fake({}))
+    db.set_practice_accounts(pid, "555001", "1112223333")                   # drafted against an old account
+    c.post(f"/p/{pid}/campaign/new", data={"focus": "Invisalign", "daily_budget": "10", "radius": "10",
+                                            "addresses": ADDR, "final_url": "https://heights.example/"})
+    (ch,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "new_campaign"]
+    assert ch["payload"]["account"] == "1112223333"
+    db.set_practice_accounts(pid, "555001", "4445556666")                   # then linked to the right one
+    assert "Applied 1 change" in c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(ch["id"])]}).text
+    ch = db.change(ch["id"])
+    assert ch["account"] == "4445556666" and ch["payload"]["account"] == "4445556666"
+    assert "<title>Heights Orthodontics" in c.get(f"/p/{pid}").text.replace("\n", "")

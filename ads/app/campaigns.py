@@ -387,7 +387,14 @@ def explain_findings(found):
 
 
 def apply(ch, google_client, kit=None):
-    pl = ch["payload"]
+    pl = dict(ch["payload"])
+    practice = db.practice(ch["practice_id"])
+    current = cx._clean_id(account_for(practice)) if practice else ""
+    if current and current != cx._clean_id(pl.get("account")):
+        # The practice was pointed at another Google Ads account after this was drafted: use the current one.
+        pl["account"] = current
+        db.update_change(ch["id"], payload=pl, account=current)
+        ch["payload"], ch["account"] = pl, current
     probs = check(pl, kit)
     if probs:
         raise CampaignError(" ".join(probs[:2]))

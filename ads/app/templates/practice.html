@@ -33,19 +33,7 @@
     {% endif %}
   </details>
 {% endmacro %}
-{% block title %}{{ p.name }}<script>
-  // Competitor teardown: the Meta Ad Library link searches for the name typed.
-  document.querySelectorAll('input[data-libs]').forEach(inp => {
-    const box = document.getElementById(inp.dataset.libs);
-    const upd = () => {
-      const q = inp.value.trim();
-      box.querySelector('[data-meta]').href = q ? 'https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&search_type=keyword_unordered&q=' + encodeURIComponent(q) : 'https://www.facebook.com/ads/library/';
-      box.querySelector('[data-hint]').textContent = q ? `(search “${q}” there)` : '';
-    };
-    inp.addEventListener('input', upd); upd();
-  });
-</script>
-{% endblock %}
+{% block title %}{{ p.name }}{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/practices">Practices</a></p>
 <h1>{{ p.name }}</h1>
