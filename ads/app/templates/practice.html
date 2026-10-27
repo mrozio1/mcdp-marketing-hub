@@ -593,7 +593,7 @@
         <label>Meta ad account
           <select name="meta_account_id">
             <option value="">Not linked</option>
-            {% for a in meta_accounts %}<option value="{{ a.id }}" {% if a.id == p.meta_account_id %}selected{% endif %}>{{ a.name }}{% if not a.active %} (inactive){% endif %}</option>{% endfor %}
+            {% for a in meta_accounts|sort(attribute='active', reverse=true) %}<option value="{{ a.id }}" {% if a.id == p.meta_account_id %}selected{% endif %}>{{ a.name }}{% if not a.active %} (inactive){% endif %}</option>{% endfor %}
             {% if p.meta_account_id and not (meta_accounts|selectattr('id', 'equalto', p.meta_account_id)|list) %}<option value="{{ p.meta_account_id }}" selected>{{ p.meta_account_id }}</option>{% endif %}
           </select>
         </label>
@@ -602,10 +602,11 @@
         <label>Google Ads account
           <select name="google_customer_id">
             <option value="">Not linked</option>
-            {% for a in google_accounts %}<option value="{{ a.id }}" {% if a.id == p.google_customer_id %}selected{% endif %}>{{ a.name }} ({{ a.id[:3] }}-{{ a.id[3:6] }}-{{ a.id[6:] }}){% if not a.active %} (inactive){% endif %}</option>{% endfor %}
+            {% for a in google_accounts|sort(attribute='active', reverse=true) %}<option value="{{ a.id }}" {% if a.id == p.google_customer_id %}selected{% endif %}>{{ a.name }} ({{ a.id[:3] }}-{{ a.id[3:6] }}-{{ a.id[6:] }}){% if not a.active %} (inactive){% endif %}</option>{% endfor %}
             {% if p.google_customer_id and not (google_accounts|selectattr('id', 'equalto', p.google_customer_id)|list) %}<option value="{{ p.google_customer_id }}" selected>{{ p.google_customer_id }}</option>{% endif %}
           </select>
         </label>
+        {% if eff.replaced.get('google_customer_id') %}<p class="small rv-hint">This Google Ads account isn't active (never set up with billing, or cancelled), so the hub uses {{ (google_accounts|selectattr('id', 'equalto', eff.google_customer_id)|map(attribute='name')|first) or 'the master account' }} for this practice until it's activated. Nothing to change here.</p>{% endif %}
         {% else %}<input type="hidden" name="google_customer_id" value="{{ p.google_customer_id or '' }}">{% endif %}
         {% if meta_on %}
         <input type="hidden" name="social" value="1">

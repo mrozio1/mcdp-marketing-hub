@@ -68,27 +68,64 @@ def _db_claims():
     return claims_from(db.practices())
 
 
-def inherited_accounts(p, practices):
-    """A practice with filter words but no ad account of its own uses the master record's account
-    (the unfiltered practice linked to one), so a new practice works as soon as its words are set."""
+ACCOUNT_KEYS = (("meta_account_id", "meta_accounts"), ("google_customer_id", "google_accounts"))
+
+
+def inactive_accounts():
+    """{'meta_account_id': {ids}, 'google_customer_id': {ids}} of ad accounts the platforms report as not active
+    (Google: never finished / cancelled / suspended; Meta: disabled or closed), from the cached account lists."""
+    from . import db
+    out = {}
+    for key, setting in ACCOUNT_KEYS:
+        try:
+            rows = json.loads(db.get_setting(setting) or "[]")
+        except ValueError:
+            rows = []
+        out[key] = {str(a.get("id")) for a in rows if isinstance(a, dict) and a.get("active") is False}
+    return out
+
+
+def _master_for(p, practices, key, inactive):
+    return next((q for q in practices if q["id"] != p["id"] and not has_filter(q) and q.get(key)
+                 and str(q[key]) not in inactive.get(key, ())), None)
+
+
+def inherited_accounts(p, practices, inactive=None):
+    """The ad accounts a practice really uses, where that differs from what's linked:
+    - filter words but no account of its own: the master record's account;
+    - its own account is inactive (e.g. a Google Ads account never set up with billing): the master's account
+      instead, until the account is activated (then its own is used again, nothing to change).
+    Returns {key: account id}."""
+    inactive = inactive_accounts() if inactive is None else inactive
     out = {}
     if not has_filter(p):
         return out
-    for key in ("meta_account_id", "google_customer_id"):
-        if not p.get(key):
-            m = next((q for q in practices if q["id"] != p["id"] and not has_filter(q) and q.get(key)), None)
-            if m:
+    for key, _ in ACCOUNT_KEYS:
+        own = str(p.get(key) or "")
+        if not own or own in inactive.get(key, ()):
+            m = _master_for(p, practices, key, inactive)
+            if m and str(m[key]) != own:
                 out[key] = m[key]
     return out
 
 
-def with_inherited(practices):
-    """Practices with inherited ad accounts filled in; 'inherited' lists which ones came from the master."""
+def with_inherited(practices, inactive=None):
+    """Practices with the accounts they really use filled in. 'inherited' lists which came from the master;
+    'replaced' maps a key to the practice's own (inactive) account that's being stood in for."""
+    inactive = inactive_accounts() if inactive is None else inactive
     out = []
     for p in practices:
-        inh = inherited_accounts(p, practices)
-        out.append({**p, **inh, "inherited": sorted(inh)})
+        inh = inherited_accounts(p, practices, inactive)
+        replaced = {k: p[k] for k in inh if p.get(k)}
+        out.append({**p, **inh, "inherited": sorted(inh), "replaced": replaced})
     return out
+
+
+def effective(p, practices=None):
+    """One practice with the accounts it really uses (see inherited_accounts)."""
+    from . import db
+    practices = practices if practices is not None else db.practices()
+    return next((q for q in with_inherited(practices) if q["id"] == p["id"]), p)
 
 
 def _db_owners():

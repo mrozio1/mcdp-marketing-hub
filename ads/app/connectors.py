@@ -396,12 +396,22 @@ def _page_post_rows(page_id, page_token, since_ts):
     tools like Postiz), then posts; drops the like/comment counts only if the token can't read them."""
     last = None
     for edge, fields in (("published_posts", FB_FIELDS_FULL), ("posts", FB_FIELDS_FULL), ("posts", FB_FIELDS_BASIC)):
-        try:
-            return _meta_paged(f"{page_id}/{edge}", {"fields": fields, "since": since_ts, "limit": 100},
-                               limit_pages=10, token=page_token), fields == FB_FIELDS_BASIC
-        except ConnectorError as e:
-            last = e
+        # Busy Pages: Meta answers "Please reduce the amount of data you're asking for" when a page of posts
+        # with their like/comment counts is too big, so ask for fewer at a time (more pages, same posts).
+        for limit, pages in ((100, 10), (25, 40), (10, 100)):
+            try:
+                return _meta_paged(f"{page_id}/{edge}", {"fields": fields, "since": since_ts, "limit": limit},
+                                   limit_pages=pages, token=page_token), fields == FB_FIELDS_BASIC
+            except ConnectorError as e:
+                last = e
+                if not _too_much_data(e):
+                    break
     raise last
+
+
+def _too_much_data(e):
+    m = str(e).lower()
+    return "reduce the amount of data" in m or "(#1)" in m and "please reduce" in m
 
 
 def facebook_posts(page_id, page_token, since: date):
@@ -505,11 +515,14 @@ def facebook_comments(page_id, tokens, since: date):
         for cf in (FB_COMMENT_FIELDS, FB_COMMENT_FIELDS_NO_FROM):   # "from" needs pages_read_user_content
             fields = (f"id,message,created_time,permalink_url,"
                       f"comments.filter(toplevel).order(reverse_chronological).limit(25){{{cf}}}")
-            try:
-                return _meta_paged(f"{page_id}/published_posts", {"fields": fields, "since": since_ts, "limit": 25},
-                                   limit_pages=4, token=token)
-            except ConnectorError as e:
-                last = e
+            for limit, pages in ((25, 4), (10, 10), (5, 20)):
+                try:
+                    return _meta_paged(f"{page_id}/published_posts", {"fields": fields, "since": since_ts, "limit": limit},
+                                       limit_pages=pages, token=token)
+                except ConnectorError as e:
+                    last = e
+                    if not _too_much_data(e):
+                        break
         raise last
 
     posts, token = _first_working(tokens, fetch)

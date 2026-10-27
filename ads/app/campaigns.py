@@ -68,12 +68,8 @@ def office_addresses(pid):
 
 # ------------------------------------------------------------------ naming and the account to use
 def account_for(practice, practices=None):
-    """The Google Ads account new campaigns go into: the practice's own, else the one it inherits."""
-    if practice.get("google_customer_id"):
-        return practice["google_customer_id"]
-    practices = practices if practices is not None else db.practices()
-    eff = {q["id"]: q for q in scope.with_inherited(practices)}.get(practice["id"]) or {}
-    return eff.get("google_customer_id") or ""
+    """The Google Ads account new campaigns go into: the practice's own if it's active, else the master's."""
+    return scope.effective(practice, practices).get("google_customer_id") or ""
 
 
 def name_word(practice):

@@ -117,6 +117,7 @@ def _markdown(task, context, max_tokens=3500):
 # ------------------------------------------------------------------ live context for the optimizers
 def live_google_ads(practice, limit=12):
     """This practice's live responsive search ads with last-30-day numbers (best effort)."""
+    practice = scope.effective(practice)
     from . import actions, connectors as cx
     if not practice.get("google_customer_id") or not actions.google_ready():
         return [], "Google Ads isn't linked for this practice."
@@ -396,6 +397,7 @@ def run(kind, practice, views, form, by=""):
 
 # ------------------------------------------------------------------ keyword ideas -> Apply/Undo proposals
 def search_campaigns(practice):
+    practice = scope.effective(practice)
     from . import actions
     if not practice.get("google_customer_id") or not actions.google_ready():
         return None, []
@@ -411,7 +413,7 @@ def keyword_proposals(practice, got):
     if not names:
         raise ai.AIError("No Google Search campaign for this practice to add keywords to.")
     camp = got.get("campaign") if got.get("campaign") in names else names[0]
-    cid = practice["google_customer_id"]
+    cid = scope.effective(practice)["google_customer_id"]
     c = next(x for x in actions.google_campaigns(g, cid) if x["name"] == camp)
     res = g.search(cid, "SELECT ad_group.resource_name, ad_group.name, metrics.cost_micros FROM ad_group "
                         f"WHERE campaign.id = {int(c['id'])} AND ad_group.status = 'ENABLED' "

@@ -133,6 +133,12 @@ practices list explains anything that keeps a practice from showing numbers: not
 words that match none of the account's campaigns, or the last sync's error for that account. A practice
 only counts as the master when it has an ad account linked and no filter words.
 
+If a practice is linked to an ad account Google or Meta reports as **inactive** (for example an
+"[MCDP] …" Google Ads account that was never set up with billing), the hub uses the master's account for
+that practice instead, for syncing, fixes and new campaigns, until the account is activated; then its own
+account is used again automatically. Connections and the practice's setup say when this is happening, and
+the account lists show active accounts first.
+
 ### Reporting false Google reviews
 
 Google's API can't report reviews, so on any Google review in the inbox **Report to Google** has you pick

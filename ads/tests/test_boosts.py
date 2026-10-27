@@ -123,7 +123,7 @@ def test_filter_only_practice_uses_the_master_accounts(client, monkeypatch):
     c, db, sync, mp = client
     master, heights, waterford = _setup(db, sync, monkeypatch)
     new = db.add_practice("Brand Office", 0, 0, "brand")          # words only, no ad account linked
-    nomatch = db.add_practice("Wesley Orthodontics", 0, 0, "wesley")
+    nomatch = db.add_practice("Wesley Orthodontics", 0, 900, "wesley")   # has a Meta budget
     bare = db.add_practice("Eric Groeneveld", 0, 0, "")             # nothing at all
     sync.sync_all(today=TODAY)
     assert shown(c.get(f"/p/{new}").text, "Brand awareness Oct")    # pulled through the master's account
@@ -154,3 +154,57 @@ def test_a_blank_practice_is_not_the_master(client, monkeypatch):
     dash = c.get("/practices").text
     row = dash.split("Eric Groeneveld", 1)[1][:400]
     assert "tag-master" not in row
+
+
+def test_inactive_own_account_stands_in_with_the_master(client, monkeypatch):
+    """A practice linked to an ad account the platform reports as inactive (e.g. a Google Ads account never
+    set up with billing) uses the master's account until it's activated, for syncing and new work alike."""
+    c, db, sync, mp = client
+    master, heights, waterford = _setup(db, sync, monkeypatch)
+    db.set_setting("meta_accounts", '[{"id": "111", "name": "MCDP", "active": true}, '
+                                    '{"id": "555", "name": "[MCDP] Flushing", "active": false}]')
+    flushing = db.add_practice("Flushing Orthodontics", 0, 900, "brand")
+    db.set_practice_accounts(flushing, "555", "")
+    asked = []
+    real = sync.cx.meta_campaign_rows
+
+    def rows(acct, since, until):
+        asked.append(acct)
+        if acct == "555":
+            raise sync.cx.ConnectorError("Google won't use this ad account (HTTP 403)")
+        return real(acct, since, until)
+    monkeypatch.setattr(sync.cx, "meta_campaign_rows", rows)
+    st = sync.sync_all(today=TODAY)
+    assert "555" not in asked and st["results"][str(flushing)]["meta"]["ok"]
+    assert shown(c.get(f"/p/{flushing}").text, "Brand awareness Oct")
+    from app import scope, campaigns
+    assert scope.effective(db.practice(flushing))["meta_account_id"] == "111"
+    conn = c.get("/connections").text
+    assert "is inactive; used until it" in conn
+    assert "isn't active (never set up" not in c.get(f"/p/{flushing}").text   # that note is for Google accounts
+    assert db.practice(flushing)["meta_account_id"] == "555"            # their link is left as it was
+    # once the platform reports it active again, the practice's own account is used
+    db.set_setting("meta_accounts", '[{"id": "111", "name": "MCDP", "active": true}, '
+                                    '{"id": "555", "name": "[MCDP] Flushing", "active": true}]')
+    assert scope.effective(db.practice(flushing))["meta_account_id"] == "555"
+    # Google: new campaigns go into the stand-in account too
+    db.set_setting("google_accounts", '[{"id": "3519750682", "name": "MCDP Master Account", "active": true}, '
+                                      '{"id": "3533617786", "name": "[MCDP] Chelsea", "active": false}]')
+    db.set_practice_accounts(master, "111", "3519750682")
+    db.set_practice_accounts(flushing, "111", "3533617786")
+    assert campaigns.account_for(db.practice(flushing)) == "3519750682"
+    assert "isn't active (never set up" in c.get(f"/p/{flushing}").text
+
+
+def test_busy_facebook_page_is_read_in_smaller_pieces(monkeypatch):
+    from app import connectors as cx
+    limits = []
+
+    def paged(path, params, limit_pages=50, token=None, stop=None):
+        limits.append(params["limit"])
+        if params["limit"] > 25:
+            raise cx.ConnectorError("Please reduce the amount of data you're asking for, then retry your request (HTTP 500)")
+        return [{"id": "1_2", "created_time": "2026-10-20T10:00:00+0000"}]
+    monkeypatch.setattr(cx, "_meta_paged", paged)
+    rows, basic = cx._page_post_rows("1", "tok", 0)
+    assert limits == [100, 25] and len(rows) == 1 and not basic

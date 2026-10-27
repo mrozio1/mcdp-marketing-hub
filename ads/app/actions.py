@@ -92,6 +92,7 @@ def _unique_by_name(items, name_key="name"):
 # ------------------------------------------------------------------ proposals
 def prepare(practice, views):
     """Rebuild this practice's open fix proposals. Returns (count, notes)."""
+    practice = scope.effective(practice)   # an inactive linked account stands in with the master's
     proposals, notes = [], []
     vmap = {v["key"]: v for v in views}
     if practice.get("google_customer_id") and google_ready():
@@ -253,6 +254,7 @@ META_TEXT_MAX, META_HEAD_MAX, META_DESC_MAX = 300, 40, 60
 def draft_ad(practice, platform, campaign_name, write_fn, kit=None, focus=""):
     """Create a 'draft_ad' proposal. write_fn(kind, context) -> dict from the AI.
     kit: the practice's brand kit (rules for the AI, checked again afterwards); focus: optional angle."""
+    practice = scope.effective(practice)
     focus = " ".join((focus or "").split())[:200]
     if platform == "google":
         prop = _google_draft(practice, campaign_name, write_fn, kit, focus)

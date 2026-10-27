@@ -562,7 +562,9 @@ def setup_problems(p, eff, views, result):
     elif not linked and not has_any:
         out.append({"short": "No ad account", "at": "accounts", "long": "No ad account linked, so there are no ad numbers. Link one in Practice setup, "
                                                      "or give it campaign filter words to use the master record's accounts."})
-    none = [v for v in views if v["upload"] and v["filtered"] and not v["campaigns"] and v["camp_total"]]
+    # only for a platform the practice has a budget for: most practices simply don't run ads on both
+    none = [v for v in views if v["upload"] and v["filtered"] and not v["campaigns"] and v["camp_total"]
+            and (p.get(f"{v['key']}_budget") or 0) > 0]
     if none:
         out.append({"short": "Filter matches no campaigns", "at": "settings",
                     "long": " ".join(f"{v['label']}: its filter words match none of the {v['camp_total']} campaigns in the account."
@@ -637,7 +639,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
     ig_accounts = sync.cached_list("ig_accounts")
     included = {c["name"] for v in views for c in v["campaigns"]}
     add_options = sorted({n for v in views for n in v["all_names"]} - included, key=str.lower)
-    return page(request, "practice.html", p=p, views=views, uploads=db.uploads(pid),
+    return page(request, "practice.html", p=p, eff=scope.effective(p, allp), views=views, uploads=db.uploads(pid),
                 master=is_master(p, allp), add_options=add_options,
                 show=show, org=org, combo=organic.combined(views, org),
                 social_status=sync.cached_list("social_status") or {},
