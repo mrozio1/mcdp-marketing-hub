@@ -90,6 +90,10 @@
     };
     t.addEventListener('input', upd); upd();
   });
+  // "…and turn on" buttons ask first, since the ads start spending once approved.
+  document.querySelectorAll('button[data-confirm-live]').forEach(b => b.addEventListener('click', e => {
+    if (!window.confirm(b.dataset.confirmLive)) e.preventDefault();
+  }));
   document.querySelectorAll('form[data-confirm]').forEach(f => f.addEventListener('submit', e => {
     if (!window.confirm(f.dataset.confirm)) e.preventDefault();
   }));

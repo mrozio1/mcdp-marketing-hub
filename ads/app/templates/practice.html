@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% from "_macros.html" import ruler %}
+{% macro live_toggle(ch, back) %}{% set on = (ch.result or {}).get('live') %}
+  <span class="live-state small {{ 'on' if on else 'off' }}">{{ 'On' if on else 'Paused' }}</span>
+  {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/live" data-busy="…" {% if not on %}data-confirm="Turn this on? It starts spending once {{ 'Google' if ch.platform == 'google' else 'Meta' }} approves it."{% endif %}>
+    <input type="hidden" name="on" value="{{ '0' if on else '1' }}"><input type="hidden" name="back" value="{{ back }}">
+    <button class="linklike small" type="submit">{{ 'Pause' if on else 'Turn on' }}</button></form>{% endif %}
+{% endmacro %}
 {% macro score_box(ch) %}{% set sc = ch.payload.score %}{% set log = ch.payload.fix_log %}{% set before = ch.payload.score_before %}
   {% if log and (log.applied or log.skipped) %}<div class="fix-log small">
     {% if log.applied %}<p><strong>{{ 'Fixed automatically' if ch.payload.auto_polished else 'Fixes applied' }}{% if before and before.overall is not none %}{% if sc %}: {{ '%g'|format(before.overall) }} → {{ '%g'|format(sc.overall) }}/10{% else %} (was {{ '%g'|format(before.overall) }}/10){% endif %}{% endif %}</strong></p>
@@ -86,7 +92,10 @@
     {% for v in views if v.upload or v.search_upload %}
     <section class="platform" id="{{ v.key }}">
       <h2>{{ v.label }}</h2>
-      {% if v.upload and v.filtered and not v.totals %}
+      {% if v.key == 'google' and camp_waiting %}
+        <p class="small camp-waiting">Created here, no numbers yet: {% for w in camp_waiting %}<strong>{{ w.name }}</strong> ({{ 'on' if w.live else 'paused' }}, {{ w.budget|money }}/day){{ ', ' if not loop.last }}{% endfor %}. {{ 'It counts' if camp_waiting|length == 1 else 'They count' }} for this practice and {{ 'shows' if camp_waiting|length == 1 else 'show' }} here after {{ 'its' if camp_waiting|length == 1 else 'their' }} first impressions.</p>
+      {% endif %}
+      {% if v.upload and v.filtered and not v.totals and not camp_waiting %}
         <p class="flash flash-error">None of the {{ v.camp_total }} campaigns in this {{ v.label }} data contain “{{ p.campaign_filter }}”. Adjust the campaign filter under <a href="#settings">Budgets and notes</a>.</p>
       {% endif %}
       {% if v.upload %}
@@ -253,7 +262,7 @@
               <li class="fix fix-{{ ch.status }}{% if kind == 'draft_ad' %} has-extra{% endif %}" id="fix-{{ ch.id }}">
                 <label class="fix-main">
                   {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="{{ kind }}">{% endif %}
-                  <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span> {{ ch.title }}
+                  <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span> {{ ch.title|replace(' (created paused)', '') }}
                   {% if kind != 'budget' and ch.detail %}<br><span class="muted small">{{ ch.detail }}</span>{% endif %}
                   {% if kind == 'draft_ad' %}
                     <span class="ad-preview">
@@ -306,7 +315,8 @@
           </fieldset>
           {% endif %}
         {% endfor %}
-        {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
+        {% if can_edit %}<div class="btn-row"><button class="btn apply-btn" type="submit" data-busy="Applying…">Apply selected</button>
+        {% if fixes_open|selectattr('kind', 'equalto', 'draft_ad')|list %}<button class="btn btn-quiet live-btn" type="submit" name="live" value="1" data-busy="Applying…" data-confirm-live="Create the ticked new ads and turn them on? They start spending once Google / Meta approve them.">Apply and turn on new ads</button>{% endif %}</div>
       </form>{% else %}</div>{% endif %}
       {% if can_edit %}{% for ch in fixes_open if ch.kind == 'draft_ad' %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="discard-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/discard-edit" hidden></form><form id="applyfix-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/apply-fixes" data-busy="Applying…" hidden></form><form id="edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         {% if ch.platform == 'meta' %}<form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
@@ -351,9 +361,10 @@
         {% for ch in fixes_done %}
           <li>
             <span><span class="tag tag-{{ ch.platform }}">{{ 'Google' if ch.platform == 'google' else 'Meta' }}</span>
-              {% if ch.status == 'undone' %}<s>{{ ch.title }}</s> <span class="muted small">undone {{ ch.undone_at.replace('T', ' ')[:16] }}{% if ch.undone_by %} by {{ ch.undone_by }}{% endif %}</span>
-              {% else %}{{ ch.title }} <span class="muted small">applied {{ ch.applied_at.replace('T', ' ')[:16] }}{% if ch.applied_by %} by {{ ch.applied_by }}{% endif %}</span>{% endif %}
+              {% if ch.status == 'undone' %}<s>{{ ch.title|replace(' (created paused)', '') }}</s> <span class="muted small">undone {{ ch.undone_at.replace('T', ' ')[:16] }}{% if ch.undone_by %} by {{ ch.undone_by }}{% endif %}</span>
+              {% else %}{{ ch.title|replace(' (created paused)', '') }} <span class="muted small">applied {{ ch.applied_at.replace('T', ' ')[:16] }}{% if ch.applied_by %} by {{ ch.applied_by }}{% endif %}</span>{% endif %}
               {% if ch.error %}<br><span class="fix-error small">{{ ch.error }}</span>{% endif %}</span>
+            {% if ch.status == 'applied' and ch.kind == 'draft_ad' %}{{ live_toggle(ch, '') }}{% endif %}
             {% if ch.status == 'applied' and can_edit %}
             <form method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/undo" data-busy="Undoing…" data-confirm="Undo this change in {{ 'Google Ads' if ch.platform == 'google' else 'Meta' }}?"><button class="linklike small" type="submit">Undo</button></form>
             {% endif %}
@@ -368,7 +379,7 @@
     {% if google_on and camp_account and (can_edit or camp_drafts or camp_made) %}
     <section class="fixes new-campaign" id="new-campaign">
       <h2>New Google campaign</h2>
-      <p class="muted">A complete Search campaign written from this practice’s {% if kit.voice or kit.services or kit.offers %}<a href="#brand">brand kit</a>{% else %}details (add a <a href="#brand">brand kit</a> for on-brand ads){% endif %}: keywords, one ad group and a responsive search ad, shown on Google search to people in or regularly in a radius around the office, bidding to get the most clicks for the budget. You check and edit everything first; Apply creates it <strong>paused</strong> in Google Ads, and Undo removes it.</p>
+      <p class="muted">A complete Search campaign written from this practice’s {% if kit.voice or kit.services or kit.offers %}<a href="#brand">brand kit</a>{% else %}details (add a <a href="#brand">brand kit</a> for on-brand ads){% endif %}: keywords, one ad group and a responsive search ad, shown on Google search to people in or regularly in a radius around the office, bidding to get the most clicks for the budget. You check and edit everything first, then create it paused (to switch on later, here) or create it and turn it on straight away. Undo removes it.</p>
 
       {% if camp_job %}
       <p class="flash flash-ok camp-running" role="status">Writing the campaign, then scoring and fixing it… this takes up to three minutes. This page refreshes by itself; you can leave and come back.</p>
@@ -381,7 +392,7 @@
         <li class="fix fix-{{ ch.status }} has-extra" id="camp-{{ ch.id }}">
           <label class="fix-main">
             {% if can_edit %}<input type="checkbox" name="ids" value="{{ ch.id }}" data-group="camp">{% endif %}
-            <span><span class="tag tag-google">Google</span> {{ ch.title }}<br><span class="muted small">{{ ch.detail }}</span>
+            <span><span class="tag tag-google">Google</span> {{ ch.title|replace(' (created paused)', '') }}<br><span class="muted small">{{ ch.detail }}</span>
             {% if ch.error %}<br><span class="fix-error small">Didn’t go through: {{ ch.error }}</span>{% endif %}
             {% if pl.flagged %}<span class="camp-flagged small"><strong>Flagged by Google</strong>
               {% for g in group_findings(pl.flagged) %}<span class="flag-row"><strong>{{ g.policy }}</strong>{% if not g.exemptible %} — can’t be appealed; remove these{% endif %}:
@@ -411,7 +422,7 @@
             {% set u = (pl.unsaved or {}).get('values') or {} %}
             <details class="ad-edit" {% if pl.unsaved %}open{% endif %}><summary class="small">Edit the campaign</summary>
               {% if pl.unsaved %}<p class="fix-error small edit-error" role="alert"><strong>Not saved yet:</strong> {{ pl.unsaved.error }} Your changes are kept below; fix that and click Save campaign.</p>{% endif %}
-              <label class="small">Campaign name <span class="muted">(must contain “{{ camp_name_word }}”)</span><input name="name" form="camp-edit-{{ ch.id }}" value="{{ u.name if 'name' in u else pl.name }}" maxlength="120"></label>
+              <label class="small">Campaign name <span class="muted">(any name; it counts for this practice either way)</span><input name="name" form="camp-edit-{{ ch.id }}" value="{{ u.name if 'name' in u else pl.name }}" maxlength="120"></label>
               <div class="camp-row">
                 <label class="small">Daily budget ($)<input name="daily_budget" form="camp-edit-{{ ch.id }}" type="number" min="1" max="1000" step="0.01" value="{{ u.daily_budget if 'daily_budget' in u else '%.2f'|format(pl.daily_budget) }}"></label>
                 <label class="small">Max per click ($, optional)<input name="max_cpc" form="camp-edit-{{ ch.id }}" type="number" min="0.1" max="100" step="0.01" value="{{ u.max_cpc if 'max_cpc' in u else ('%.2f'|format(pl.max_cpc) if pl.max_cpc else '') }}"></label>
@@ -435,7 +446,8 @@
         </li>
       {% endfor %}
       </ul>
-      {% if can_edit %}<button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button></form>
+      {% if can_edit %}<div class="btn-row"><button class="btn apply-btn" type="submit" data-busy="Creating…">Create in Google Ads (paused)</button>
+      <button class="btn btn-quiet live-btn" type="submit" name="live" value="1" data-busy="Creating…" data-confirm-live="Create the ticked campaign and turn it on? It starts spending its daily budget once Google approves the ad.">Create and turn on</button></div></form>
       {% for ch in camp_drafts %}<form id="score-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/score" data-busy="Scoring…" hidden></form><form id="discard-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/discard-edit" hidden></form><form id="applyfix-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/apply-fixes" data-busy="Applying…" hidden></form><form id="camp-edit-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/edit" data-busy="Checking…" hidden></form>
         <form id="imgpick-{{ ch.id }}" method="post" action="/p/{{ p.id }}/drafts/{{ ch.id }}/images" hidden></form>
         <form id="camp-review-{{ ch.id }}" method="post" action="/p/{{ p.id }}/campaign/{{ ch.id }}/review-and-create" data-busy="Creating…" hidden></form>
@@ -457,14 +469,15 @@
             <textarea name="addresses" rows="3" placeholder="43767 Van Dyke Ave, Sterling Heights, MI 48314">{{ camp_addresses|join('\n') }}</textarea></label>
           <label>Landing page<input name="final_url" value="{{ kit.website or '' }}" placeholder="https://…"></label>
           <button class="btn" type="submit" {% if not ai_on %}disabled{% endif %}>Write the campaign</button>
-          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …” so its results show on this page. Writing, scoring and fixing take up to three minutes and run in the background.</span>
+          <span class="muted small">Goes into the Google Ads account this practice uses, named “{{ camp_name_word }} - Search - …”; once created it counts for this practice automatically. Writing, scoring and fixing take up to three minutes and run in the background.</span>
         </form>
       </details>
       {% endif %}
 
       {% if camp_made %}
       <details class="fix-history"><summary>Campaigns created here ({{ camp_made|length }})</summary>
-        <ul>{% for ch in camp_made %}<li><span>{{ ch.title }} <span class="muted small">applied {{ ch.applied_at.replace('T', ' ')[:16] }}{% if ch.applied_by %} by {{ ch.applied_by }}{% endif %}</span></span>
+        <ul>{% for ch in camp_made %}<li><span>{{ ch.title|replace(' (created paused)', '') }} <span class="muted small">created {{ ch.applied_at.replace('T', ' ')[:16] }}{% if ch.applied_by %} by {{ ch.applied_by }}{% endif %}</span></span>
+          {{ live_toggle(ch, 'campaign') }}
           {% if can_edit %}<form method="post" action="/p/{{ p.id }}/fixes/{{ ch.id }}/undo" data-busy="Removing…" data-confirm="Remove this campaign from Google Ads? Its ad group, keywords and ad go with it."><input type="hidden" name="back" value="campaign"><button class="linklike small" type="submit">Undo (remove)</button></form>{% endif %}</li>{% endfor %}</ul>
       </details>
       {% endif %}

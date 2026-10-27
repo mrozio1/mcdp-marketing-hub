@@ -302,6 +302,9 @@ class H(BaseHTTPRequestHandler):
                 STATE["m_created"][aid] = {"type": "ad", "status": f["status"], "adset_id": f["adset_id"],
                                            "creative": json.loads(f["creative"])}
                 return self._json(200, {"id": aid})
+            if obj in STATE["m_created"] and "status" in f:
+                STATE["m_created"][obj]["status"] = f["status"]
+                return self._json(200, {"success": True})
             if obj in STATE["m_objects"]:
                 for k in ("status", "daily_budget"):
                     if k in f:
@@ -407,6 +410,9 @@ class H(BaseHTTPRequestHandler):
                     (STATE["g_negatives"].pop(op["remove"], None) or STATE["g_ads"].pop(op["remove"], None)
                      or STATE["g_keywords"].pop(op["remove"], None))
                     results.append({"resourceName": op["remove"]})
+                elif "update" in op and service == "adGroupAds":
+                    STATE["g_ads"][op["update"]["resourceName"]]["status"] = op["update"]["status"]
+                    results.append({"resourceName": op["update"]["resourceName"]})
                 elif "update" in op and service == "campaigns":
                     cid = op["update"]["resourceName"].rsplit("/", 1)[1]
                     assert op["updateMask"] == "status"

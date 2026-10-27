@@ -639,8 +639,34 @@ def _undo_meta(ch):
             pass
 
 
-def apply_change(ch, by=""):
-    """Returns (ok, message)."""
+LIVE_KINDS = ("draft_ad", "new_campaign")
+
+
+def set_live(ch, on, by=""):
+    """Turn a new ad or campaign created from the hub on (running) or off (paused). Returns (ok, message)."""
+    if ch["kind"] not in LIVE_KINDS or ch["status"] != "applied":
+        return False, "Only new ads and campaigns created here can be turned on or off."
+    res = dict(ch["result"] or {})
+    try:
+        if ch["platform"] == "meta":
+            cx._meta_write(res["ad_id"], {"status": "ACTIVE" if on else "PAUSED"})
+        else:
+            g = _google()
+            if ch["kind"] == "new_campaign":
+                rn, service = res["campaign"], "campaigns"
+            else:
+                rn, service = res["resource"], "adGroupAds"
+            g.mutate(ch["account"], service, [{"update": {"resourceName": rn, "status": "ENABLED" if on else "PAUSED"},
+                                               "updateMask": "status"}])
+    except (cx.ConnectorError, KeyError) as e:
+        return False, str(e) if isinstance(e, cx.ConnectorError) else "Couldn't find it in the ad platform."
+    res.update(live=on, live_at=db.now(), live_by=by)
+    db.update_change(ch["id"], result=res)
+    return True, ""
+
+
+def apply_change(ch, by="", live=False):
+    """Returns (ok, message). live: also turn new ads / campaigns on straight away."""
     from . import campaigns
     if ch["status"] not in ("proposed", "failed"):
         return False, "That change was already handled."
@@ -658,9 +684,18 @@ def apply_change(ch, by=""):
     except cx.ConnectorError as e:
         db.update_change(ch["id"], status="failed", error=str(e))
         return False, str(e)
+    if ch["kind"] == "new_campaign":
+        # A campaign made here belongs to this practice, whatever its name: add it to the practice's
+        # campaigns by name, so its spend lands in this practice's Google Ads numbers and budget pacing.
+        db.add_campaigns(ch["practice_id"], [ch["payload"]["name"]])
     db.update_change(ch["id"], status="applied", result=result, error=(result or {}).get("warning", ""),
                      applied_at=db.now(), applied_by=by)
-    return True, (result or {}).get("warning", "")
+    warning = (result or {}).get("warning", "")
+    if live and ch["kind"] in LIVE_KINDS:
+        ok, msg = set_live(db.change(ch["id"]), True, by)
+        if not ok:
+            warning = (warning + " " if warning else "") + f"Created, but it couldn't be turned on ({msg}); it's paused."
+    return True, warning
 
 
 def undo_change(ch, by=""):
@@ -670,6 +705,7 @@ def undo_change(ch, by=""):
     try:
         if ch["kind"] == "new_campaign":
             campaigns.undo(ch, _google())
+            db.remove_campaign(ch["practice_id"], ch["payload"]["name"])
         else:
             (_undo_google if ch["platform"] == "google" else _undo_meta)(ch)
     except (ActionError, campaigns.CampaignError, cx.ConnectorError) as e:

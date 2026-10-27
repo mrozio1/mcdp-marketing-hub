@@ -198,7 +198,10 @@ against the live Google Ads and Meta accounts:
   percentage so the month lands on the practice's budget; at most halved or +50% per step.
   Shared Google budgets and Meta lifetime budgets are left alone.
 - **New ads** — the AI writes a Google responsive search ad or a Meta ad (copying an
-  existing ad's image, landing page and button); always created **paused**. Pick the
+  existing ad's image, landing page and button). **Apply selected** creates them paused;
+  **Apply and turn on new ads** creates and switches them on. Created ads and campaigns show
+  **On / Paused** in the history with a **Turn on / Pause** button, so nobody needs to open
+  Google Ads or Ads Manager to start or stop them (Google and Meta still review new ads first). Pick the
   campaign, an optional focus ("Invisalign for adults") and 1–3 versions. Each draft can be
   edited before applying (live character counts), and edits are checked again.
 
@@ -211,8 +214,10 @@ writes the keywords (phrase match), an ad group and a responsive search ad; ever
 checked against the kit and editable. **Create in Google Ads** sends it in one all-or-nothing
 request, **paused**: Search network only, Maximize clicks, English, people in or regularly in
 the radius, a few standard negative keywords (jobs, careers, school…). The name always
-contains the practice's campaign word so its results show on its page. **Undo** removes the
-campaign. Needs the Google robot at Standard access.
+starts with the practice's campaign word, but any name works: a campaign created here is added
+to the practice's campaigns automatically, so its spend counts in that practice's Google Ads
+numbers and budget pacing (and a sync starts). Until it has impressions it's listed as
+"Created here, no numbers yet". **Undo** removes the campaign. Needs the Google robot at Standard access.
 
 ### Tools (adapted from OpenAdKit, MIT)
 

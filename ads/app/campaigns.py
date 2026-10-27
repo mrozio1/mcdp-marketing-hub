@@ -228,8 +228,6 @@ def edit(ch, form, kit=None, practice=None):
     pl = dict(ch["payload"])
     lines = lambda k: [x.strip() for x in str(form.get(k) or "").replace("\r", "").split("\n") if x.strip()]
     name = " ".join(str(form.get("name") or "").split())[:120]
-    if practice is not None and name and not scope.matches(name, practice):
-        raise CampaignError(f"The name must contain “{name_word(practice)}” so the campaign shows on this practice's page.")
     keywords, _ = clean_keywords(lines("keywords"), kit)
     negatives, _ = clean_keywords(lines("negatives"))
     pl.update(

@@ -658,6 +658,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
                 camp_made=[c for c in db.changes(pid, ["applied"], limit=60) if c["kind"] == campaigns.KIND],
                 camp_account=campaigns.account_for(p, allp), camp_name_word=campaigns.name_word(p),
                 camp_addresses=campaigns.office_addresses(pid), camp_job=_camp_job_view(request, pid),
+                camp_waiting=_campaigns_without_numbers(pid, views),
                 ad_job=_ad_job_view(request, pid), writeup_job=_writeup_job_view(request, pid),
                 writeup_labels=WRITEUP_LABELS,
                 brand_logo=images.logo(pid), brand_photos=images.assets(pid, "photo"),
@@ -925,25 +926,57 @@ async def fixes_apply(request: Request, pid: int):
         return r
     form = await request.form()
     ids = [int(i) for i in form.getlist("ids") if str(i).isdigit()]
-    done, problems, warnings = 0, [], []
+    done, problems, warnings, turned_on, made_campaigns = 0, [], [], 0, 0
+    live = form.get("live") == "1"
     for cid in ids:
         ch = db.change(cid)
         if not ch or ch["practice_id"] != pid:
             continue
-        ok, msg = await asyncio.to_thread(actions.apply_change, ch, actor(request))
+        ok, msg = await asyncio.to_thread(actions.apply_change, ch, actor(request), live)
         if ok:
             done += 1
+            if live and ch["kind"] in actions.LIVE_KINDS:
+                turned_on += 1
+            if ch["kind"] == campaigns.KIND:
+                made_campaigns += 1
             if msg:
                 warnings.append(msg)
         else:
             problems.append(f"{ch['title']}: {msg}")
+    made_campaigns_synced = bool(made_campaigns) and os.environ.get("ADS_DISABLE_SCHEDULER") != "1" \
+        and sync.start_in_background()
     msg = f"Applied {done} change{'s' if done != 1 else ''} in Google / Meta." if done else "Nothing was applied."
+    if turned_on:
+        it = "them" if turned_on != 1 else "it"
+        msg += (f" Turned on {turned_on} new ad{'s' if turned_on != 1 else ''} or campaign{'s' if turned_on != 1 else ''}; "
+                f"{it} start{'' if turned_on != 1 else 's'} once Google / Meta approve {it} (usually within a day).")
+    if made_campaigns:
+        msg += (" New campaigns count for this practice straight away; their numbers appear here once they start "
+                "getting impressions" + (" (a sync has started)." if made_campaigns_synced else "."))
     if warnings:
         msg += " " + warnings[0]
     if problems:
         msg += f" {len(problems)} didn't go through — " + problems[0] + (" (see the list for the rest)" if len(problems) > 1 else "")
     flash(request, msg, "error" if problems else "ok")
     return _fix_back(pid, form.get("back", ""))
+
+
+@app.post("/p/{pid}/fixes/{cid}/live")
+async def fixes_live(request: Request, pid: int, cid: int, on: str = Form(""), back: str = Form("")):
+    """Turn a new ad or campaign created here on or off, without going to Google Ads or Ads Manager."""
+    if (r := guard(request)):
+        return r
+    ch = db.change(cid)
+    if ch and ch["practice_id"] == pid:
+        turn_on = on == "1"
+        ok, msg = await asyncio.to_thread(actions.set_live, ch, turn_on, actor(request))
+        if ok:
+            flash(request, (f"Turned on: {ch['title'].replace(' (created paused)', '')}. It starts once "
+                            f"{'Google' if ch['platform'] == 'google' else 'Meta'} approves it (usually within a day)."
+                            if turn_on else f"Paused: {ch['title'].replace(' (created paused)', '')}."))
+        else:
+            flash(request, f"Couldn't {'turn it on' if turn_on else 'pause it'}: {msg}", "error")
+    return _fix_back(pid, back)
 
 
 @app.post("/p/{pid}/fixes/{cid}/undo")
@@ -1202,6 +1235,17 @@ async def campaign_edit(request: Request, pid: int, cid: int):
                      detail=campaigns.summary_detail(payload))
     flash(request, "Campaign saved. Tick it and Apply to create it (paused).")
     return RedirectResponse(f"/p/{pid}#camp-{cid}", status_code=303)
+
+
+def _campaigns_without_numbers(pid, views):
+    """Campaigns created here that don't show in the synced numbers yet (no impressions so far)."""
+    have = {scope.norm(c["name"]) for v in views if v["key"] == "google" for c in v["campaigns"]}
+    out = []
+    for ch in db.changes(pid, ["applied"], limit=60):
+        if ch["kind"] == campaigns.KIND and scope.norm(ch["payload"]["name"]) not in have:
+            out.append({"name": ch["payload"]["name"], "live": bool((ch["result"] or {}).get("live")),
+                        "budget": ch["payload"].get("daily_budget")})
+    return out
 
 
 def _camp_job_view(request, pid):

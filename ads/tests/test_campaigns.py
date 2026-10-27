@@ -56,14 +56,15 @@ def test_draft_review_create_paused_and_undo(hub, monkeypatch):
     assert mp.STATE["g_new"] == {}                                                # nothing sent yet
     assert "Invisalign adults" in c.get(f"/p/{pid}").text
 
-    # Edits are checked: a name that wouldn't show on this practice's page, then a bad headline
+    # Edits are checked: a missing landing page, then a bad headline
     bad = {"name": "Other - Search", "daily_budget": "30", "radius": "10", "addresses": ADDR,
-           "final_url": "https://heights.example/invisalign", "ad_group": "Invisalign adults",
+           "final_url": "", "ad_group": "Invisalign adults",
            "keywords": "invisalign sterling heights\nclear aligners", "negatives": "jobs",
            "headlines": "Heights Orthodontics\nFree Consultation\nInvisalign In Sterling Hts",
            "descriptions": "Book a free consultation today.\nEvening and Saturday appointments."}
     assert "Not saved" in c.post(f"/p/{pid}/campaign/{ch['id']}/edit", data=bad).text
-    good = {**bad, "name": "Heights - Search - Invisalign", "max_cpc": "4.50"}
+    good = {**bad, "name": "Heights - Search - Invisalign", "max_cpc": "4.50",
+            "final_url": "https://heights.example/invisalign"}
     r = c.post(f"/p/{pid}/campaign/{ch['id']}/edit", data={**good, "headlines": good["headlines"] + "\nCheap Aligners"})
     assert "Not saved" in r.text and "never say" in r.text
     r = c.post(f"/p/{pid}/campaign/{ch['id']}/edit", data=good)
@@ -226,3 +227,86 @@ def test_create_uses_the_practices_current_account(hub, monkeypatch):
     ch = db.change(ch["id"])
     assert ch["account"] == "4445556666" and ch["payload"]["account"] == "4445556666"
     assert "<title>Heights Orthodontics" in c.get(f"/p/{pid}").text.replace("\n", "")
+
+
+def test_create_and_turn_on_then_pause_from_the_hub(hub, monkeypatch):
+    c, db, pid, ai = hub
+    monkeypatch.setenv("ADS_SYNC_JOBS", "1")
+    monkeypatch.setattr(ai, "AI_API_KEY", "k")
+    monkeypatch.setattr(ai, "generate_json", _fake({}))
+    c.post(f"/p/{pid}/campaign/new", data={"focus": "Invisalign", "daily_budget": "10", "radius": "10",
+                                            "addresses": ADDR, "final_url": "https://heights.example/"})
+    (ch,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "new_campaign"]
+    assert "Create and turn on" in c.get(f"/p/{pid}").text
+    r = c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(ch["id"])], "back": "campaign", "live": "1"})
+    assert "Turned on 1 new ad or campaign" in r.text
+    (crn,) = mp.STATE["g_new"]
+    assert mp.STATE["g_campaigns"][crn.rsplit("/", 1)[1]]["status"] == "ENABLED"
+    assert db.change(ch["id"])["result"]["live"] is True
+    page = c.get(f"/p/{pid}").text
+    assert 'live-state small on' in page and ">Pause<" in page
+    r = c.post(f"/p/{pid}/fixes/{ch['id']}/live", data={"on": "0", "back": "campaign"})
+    assert "Paused:" in r.text and mp.STATE["g_campaigns"][crn.rsplit("/", 1)[1]]["status"] == "PAUSED"
+    r = c.post(f"/p/{pid}/fixes/{ch['id']}/live", data={"on": "1", "back": "campaign"})
+    assert "Turned on:" in r.text and mp.STATE["g_campaigns"][crn.rsplit("/", 1)[1]]["status"] == "ENABLED"
+
+
+def test_new_ads_can_be_turned_on_google_and_meta(hub, monkeypatch):
+    c, db, pid, ai = hub
+    monkeypatch.setattr(ai, "AI_API_KEY", "k")
+
+    def fake(kind, ctx):
+        if kind == "google_ad":
+            return {"headlines": ["Invisalign In Sterling Heights", "Free Smile Consult", "Clear Aligners Near You"],
+                    "descriptions": ["Straighter teeth with clear aligners. Book a free consult today.",
+                                     "Evening and Saturday appointments."]}
+        return {"primary_text": "Meet our team for a free consult.", "headline": "Free Orthodontic Consult", "description": ""}
+    monkeypatch.setattr(ai, "generate_json", fake)
+    c.post(f"/p/{pid}/fixes/draft", data={"target": "google|Invisalign - Search"})
+    c.post(f"/p/{pid}/fixes/draft", data={"target": "meta|Heights - Free Consult Leads"})
+    drafts = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "draft_ad"]
+    assert "Apply and turn on new ads" in c.get(f"/p/{pid}").text
+    r = c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(d["id"]) for d in drafts], "live": "1"})
+    assert "Turned on 2 new ads" in r.text
+    (gad,) = mp.STATE["g_ads"].values()
+    assert gad["status"] == "ENABLED"
+    mad = [o for o in mp.STATE["m_created"].values() if o["type"] == "ad"][0]
+    assert mad["status"] == "ACTIVE"
+    # Plain Apply still creates them paused, and Turn on works later
+    for d in db.changes(pid, ["applied"]):
+        c.post(f"/p/{pid}/fixes/{d['id']}/undo")
+    c.post(f"/p/{pid}/fixes/draft", data={"target": "google|Invisalign - Search"})
+    (d,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "draft_ad"]
+    c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(d["id"])]})
+    (gad,) = mp.STATE["g_ads"].values()
+    assert gad["status"] == "PAUSED"
+    assert ">Turn on<" in c.get(f"/p/{pid}").text
+    c.post(f"/p/{pid}/fixes/{d['id']}/live", data={"on": "1"})
+    assert list(mp.STATE["g_ads"].values())[0]["status"] == "ENABLED"
+
+
+def test_created_campaigns_count_for_the_practice_whatever_their_name(hub, monkeypatch):
+    c, db, pid, ai = hub
+    from app import scope
+    monkeypatch.setenv("ADS_SYNC_JOBS", "1")
+    monkeypatch.setattr(ai, "AI_API_KEY", "k")
+    monkeypatch.setattr(ai, "generate_json", _fake({}))
+    db.update_practice(pid, "Heights Orthodontics", 3000, 900, "", campaign_filter="Heights")
+    other = db.add_practice("Waterford Orthodontics", 0, 0, "Waterford", "", "4445556666")
+    c.post(f"/p/{pid}/campaign/new", data={"focus": "Invisalign", "daily_budget": "12", "radius": "10",
+                                            "addresses": ADDR, "final_url": "https://heights.example/"})
+    (ch,) = [x for x in db.changes(pid, ["proposed"]) if x["kind"] == "new_campaign"]
+    pl = ch["payload"]
+    form = {"name": "Spring Smiles - Search", "daily_budget": "12", "radius": "10", "addresses": ADDR,
+            "final_url": pl["final_url"], "ad_group": pl["ad_group"], "keywords": "\n".join(pl["keywords"]),
+            "negatives": "jobs", "headlines": "\n".join(pl["headlines"]), "descriptions": "\n".join(pl["descriptions"])}
+    assert "Campaign saved" in c.post(f"/p/{pid}/campaign/{ch['id']}/edit", data=form).text
+    r = c.post(f"/p/{pid}/fixes/apply", data={"ids": [str(ch["id"])], "back": "campaign"})
+    assert "count for this practice straight away" in r.text
+    p = db.practice(pid)
+    assert "Spring Smiles - Search" in scope.added_campaigns(p)
+    assert scope.matches("Spring Smiles - Search", p) and not scope.matches("Spring Smiles - Search", db.practice(other))
+    page = c.get(f"/p/{pid}").text
+    assert "Created here, no numbers yet" in page and "Spring Smiles - Search" in page and "$12.00/day" in page
+    c.post(f"/p/{pid}/fixes/{ch['id']}/undo", data={"back": "campaign"})
+    assert "Spring Smiles - Search" not in scope.added_campaigns(db.practice(pid))

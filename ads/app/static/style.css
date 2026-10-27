@@ -868,3 +868,17 @@ details.tool > summary { cursor: pointer; }
 .fix-log p { margin: 0 0 0.2rem; }
 .fix-log ul { margin: 0 0 0.2rem 1.1rem; padding: 0; }
 .apply-fixes-btn { margin: 0.3rem 0.5rem 0.2rem 0; }
+
+.live-btn { margin-left: 0.5rem; }
+.live-state { display: inline-block; padding: 0 0.45rem; border-radius: 1rem; margin: 0 0.4rem; }
+.live-state.on { background: #E3F4EA; color: #1E6B3F; }
+.live-state.off { background: #EEF1F2; color: var(--ink-soft); }
+.fix-history li form { display: inline; }
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem 0.6rem; align-items: center; margin-top: 0.6rem; }
+.btn-row .btn { width: auto; }
+.btn-row .live-btn { margin-left: 0; }
+.live-state { white-space: nowrap; flex: none; }
+.fix-history li > span:first-child { flex: 1 1 auto; min-width: 0; }
+
+.camp-waiting { padding: 0.45rem 0.6rem; background: #EEF6F2; border-radius: var(--radius-s); }
