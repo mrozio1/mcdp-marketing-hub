@@ -1,6 +1,7 @@
 """Boosted posts and reels: assigned to the practice whose Page / Instagram they promote, even when the
 campaign name doesn't match its filter or the boost was charged to another ad account; movable by hand."""
 import re
+import pytest
 from datetime import date
 
 from tests.test_scope import _row, client  # noqa: F401  (pytest fixture)
@@ -206,5 +207,33 @@ def test_busy_facebook_page_is_read_in_smaller_pieces(monkeypatch):
             raise cx.ConnectorError("Please reduce the amount of data you're asking for, then retry your request (HTTP 500)")
         return [{"id": "1_2", "created_time": "2026-10-20T10:00:00+0000"}]
     monkeypatch.setattr(cx, "_meta_paged", paged)
+    monkeypatch.setattr(cx, "RETRY_PAUSE", 0)
     rows, basic = cx._page_post_rows("1", "tok", 0)
     assert limits == [100, 25] and len(rows) == 1 and not basic
+
+
+def test_meta_unknown_error_is_retried(monkeypatch):
+    """'An unknown error occurred (HTTP 500)' on a busy Page: pause and try again in smaller pages."""
+    from app import connectors as cx
+    calls = []
+
+    def paged(path, params, limit_pages=50, token=None, stop=None):
+        calls.append((path, params["limit"]))
+        if len(calls) < 3:
+            raise cx.ConnectorError("An unknown error occurred (HTTP 500)",
+                                    payload={"error": {"code": 1, "message": "An unknown error occurred"}})
+        return [{"id": "1_2", "created_time": "2026-10-20T10:00:00+0000"}]
+    monkeypatch.setattr(cx, "_meta_paged", paged)
+    monkeypatch.setattr(cx, "RETRY_PAUSE", 0)
+    rows, basic = cx._page_post_rows("1", "tok", 0)
+    assert calls == [("1/published_posts", 100), ("1/published_posts", 25), ("1/published_posts", 10)] and len(rows) == 1
+    # a real error (bad permission) still fails at once
+    calls.clear()
+    def denied(path, params, limit_pages=50, token=None, stop=None):
+        calls.append(1)
+        raise cx.ConnectorError("(#10) This endpoint requires the 'pages_read_engagement' permission (HTTP 403)",
+                                payload={"error": {"code": 10}})
+    monkeypatch.setattr(cx, "_meta_paged", denied)
+    with pytest.raises(cx.ConnectorError):
+        cx._page_post_rows("1", "tok", 0)
+    assert len(calls) == 3      # one try per edge/field set, no smaller-page retries

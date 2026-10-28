@@ -7,6 +7,7 @@ when someone clicks Apply on a proposed change.
 from __future__ import annotations
 
 import json
+import time
 import os
 import urllib.error
 import urllib.parse
@@ -404,14 +405,29 @@ def _page_post_rows(page_id, page_token, since_ts):
                                    limit_pages=pages, token=page_token), fields == FB_FIELDS_BASIC
             except ConnectorError as e:
                 last = e
-                if not _too_much_data(e):
+                if _transient(e):
+                    time.sleep(RETRY_PAUSE)     # Meta hiccup: wait a moment, then ask again in smaller pages
+                elif not _too_much_data(e):
                     break
     raise last
+
+
+RETRY_PAUSE = 3
 
 
 def _too_much_data(e):
     m = str(e).lower()
     return "reduce the amount of data" in m or "(#1)" in m and "please reduce" in m
+
+
+def _transient(e):
+    """Meta's 'An unknown error occurred' / 'temporarily unavailable' (codes 1, 2, HTTP 500/503): usually a busy
+    Page timing out on Meta's side. Worth another try, ideally with fewer posts per request."""
+    err = (e.payload or {}).get("error", {}) if isinstance(getattr(e, "payload", None), dict) else {}
+    if err.get("is_transient") or err.get("code") in (1, 2):
+        return True
+    m = str(e).lower()
+    return "unknown error" in m or "temporarily unavailable" in m or "(http 500)" in m or "(http 503)" in m
 
 
 def facebook_posts(page_id, page_token, since: date):
