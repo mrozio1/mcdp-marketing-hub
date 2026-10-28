@@ -2311,9 +2311,18 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
             history = [dict(x) for x in c.execute("SELECT * FROM visits WHERE office_id=? ORDER BY visited_at DESC LIMIT 5",
                                                   (o["id"],))]
         history = field.with_people(history)
+        names = {q['id']: q['name'] for q in db.practices()}
+        for h in history:
+            h['practice_name'] = names.get(h.get('practice_id'), '')
+    allp = db.practices()
+    choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+    chosen = request.query_params.get("practice", "")
+    suggested = (int(chosen) if chosen.isdigit() else None) or next(
+        (h["practice_id"] for h in history if h.get("practice_id")), None) or field.suggested_practice(o, (me(request) or {}).get("id"))
     return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
-                ai_on=ai.available(), back=request.query_params.get("back", ""))
+                ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
+                suggested_practice=suggested)
 
 
 @app.post("/field/visits")
@@ -2323,6 +2332,7 @@ async def field_log(request: Request):
     form = await request.form()
     data = {k: form.get(k) for k in ("office_id", "place_id", "npi_key", "name", "address", "office_lat", "office_lng", "visited_at",
                                      "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes",
+                                     "practice_id", "practice_required",
                                      "phone_lat", "phone_lng", "phone_acc")}
     names = form.getlist("person_name")
     if names:

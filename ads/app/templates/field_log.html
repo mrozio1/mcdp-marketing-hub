@@ -23,6 +23,14 @@
   <input type="hidden" name="phone_lat" id="phone-lat"><input type="hidden" name="phone_lng" id="phone-lng"><input type="hidden" name="phone_acc" id="phone-acc">
   <input type="hidden" name="office_lat" value="{{ o.lat if o.lat is not none and not o.place_id else '' }}">
   <input type="hidden" name="office_lng" value="{{ o.lng if o.lng is not none and not o.place_id else '' }}">
+  <input type="hidden" name="practice_required" value="1">
+
+  <label class="visit-practice">Visiting for <span class="muted small">(whose reports and Salesforce data this visit goes to)</span>
+    <select name="practice_id" required>
+      <option value="" {% if not suggested_practice %}selected{% endif %} disabled>Pick a practice…</option>
+      {% for q in practice_choices %}<option value="{{ q.id }}" {% if q.id == suggested_practice %}selected{% endif %}>{{ q.name }}</option>{% endfor %}
+    </select>
+  </label>
 
   <label>Office name <span class="muted small">(as on their sign; this is what reports show)</span>
     <input name="name" value="{{ o.name }}" required maxlength="160" placeholder="e.g. Maple Street Family Dental" autocomplete="off">
@@ -88,7 +96,7 @@
   <div class="drawer-body">
   <ul class="visit-history">
     {% for h in history %}
-    <li><strong>{{ h.visited_at[:10] }}</strong> · {{ h.user_name }}{% if h.rating %} · <span class="rating-chip r-{{ h.rating }}">{{ ratings[h.rating] }}</span>{% endif %}
+    <li><strong>{{ h.visited_at[:10] }}</strong> · {{ h.user_name }}{% if h.practice_name %} · for {{ h.practice_name }}{% endif %}{% if h.rating %} · <span class="rating-chip r-{{ h.rating }}">{{ ratings[h.rating] }}</span>{% endif %}
       {% if h.people %}<br><span class="small">Met {% for p in h.people %}{{ p.name or p.email }}{% if p.role %} ({{ p.role }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
       {% if h.dropped or h.cost %}<br><span class="small">{{ h.dropped }}{% if h.cost %} · {{ h.cost|money }}{% endif %}</span>{% endif %}
       {% if h.notes %}<br><span class="small muted">{{ h.notes }}</span>{% endif %}</li>

@@ -87,7 +87,31 @@ class FieldError(ValueError):
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        have = {r["name"] for r in c.execute("PRAGMA table_info(visits)")}
+        if "practice_id" not in have:          # the practice the visit was made for, chosen when logging
+            c.execute("ALTER TABLE visits ADD COLUMN practice_id INTEGER")
     os.makedirs(receipt_dir(), exist_ok=True)
+
+
+def suggested_practice(o, user_id=None):
+    """The practice a visit to this office is most likely for: the practice of our nearest office, else the one
+    this person logged their last visit for. None when there's nothing to go on."""
+    our = o.get("our_office_id")
+    if our is None and o.get("place_id"):
+        mp = _map_place(o["place_id"])
+        our = mp["office_id"] if mp else None
+    if our is None and o.get("here_lat") is not None:
+        our = nearest_office(o["here_lat"], o["here_lng"])
+    pid = practice_links().get(our) if our is not None else None
+    if pid:
+        return pid
+    if user_id:
+        with db.conn() as c:
+            r = c.execute("SELECT practice_id FROM visits WHERE user_id=? AND practice_id IS NOT NULL "
+                          "ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
+            if r:
+                return r["practice_id"]
+    return None
 
 
 def receipt_dir():
@@ -339,6 +363,14 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     rating = (form.get("rating") or "").strip().lower()
     if rating and rating not in RATINGS:
         raise FieldError("Pick how warm the relationship is.")
+    practice_id = None
+    raw_pid = str(form.get("practice_id") or "").strip()
+    if raw_pid:
+        if not raw_pid.isdigit() or not db.practice(int(raw_pid)):
+            raise FieldError("Pick which of our practices this visit was for.")
+        practice_id = int(raw_pid)
+    elif form.get("practice_required"):
+        raise FieldError("Pick which of our practices this visit was for.")
     cost = money_in(form.get("cost"))
     plat, plng, pacc = _f(form.get("phone_lat")), _f(form.get("phone_lng")), _f(form.get("phone_acc"))
     dist = on_site = None
@@ -359,12 +391,12 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO visits(office_id, user_id, user_name, visited_at, met_name, met_role, rating, dropped, cost, "
-            "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (o["id"], user.get("id") or None, user.get("name", ""), _when(form.get("visited_at")),
              met_name, met_role, rating,
              _clean(form.get("dropped"), 300), cost, receipt, _date_or_blank(form.get("followup")),
-             str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now()))
+             str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id))
         vid = cur.lastrowid
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
@@ -485,7 +517,8 @@ def visits_between(start, end, user_id=None, practice_id=None):
         if r["our_office_id"] is None and r["place_id"]:
             p = _map_place(r["place_id"])
             r["our_office_id"] = p["office_id"] if p else None
-        r["practice_id"] = links.get(r["our_office_id"])
+        # the practice chosen when the visit was logged; older visits: our nearest office's practice
+        r["practice_id"] = r.get("practice_id") or links.get(r["our_office_id"])
     if user_id:
         rows = [r for r in rows if r["user_id"] == user_id]
     if practice_id:

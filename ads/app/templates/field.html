@@ -68,7 +68,8 @@
           {% if v.on_site == 1 %}<span class="tag tag-ok" title="Checked in within 0.2 mi">on site</span>{% elif v.on_site == 0 %}<span class="tag tag-far" title="Phone was {{ v.distance_mi }} mi away">{{ v.distance_mi }} mi away</span>{% endif %}
           {% if sf_on %}{% if v.sf_status == 'sent' %}<a class="tag tag-ok" href="{{ sf_base }}/{{ v.sf_task_id }}" target="_blank" rel="noopener" title="Open the Task in Salesforce">in Salesforce</a>{% elif v.sf_status == 'error' %}<span class="tag tag-far" title="{{ v.sf_error }}">Salesforce: not sent</span>{% else %}<span class="tag" title="Sent within 15 minutes">to Salesforce…</span>{% endif %}{% endif %}
         </p>
-        <p class="small muted">{{ v.user_name }}{% if v.people %} · met {% for p in v.people %}{{ p.name or p.email }}{% if p.role %} ({{ p.role }}){% endif %}{% if p.email and p.name %} <a href="mailto:{{ p.email }}" class="muted">{{ p.email }}</a>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
+        {% set vp = practices|selectattr('id', 'equalto', v.practice_id)|first if v.practice_id else none %}
+        <p class="small muted">{{ v.user_name }}{% if vp %} · for <strong>{{ vp.name }}</strong>{% endif %}{% if v.people %} · met {% for p in v.people %}{{ p.name or p.email }}{% if p.role %} ({{ p.role }}){% endif %}{% if p.email and p.name %} <a href="mailto:{{ p.email }}" class="muted">{{ p.email }}</a>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
         {% if v.dropped or v.cost %}<p class="small">{{ v.dropped }}{% if v.cost %} · <strong>{{ v.cost|money }}</strong>{% endif %}{% if v.receipt %} · <a href="/field/receipts/{{ v.receipt }}" target="_blank" rel="noopener">receipt</a>{% endif %}</p>{% endif %}
         {% if v.notes %}<p class="small visit-notes">{{ v.notes }}</p>{% endif %}
         {% if v.followup %}<p class="small">Follow up {{ v.followup }}</p>{% endif %}

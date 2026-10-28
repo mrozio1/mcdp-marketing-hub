@@ -466,3 +466,36 @@ def test_sync_now_answers_at_once(env, monkeypatch):
         _t.sleep(0.05)
     r = a.get("/sync/done?back=/practices", follow_redirects=True)
     assert "/sync/status" not in r.text
+
+
+def test_visit_is_attributed_to_a_practice(env, monkeypatch):
+    a, f, db = env["agent"], env["field"], env["db"]
+    havens = [p for p in db.practices() if p["name"] == "Havens Orthodontics"][0]["id"]
+    form = a.get("/field/log?place=ChIJ_dentist_maple001").text
+    assert "Visiting for" in form and 'name="practice_id"' in form and "Havens Orthodontics" in form
+    # the form insists on a practice
+    r = a.post("/field/visits", data={"place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental",
+                                      "visited_at": date.today().isoformat() + "T08:00", "practice_required": "1",
+                                      "practice_id": ""}, follow_redirects=True)
+    assert "Pick which of our practices" in r.text
+    r = a.post("/field/visits", data={"place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental",
+                                      "visited_at": date.today().isoformat() + "T08:05", "practice_required": "1",
+                                      "practice_id": "99999"}, follow_redirects=True)
+    assert "Pick which of our practices" in r.text
+    # the pick wins over the nearest office's practice
+    a.post("/field/visits", data={"place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental",
+                                  "visited_at": date.today().isoformat() + "T08:10", "practice_required": "1",
+                                  "practice_id": str(havens), "notes": "attrib-test"})
+    v = [x for x in f.visits_between(date.today(), date.today() + timedelta(days=1)) if x["notes"] == "attrib-test"][0]
+    assert v["practice_id"] == havens
+    assert "for <strong>Havens Orthodontics</strong>" in a.get("/field?period=day").text
+    # the next visit to that office starts on the same practice
+    form = a.get("/field/log?place=ChIJ_dentist_maple001").text
+    assert f'<option value="{havens}" selected>Havens Orthodontics</option>' in form
+    # Salesforce gets it in the subject and description
+    from app import salesforce as sf
+    full = f.visit(v["id"])
+    assert sf._subject("Field visit", full) == "Field visit for Havens Orthodontics: Maple Street Family Dental"
+    assert "For practice: Havens Orthodontics" in sf.description(full)
+    with db.conn() as c:
+        c.execute("UPDATE visits SET sf_status='sent' WHERE notes='attrib-test'")

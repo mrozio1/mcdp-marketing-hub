@@ -480,3 +480,7 @@ Tests: `cd ads && ADS_DISABLE_SCHEDULER=1 python -m pytest tests` (includes a mo
   check with `docker logs postiz-backup`.
 - Update: `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`.
 - Logs: `docker compose logs postiz --tail 100`.
+
+### Which practice a visit is for
+
+Log a visit starts with a **Visiting for** dropdown. It is filled in from the last visit to that office, then from the practice of our nearest office, then from the agent's last pick, and it must be set before saving. The chosen practice decides the visit's budget, the Field page and report figures, and goes into the Salesforce Task subject ("Field visit for Heights Orthodontics: Maple Street Family Dental") and description. Visits logged before this existed keep using the nearest office's practice.

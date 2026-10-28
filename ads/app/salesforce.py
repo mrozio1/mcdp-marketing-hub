@@ -277,9 +277,23 @@ def owner_for(v):
     return _remember("user", email, rows[0]["Id"] if rows else "") or None
 
 
+def practice_name(v):
+    """Which of our practices the visit was for (picked on the form)."""
+    pid = v.get("practice_id")
+    p = db.practice(pid) if pid else None
+    return p["name"] if p else ""
+
+
+def _subject(kind, v):
+    pn = practice_name(v)
+    return (f"{kind} for {pn}: {v['office_name']}" if pn else f"{kind}: {v['office_name']}")[:255]
+
+
 def description(v, hub_url=""):
     from .field import RATING_LABELS
     lines = [f"Logged in MCDP Hub by {v.get('user_name') or 'a field agent'}."]
+    if practice_name(v):
+        lines.append(f"For practice: {practice_name(v)}")
     if v.get("people"):
         lines.append("Met: " + "; ".join(
             (p["name"] or p["email"]) + (f" ({p['role']})" if p["role"] else "") + (f" <{p['email']}>" if p["email"] and p["name"] else "")
@@ -312,14 +326,15 @@ def send_visit(vid, hub_url=""):
     who = contacts[0] if contacts else None
     task = v.get("sf_task_id") or ""
     if not task:
-        task = create("Task", {"Subject": f"Field visit: {v['office_name']}"[:255], "ActivityDate": v["visited_at"][:10],
+        task = create("Task", {"Subject": _subject("Field visit", v), "ActivityDate": v["visited_at"][:10],
                                "Status": "Completed", "Priority": "Normal", "WhatId": acc, "WhoId": who, "OwnerId": owner,
                                "Description": description(v, hub_url)})
         _set(vid, sf_task_id=task)
     if v.get("followup") and not v.get("sf_followup_id"):
-        fu = create("Task", {"Subject": f"Follow up: {v['office_name']}"[:255], "ActivityDate": v["followup"],
+        fu = create("Task", {"Subject": _subject("Follow up", v), "ActivityDate": v["followup"],
                              "Status": "Open", "Priority": "Normal", "WhatId": acc, "WhoId": who, "OwnerId": owner,
-                             "Description": f"Follow-up from the {v['visited_at'][:10]} field visit by {v.get('user_name') or 'a field agent'}."
+                             "Description": f"Follow-up from the {v['visited_at'][:10]} field visit by {v.get('user_name') or 'a field agent'}"
+                                            + (f" for {practice_name(v)}." if practice_name(v) else ".")
                                             + (f"\n\nNotes from the visit:\n{v['notes']}" if v.get("notes") else "")})
         _set(vid, sf_followup_id=fu)
     _set(vid, sf_status="sent", sf_error="", sf_at=db.now())
