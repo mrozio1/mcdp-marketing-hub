@@ -143,6 +143,24 @@ def test_failed_reply_keeps_the_text(env, monkeypatch):
     assert rv.item(iid)["status"] == "open" and rv.item(iid)["draft"] == "My careful words"
 
 
+def test_refused_reply_retries_with_fresh_page_access(env, monkeypatch):
+    """Access granted in Meta a minute ago (e.g. Community activity on the Page) is used straight away."""
+    rv, cx = env["reviews"], env["cx"]
+    monkeypatch.setattr(rv, "_meta_tokens", lambda force=False: {"facebook": {"pg1": ["T-system-new", "T-postiz"] if force else ["T-postiz"]},
+                                                                  "instagram": {}, "ig_names": {}})
+    calls = []
+
+    def act(net, cid, action, tokens, message=""):
+        calls.append(tokens)
+        if tokens == ["T-postiz"]:
+            raise cx.ConnectorError("Meta refused the reply: ... [code 190] (HTTP 400)")
+    monkeypatch.setattr(cx, "comment_action", act)
+    iid = next(r["id"] for r in rv.inbox()[0] if r["external_id"] == "c1")
+    env["editor"].post(f"/reviews/items/{iid}/reply", data={"message": "Thank you!", "back": "/reviews"})
+    assert calls == [["T-postiz"], ["T-system-new", "T-postiz"]] and rv.item(iid)["status"] == "done"
+    env["editor"].post(f"/reviews/items/{iid}/reopen", data={"back": "/reviews?status=done"})
+
+
 def test_like_only_for_facebook_and_hide(env, monkeypatch):
     rv, cx = env["reviews"], env["cx"]
     calls = []

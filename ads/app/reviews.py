@@ -672,7 +672,15 @@ def _platform(it, action, message):
     if not tokens:
         raise ReviewsError("The hub has no access to this account's comments any more. Check the Page in Social "
                            "or the system user's assigned assets.")
-    cx.comment_action(it["source"], it["external_id"], action, tokens, message)
+    try:
+        cx.comment_action(it["source"], it["external_id"], action, tokens, message)
+    except cx.ConnectorError:
+        # Access may have just been granted in Meta (e.g. Community activity on a Page): fetch the Page
+        # tokens again, and if there's a new way in, try once more before giving up.
+        fresh = _meta_tokens(force=True)[it["source"]].get(it["account_id"]) or []
+        if not fresh or fresh == tokens:
+            raise
+        cx.comment_action(it["source"], it["external_id"], action, fresh, message)
 
 
 def act(iid, action, user_name, message=""):
