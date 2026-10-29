@@ -86,6 +86,42 @@
 <p class="muted small">The next sync covers {{ window[0] }} to {{ window[1] }}. In the first three days of a month it pulls the whole previous month instead, so reports cover a complete month.</p>
 {% endif %}
 
+<section class="panel conn section-gap" id="microsoft">
+  <h2>Microsoft 365 <span class="muted small">· calendar invites</span></h2>
+  {% if ms_on %}
+    <p class="state state-good">Connected</p>
+    <p>Signed in as {{ ms_user.name or ms_user.email }}{% if ms_user.email and ms_user.name %} <span class="muted small">({{ ms_user.email }})</span>{% endif %}.
+      Invites from the Calendar are sent from <strong>{{ ms.mailbox or ms_user.email }}</strong>, and replies are read back every 20 minutes.</p>
+    <div class="conn-actions">
+      <form method="post" action="/microsoft/check" data-busy="Checking…"><button class="btn btn-quiet" type="submit">Check the calendar connection</button></form>
+      <a class="btn btn-quiet" href="/microsoft/connect">Sign in again</a>
+      <form method="post" action="/microsoft/disconnect" data-confirm="Disconnect Microsoft 365? Events already sent stay in Outlook; new ones are saved in the hub only."><button class="linklike danger" type="submit">Disconnect</button></form>
+    </div>
+  {% else %}
+    <p class="state">Not connected</p>
+    <p class="small">Until it is, Calendar events are saved in the hub without sending invites.</p>
+  {% endif %}
+  <details class="drawer drawer-inline" id="ms-setup" {% if not ms_on %}open{% endif %}>
+    <summary><span class="drawer-title">{{ 'Change the connection' if ms.client_id else 'Connect Microsoft 365' }}</span></summary>
+    <div class="drawer-body">
+    <form method="post" action="/connections/microsoft" class="stack">
+      <label>Directory (tenant) ID<input name="tenant_id" value="{{ ms.tenant }}" autocomplete="off" spellcheck="false" required></label>
+      <label>Application (client) ID<input name="client_id" value="{{ ms.client_id }}" autocomplete="off" spellcheck="false" required></label>
+      <label>Client secret value {% if ms.secret %}<span class="muted small">(saved; paste a new one only to replace it)</span>{% endif %}<input name="client_secret" type="password" autocomplete="off" {% if not ms.secret %}required{% endif %}></label>
+      <label>Send invites from <span class="muted small">(a shared mailbox the person signing in can Send As; blank = their own)</span><input name="mailbox" type="email" value="{{ ms.mailbox }}" placeholder="marketing-events@mcdentalpartners.com" autocomplete="off"></label>
+      <label>Time zone <span class="muted small">(for event times)</span><input name="timezone_name" value="{{ ms.tz }}" placeholder="America/Detroit" autocomplete="off"></label>
+      <button class="btn {{ 'btn-quiet' if ms.client_id else '' }}" type="submit">Save</button>
+    </form>
+    {% if ms.client_id and ms.secret %}<p><a class="btn" href="/microsoft/connect">Sign in with Microsoft</a></p>{% endif %}
+    <details class="how">
+      <summary>Where do I get this?</summary>
+      <p>In the Entra admin center: <strong>App registrations → MCDP Hub Calendar</strong>. The two IDs are on its <strong>Overview</strong>. Under <strong>Certificates &amp; secrets</strong>, create a client secret and copy its <strong>Value</strong> (shown once). Its redirect address must be <code class="break-all">{{ ms_redirect }}</code> (Authentication → Web).</p>
+      <p>API permissions (Microsoft Graph, delegated): Calendars.ReadWrite, Calendars.ReadWrite.Shared, User.Read, User.ReadBasic.All, offline_access, openid, profile, email. Sign in with someone who is a member of the send-from shared mailbox (Full Access and Send As).</p>
+    </details>
+    </div>
+  </details>
+</section>
+
 <section class="panel conn section-gap" id="salesforce">
   <h2>Salesforce <span class="muted small">· field visits</span></h2>
   {% if sf_on %}

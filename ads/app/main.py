@@ -8,17 +8,18 @@ import os
 import re
 import sqlite3
 import urllib.parse
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import markdown as md
+from fastapi.responses import JSONResponse
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, campaigns, db, images, tools, emailfmt, field, organic, places, referrals, reviews, salesforce, scope, sync, users
+from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, scope, sync, users
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -40,7 +41,8 @@ ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!.*/delete$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+/delete$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
-ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|team)(/|$)"), re.compile(r"^/map/setup$"),
+CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and changing events: editors, or field visits on
+ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/p/\d+/delete$"))
 
 
@@ -55,6 +57,8 @@ def needed_role(method, path):
         return "viewer"
     if FIELD_WORK.match(path):
         return "field"
+    if CAL_WORK.match(path) and (method not in ("GET", "HEAD") or "/edit" in path or path.startswith("/calendar/new")):
+        return "calendar"
     if method in ("GET", "HEAD") or path.startswith(ANY_SIGNED_IN_POST):
         return "viewer"
     return "editor"
@@ -64,9 +68,13 @@ async def role_gate(request: Request, call_next):
     need = needed_role(request.method, request.url.path)
     request.state.user = current_user(request)
     u = request.state.user
-    refused = u and (not u.get("field") if need == "field" else users.rank(u["role"]) < users.rank(need))
+    refused = u and (not u.get("field") if need == "field" else
+                     not (u.get("field") or users.rank(u["role"]) >= users.rank("editor")) if need == "calendar" else
+                     users.rank(u["role"]) < users.rank(need))
     if need and refused:
-        if need == "field":
+        if need == "calendar":
+            msg = "Adding calendar events needs editor access or field visits switched on. Ask an admin."
+        elif need == "field":
             msg = "Field visits aren't switched on for you. Ask an admin to turn them on on the Team page."
         elif request.state.user["role"] == "viewer":
             msg = "You have view-only access, so you can look and export but not change things. Ask an editor."
@@ -94,6 +102,8 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["money"] = money
 templates.env.filters["pct"] = pct
+templates.env.filters["clock"] = lambda t: cal._clock(t) if t else ""
+templates.env.filters["hm"] = lambda t: f"{int(t[:2]) % 12 or 12}:{t[3:5]}" if t else ""
 
 
 def compact(n):
@@ -147,6 +157,7 @@ def _startup():
     referrals.init()
     field.init()
     salesforce.init()
+    cal.init()
     try:
         db.seed_archive()          # reports read the daily archive; fill it from what's already synced
     except Exception:
@@ -160,6 +171,7 @@ def _startup():
         places.start_scheduler()
         referrals.start_scheduler()
         salesforce.start_scheduler(PUBLIC_URL)
+        cal.start_scheduler()
 
 
 SHARED = {"id": 0, "name": "Team password", "email": "", "role": "admin"}
@@ -1818,7 +1830,8 @@ def connections(request: Request):
                 checked=checked, redirect_uri=redirect_uri(request), practices=scope.with_inherited(db.practices()),
                 window=sync.sync_window(), sf_client=all(salesforce.client()), sf_on=salesforce.connected(),
                 sf_user=salesforce.user(), sf_status=salesforce.status(), sf_redirect=_sf_redirect(request),
-                sf_login=salesforce.login_url(), sf_waiting=len(salesforce.pending_ids(10000)) if salesforce.connected() else 0)
+                sf_login=salesforce.login_url(), sf_waiting=len(salesforce.pending_ids(10000)) if salesforce.connected() else 0,
+                ms=microsoft.settings(), ms_on=microsoft.connected(), ms_user=microsoft.user(), ms_redirect=_ms_redirect(request))
 
 
 @app.post("/connections/refresh")
@@ -2317,12 +2330,21 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
     allp = db.practices()
     choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
     chosen = request.query_params.get("practice", "")
+    pre = None
+    ev_id = request.query_params.get("event", "")
+    if ev_id.isdigit() and (ev := cal.get(int(ev_id))):
+        team = {(x.get("email") or "").lower() for x in users.all_users()}
+        team.add(microsoft.mailbox().lower())
+        pre = {"event_id": ev["id"], "dropped": ev["extra"] if ev["category"] in ("referral", "office") else "",
+               "cost": ev["cost"], "people": [{"name": p["name"], "email": p["email"], "role": ""} for p in ev["people"]
+                                              if p["email"] not in team and p.get("source") != "team"]}
+        chosen = chosen or str(ev["practice_id"] or "")
     suggested = (int(chosen) if chosen.isdigit() else None) or next(
         (h["practice_id"] for h in history if h.get("practice_id")), None) or field.suggested_practice(o, (me(request) or {}).get("id"))
     return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
-                suggested_practice=suggested)
+                suggested_practice=suggested, pre=pre)
 
 
 @app.post("/field/visits")
@@ -2348,6 +2370,8 @@ async def field_log(request: Request):
                                                        ("npi", data["npi_key"]), ("error", str(e))) if v})
         return RedirectResponse(f"/field/log?{q}", status_code=303)
     salesforce.send_in_background(PUBLIC_URL)
+    if str(form.get("event_id") or "").isdigit():
+        cal.set_status(int(form.get("event_id")), visit_id=vid)
     v = field.visit(vid)
     where = " (on site)" if v["on_site"] == 1 else f" ({v['distance_mi']:g} mi from the office)" if v["on_site"] == 0 else ""
     flash(request, f"Visit to {v['office_name']} logged{where}.")
@@ -2837,3 +2861,342 @@ def gbp_disconnect(request: Request):
     db.set_setting("gbp_refresh_token", None)
     flash(request, "Google reviews disconnected. Reviews and counts already pulled are kept.")
     return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+# ---------- Calendar (Outlook invites through Microsoft 365) ----------
+def _cal_practices():
+    allp = db.practices()
+    return sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+
+
+def _can_schedule(u):
+    return bool(u) and (bool(u.get("field")) or users.rank(u["role"]) >= users.rank("editor"))
+
+
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request, view: str = "month", d: str = "", practice: str = "", category: str = "",
+                  mine: str = "", fu: str = "1", event: str = "", day: str = ""):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    today = date.today()
+    try:
+        focus = date.fromisoformat(d) if d else today
+    except ValueError:
+        focus = today
+    view = view if view in ("month", "week", "list") else "month"
+    pid = int(practice) if practice.isdigit() else None
+    category = category if category in cal.CAT else ""
+    if view == "month":
+        start, end, weeks = cal.month_grid(focus.year, focus.month)
+        prev_d = (focus.replace(day=1) - timedelta(days=1)).replace(day=1)
+        next_d = (focus.replace(day=28) + timedelta(days=4)).replace(day=1)
+        title = focus.strftime("%B %Y")
+    elif view == "week":
+        start = focus - timedelta(days=(focus.weekday() + 1) % 7)
+        end = start + timedelta(days=6)
+        weeks = [[start + timedelta(days=i) for i in range(7)]]
+        prev_d, next_d = start - timedelta(days=7), start + timedelta(days=7)
+        title = f"Week of {start.strftime('%b')} {start.day}" + (f"–{end.day}" if end.month == start.month else f" – {end.strftime('%b')} {end.day}")
+    else:
+        start, end, weeks = focus, focus + timedelta(days=59), []
+        prev_d, next_d = focus - timedelta(days=60), focus + timedelta(days=60)
+        title = f"From {focus.strftime('%b')} {focus.day}, {focus.year}"
+    items = cal.items_between(start, end, u, pid, category, mine == "1", fu == "1")
+    by_day = {}
+    for i in items:
+        by_day.setdefault(i["day"], []).append(i)
+    try:
+        picked_day = date.fromisoformat(day) if day else (today if start <= today <= end else start)
+    except ValueError:
+        picked_day = today
+    sel = cal.get(int(event)) if event.isdigit() else None
+    if sel:
+        sel["practice_name"] = (db.practice(sel["practice_id"]) or {}).get("name", "")
+        sel["can_change"] = cal.can_change(sel, u)
+        sel["show"] = cal.visible(sel, u)
+        if sel["status"] == "sent":
+            cal.refresh_soon(sel["id"])
+    qs = {"view": view, "d": focus.isoformat(), "practice": practice, "category": category, "mine": mine, "fu": fu}
+    return page(request, "calendar.html", view=view, focus=focus, title=title, weeks=weeks, by_day=by_day, items=items,
+                start=start, end=end, today=today, prev_d=prev_d, next_d=next_d, practices=_cal_practices(), pid=pid,
+                category=category, mine=mine == "1", fu=fu == "1", cats=cal.CATEGORIES, sel=sel, picked_day=picked_day,
+                upcoming=cal.upcoming(u, 6, pid, mine == "1"), qs=qs, can_schedule=_can_schedule(u),
+                ms_on=microsoft.connected(), ms_mailbox=microsoft.mailbox(), followup_color=cal.FOLLOWUP_COLOR)
+
+
+def _cal_form(request, ev=None, error="", form=None):
+    u = me(request)
+    pr = _cal_practices()
+    qp = request.query_params
+    if ev is None:
+        start_d = qp.get("date") or date.today().isoformat()
+        ev = {"id": None, "practice_id": int(qp["practice"]) if qp.get("practice", "").isdigit() else None,
+              "category": qp.get("category") if qp.get("category") in cal.CAT else "referral", "kind": "",
+              "subject": "", "subject_custom": 0, "where_kind": "", "place_label": "", "place_address": "",
+              "office_id": None, "npi_key": "", "place_id": "", "starts": f"{start_d}T10:00", "ends": f"{start_d}T10:45",
+              "all_day": 0, "repeat": "", "repeat_until": "", "reminder": 60, "show_as": "busy", "teams": 0, "extra": "",
+              "cost": None, "details": "", "private": 0, "log_reminder": 1, "people": [], "status": "new", "ms_id": ""}
+        if u and u.get("email"):
+            ev["people"] = [{"name": u["name"], "email": u["email"].lower(), "required": 1, "source": "team"}]
+    return page(request, "calendar_form.html", ev=ev, practices=pr, cats=cal.CATEGORIES, cat_json=cal.form_json(),
+                where_opts=cal.WHERE, repeats=cal.REPEATS, reminders=cal.REMINDERS, show_as=cal.SHOW_AS, error=error,
+                ms_on=microsoft.connected(), ms_mailbox=microsoft.mailbox(), ms_user=microsoft.user(),
+                tz=microsoft.timezone(), max_attach_mb=cal.MAX_ATTACHMENT // (1024 * 1024))
+
+
+@app.get("/calendar/new", response_class=HTMLResponse)
+def calendar_new(request: Request):
+    if (r := guard(request)):
+        return r
+    return _cal_form(request)
+
+
+@app.get("/calendar/{eid}/edit", response_class=HTMLResponse)
+def calendar_edit(request: Request, eid: int):
+    if (r := guard(request)):
+        return r
+    ev = cal.get(eid)
+    if not ev or not cal.can_change(ev, me(request)):
+        flash(request, "That event can't be changed here.", "error")
+        return RedirectResponse("/calendar", status_code=303)
+    return _cal_form(request, ev)
+
+
+async def _cal_form_data(request):
+    form = await request.form()
+    data = {k: form.get(k) for k in form.keys() if not k.startswith("person_")}
+    for k in ("person_name", "person_email", "person_required", "person_source"):
+        data[k] = form.getlist(k)
+    up = form.get("attachment")
+    attach = None
+    if up is not None and getattr(up, "filename", ""):
+        blob = await up.read()
+        if len(blob) > cal.MAX_ATTACHMENT:
+            raise cal.CalError(f"Attachments can be up to {cal.MAX_ATTACHMENT // (1024 * 1024)} MB.")
+        if blob:
+            attach = (os.path.basename(up.filename)[:120], up.content_type or "", blob)
+    return data, attach
+
+
+async def _cal_store(request, eid=None):
+    u = me(request)
+    old = cal.get(eid) if eid else None
+    if eid and (not old or not cal.can_change(old, u)):
+        flash(request, "That event can't be changed here.", "error")
+        return RedirectResponse("/calendar", status_code=303)
+    try:
+        data, attach = await _cal_form_data(request)
+        ev, people = cal.parse(data, _cal_practices())
+    except cal.CalError as e:
+        draft = cal.draft(data if "data" in locals() else {}, old)
+        return _cal_form(request, draft, error=str(e))
+    eid = cal.save(ev, people, u, eid)
+    send = data.get("action") != "save" and (people or (old and old.get("ms_id")))
+    if send:
+        err = await asyncio.to_thread(cal.send, eid, attach)
+        if err:
+            flash(request, f"Saved in the hub, but Outlook didn't get it: {err}", "error")
+        else:
+            n = len(people)
+            flash(request, (f"Invite sent to {n} {'person' if n == 1 else 'people'} from {microsoft.mailbox() or 'Outlook'}."
+                            if not old or not old.get("ms_id") else "Updated; Outlook sent the change to everyone invited."))
+    else:
+        flash(request, "Saved to the calendar. No invite was sent.")
+    d = ev["starts"][:10]
+    return RedirectResponse(f"/calendar?d={d}&event={eid}&day={d}", status_code=303)
+
+
+@app.post("/calendar/events")
+async def calendar_create(request: Request):
+    if (r := guard(request)):
+        return r
+    return await _cal_store(request)
+
+
+@app.post("/calendar/{eid}")
+async def calendar_update(request: Request, eid: int):
+    if (r := guard(request)):
+        return r
+    return await _cal_store(request, eid)
+
+
+@app.post("/calendar/{eid}/retry")
+async def calendar_retry(request: Request, eid: int):
+    if (r := guard(request)):
+        return r
+    ev = cal.get(eid)
+    if not ev or not cal.can_change(ev, me(request)):
+        return RedirectResponse("/calendar", status_code=303)
+    err = await asyncio.to_thread(cal.send, eid)
+    flash(request, f"Outlook still didn't take it: {err}" if err else "Sent.", "error" if err else "ok")
+    return RedirectResponse(f"/calendar?d={ev['starts'][:10]}&event={eid}", status_code=303)
+
+
+@app.post("/calendar/{eid}/cancel")
+async def calendar_cancel(request: Request, eid: int):
+    if (r := guard(request)):
+        return r
+    ev = cal.get(eid)
+    if not ev or not cal.can_change(ev, me(request)):
+        return RedirectResponse("/calendar", status_code=303)
+    form = await request.form()
+    try:
+        await asyncio.to_thread(cal.cancel, eid, form.get("comment") or "")
+        flash(request, "Cancelled. Outlook told everyone invited." if ev["ms_id"] else "Cancelled.")
+    except microsoft.MSError as e:
+        flash(request, f"Couldn't cancel it in Outlook: {e}", "error")
+    return RedirectResponse(f"/calendar?d={ev['starts'][:10]}&event={eid}", status_code=303)
+
+
+@app.post("/calendar/{eid}/delete")
+def calendar_delete(request: Request, eid: int):
+    if (r := guard(request)):
+        return r
+    ev = cal.get(eid)
+    if ev and cal.can_change(ev, me(request)) and (not ev["ms_id"] or ev["status"] == "cancelled"):
+        cal.delete(eid)
+        flash(request, "Removed from the calendar.")
+    else:
+        flash(request, "Cancel it first so the people invited are told.", "error")
+    return RedirectResponse("/calendar" + (f"?d={ev['starts'][:10]}" if ev else ""), status_code=303)
+
+
+@app.get("/calendar/lookup/people")
+async def calendar_people(request: Request, q: str = "", office_id: str = "", npi: str = "", place: str = ""):
+    if (r := guard(request)):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    if office_id or npi or place:
+        return JSONResponse({"people": cal.office_contacts(int(office_id) if office_id.isdigit() else None, npi, place)})
+    out = cal.people_search(q)
+    if microsoft.connected() and len(q.strip()) >= 2:
+        try:
+            seen = {p["email"] for p in out}
+            out += [p for p in await asyncio.to_thread(microsoft.directory, q) if p["email"].lower() not in seen]
+        except microsoft.MSError:
+            pass
+    return JSONResponse({"people": out[:15]})
+
+
+@app.get("/calendar/lookup/offices")
+def calendar_offices(request: Request, q: str = ""):
+    if (r := guard(request)):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    return JSONResponse({"offices": cal.office_search(q)})
+
+
+@app.get("/calendar/lookup/locations")
+def calendar_locations(request: Request, practice: str = ""):
+    if (r := guard(request)):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    return JSONResponse({"locations": cal.our_locations(int(practice)) if practice.isdigit() else []})
+
+
+@app.get("/calendar/lookup/freebusy")
+async def calendar_freebusy(request: Request, emails: str = "", start: str = "", end: str = ""):
+    if (r := guard(request)):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    if not microsoft.connected():
+        return JSONResponse({"ok": False, "error": "Microsoft 365 isn't connected."})
+    ems = [e.strip().lower() for e in emails.split(",") if cal.EMAIL.match(e.strip())][:20]
+    try:
+        datetime.fromisoformat(start), datetime.fromisoformat(end)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Pick a time first."})
+    if not ems:
+        return JSONResponse({"ok": True, "people": {}})
+    try:
+        return JSONResponse({"ok": True, "people": await asyncio.to_thread(microsoft.free_busy, ems, start, end)})
+    except microsoft.MSError as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+# ---------- Microsoft 365 connection ----------
+def _ms_redirect(request: Request):
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    return base + "/microsoft/callback"
+
+
+GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+@app.post("/connections/microsoft")
+async def save_microsoft(request: Request, tenant_id: str = Form(""), client_id: str = Form(""), client_secret: str = Form(""),
+                         mailbox: str = Form(""), timezone_name: str = Form("")):
+    if (r := guard(request)):
+        return r
+    tenant_id, client_id, client_secret, mailbox = tenant_id.strip(), client_id.strip(), client_secret.strip(), mailbox.strip().lower()
+    timezone_name = timezone_name.strip()
+    if not GUID.match(tenant_id) or not GUID.match(client_id):
+        flash(request, "The Directory (tenant) ID and Application (client) ID are both long IDs like 2c65d3b3-…; copy them from the app's Overview in Entra.", "error")
+    elif not client_secret and not db.get_setting("ms_client_secret"):
+        flash(request, "Paste the client secret's Value (not its Secret ID).", "error")
+    elif client_secret and GUID.match(client_secret):
+        flash(request, "That looks like the Secret ID. Paste the secret's Value instead (it's shown once, right after you create it).", "error")
+    elif mailbox and not cal.EMAIL.match(mailbox):
+        flash(request, "The send-from mailbox should be an email address.", "error")
+    else:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(timezone_name or microsoft.DEFAULT_TZ)
+        except Exception:
+            flash(request, "The time zone should look like America/Detroit or America/Chicago.", "error")
+            return RedirectResponse("/connections#microsoft", status_code=303)
+        microsoft.save(tenant_id, client_id, client_secret, mailbox, timezone_name)
+        flash(request, "Saved. Now click “Sign in with Microsoft”.")
+    return RedirectResponse("/connections#microsoft", status_code=303)
+
+
+@app.get("/microsoft/connect")
+def microsoft_connect(request: Request):
+    if (r := guard(request)):
+        return r
+    if not microsoft.configured():
+        flash(request, "Save the tenant ID, client ID and secret first.", "error")
+        return RedirectResponse("/connections#microsoft", status_code=303)
+    state = os.urandom(16).hex()
+    verifier, challenge = microsoft.pkce_pair()
+    request.session["ms_state"], request.session["ms_verifier"] = state, verifier
+    return RedirectResponse(microsoft.auth_url(_ms_redirect(request), state, challenge), status_code=303)
+
+
+@app.get("/microsoft/callback")
+async def microsoft_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    if (r := guard(request)):
+        return r
+    expected, verifier = request.session.pop("ms_state", None), request.session.pop("ms_verifier", None)
+    if error:
+        flash(request, f"Microsoft sign-in didn't finish: {microsoft._explain_signin(error_description or error)}", "error")
+    elif not expected or not hmac.compare_digest(state, expected):
+        flash(request, "That Microsoft sign-in link expired. Try again.", "error")
+    else:
+        try:
+            who = await asyncio.to_thread(microsoft.exchange_code, code, _ms_redirect(request), verifier)
+            problem = await asyncio.to_thread(microsoft.check_mailbox)
+            name = who.get("displayName") or who.get("mail") or "you"
+            if problem:
+                flash(request, f"Signed in as {name}, but the send-from calendar isn't reachable yet: {problem}", "error")
+            else:
+                flash(request, f"Microsoft 365 connected as {name}. Invites will come from {microsoft.mailbox() or who.get('mail')}.")
+        except microsoft.MSError as e:
+            flash(request, f"Microsoft sign-in failed: {e}", "error")
+    return RedirectResponse("/connections#microsoft", status_code=303)
+
+
+@app.post("/microsoft/check")
+async def microsoft_check(request: Request):
+    if (r := guard(request)):
+        return r
+    problem = await asyncio.to_thread(microsoft.check_mailbox) if microsoft.connected() else "Not connected."
+    flash(request, problem or f"All good: the hub can write to the {microsoft.mailbox() or 'signed-in'} calendar.",
+          "error" if problem else "ok")
+    return RedirectResponse("/connections#microsoft", status_code=303)
+
+
+@app.post("/microsoft/disconnect")
+def microsoft_disconnect(request: Request):
+    if (r := guard(request)):
+        return r
+    microsoft.disconnect()
+    flash(request, "Microsoft 365 disconnected. Events already sent stay in Outlook; new ones are saved in the hub only.")
+    return RedirectResponse("/connections#microsoft", status_code=303)

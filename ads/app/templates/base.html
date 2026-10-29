@@ -20,6 +20,7 @@
     {% if show_social %}<a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>{% endif %}
     <a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>
     <a href="/field" {% if here.startswith('/field') %}aria-current="page"{% endif %}>Field</a>
+    <a href="/calendar" {% if here.startswith('/calendar') %}aria-current="page"{% endif %}>Calendar</a>
     {% if is_admin %}
     <a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>
     <a href="/team" {% if here.startswith('/team') %}aria-current="page"{% endif %}>Team</a>

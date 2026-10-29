@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit event' if ev.id else 'New event' }}{% endblock %}
+{% block content %}
+{% set c0 = ev.category or 'referral' %}
+<p class="crumb"><a href="/calendar{% if ev.id %}?event={{ ev.id }}{% endif %}">Calendar</a></p>
+<h1>{{ 'Edit event' if ev.id else 'New event' }}</h1>
+{% if error %}<p class="flash flash-error" role="alert">{{ error }}</p>{% endif %}
+{% if not ms_on %}<p class="flash" role="status">Microsoft 365 isn't connected yet, so events are saved in the hub without sending invites.{% if is_admin %} <a href="/connections#microsoft">Connect it</a>.{% endif %}</p>{% endif %}
+
+<div class="calf-layout">
+<form method="post" action="{{ '/calendar/' ~ ev.id if ev.id else '/calendar/events' }}" enctype="multipart/form-data" id="calf" data-busy="Sending…" novalidate>
+  <section class="calf-sec">
+    <h2><span class="calf-n">1</span>What it is</h2>
+    <div class="calf-row calf-c3">
+      <label>Practice<select name="practice_id" id="f-practice" required>
+        <option value="" {% if not ev.practice_id %}selected{% endif %} disabled>Pick a practice…</option>
+        {% for p in practices %}<option value="{{ p.id }}" {% if ev.practice_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
+      <label>Category<select name="category" id="f-cat" required>
+        {% for c in cats %}<option value="{{ c.key }}" {% if c0 == c.key %}selected{% endif %}>{{ c.label }}</option>{% endfor %}</select></label>
+      <label>Type<select name="kind" id="f-kind" required>
+        <option value="" disabled {% if not ev.kind %}selected{% endif %}>Pick a type…</option>
+        {% for c in cats if c.key == c0 %}{% for k, label, s in c.types %}<option value="{{ k }}" {% if ev.kind == k %}selected{% endif %}>{{ label }}</option>{% endfor %}{% endfor %}</select></label>
+    </div>
+    <label style="margin-top: .9rem">Event subject <span class="calf-hint">built from your picks; it's the invite's title in Outlook</span>
+      <div class="calf-subject" id="subj-view"><span id="subj-text">{{ ev.subject or 'Pick a practice, category and type' }}</span><button class="linklike small" type="button" id="subj-edit">Edit</button></div>
+      <input name="subject" id="f-subject" value="{{ ev.subject }}" maxlength="255" hidden>
+    </label>
+    <input type="hidden" name="subject_custom" id="f-subject-custom" value="{{ ev.subject_custom or 0 }}">
+  </section>
+
+  <section class="calf-sec">
+    <h2><span class="calf-n">2</span>Where</h2>
+    <fieldset class="calf-pills" id="f-where">
+      <legend class="sr-only">Kind of place</legend>
+      {% for k, l in where_opts %}<label><input type="radio" name="where_kind" value="{{ k }}" {% if (ev.where_kind or (cats|selectattr('key', 'equalto', c0)|first).where) == k %}checked{% endif %}><span>{{ l }}</span></label>{% endfor %}
+    </fieldset>
+    <div class="calf-field" id="where-referral">
+      <label>Referring office <span class="calf-hint">offices you've visited and the Map's dental offices</span>
+        <input id="f-office-q" autocomplete="off" placeholder="Start typing the office name…" value="{{ ev.place_label if ev.where_kind == 'referral' else '' }}"></label>
+      <ul class="calf-menu" id="office-menu" hidden></ul>
+    </div>
+    <div class="calf-field" id="where-ours" hidden>
+      <label>Which location<select id="f-loc"><option value="">Pick a location…</option></select></label>
+    </div>
+    <div id="where-address" hidden>
+      <div class="calf-row calf-c2">
+        <label>Venue or place name<input id="f-venue" maxlength="200" value="{{ ev.place_label if ev.where_kind == 'address' else '' }}" placeholder="e.g. Suburban Collection Showplace"></label>
+        <label>Address<input id="f-addr" maxlength="300" value="{{ ev.place_address if ev.where_kind == 'address' else '' }}" placeholder="Street, city, state"></label>
+      </div>
+    </div>
+    <p class="small muted" id="where-online" hidden>A Teams link is added to the invite.</p>
+    <p class="small muted" id="office-note" style="margin: .4rem 0 0"></p>
+    <input type="hidden" name="place_label" id="f-place-label" value="{{ ev.place_label }}">
+    <input type="hidden" name="place_address" id="f-place-address" value="{{ ev.place_address }}">
+    <input type="hidden" name="office_id" id="f-office-id" value="{{ ev.office_id or '' }}">
+    <input type="hidden" name="npi_key" id="f-npi" value="{{ ev.npi_key }}">
+    <input type="hidden" name="place_id" id="f-place" value="{{ ev.place_id }}">
+  </section>
+
+  <section class="calf-sec">
+    <h2><span class="calf-n">3</span>When</h2>
+    <div class="calf-row calf-c4">
+      <label>Date<input type="date" name="date" id="f-date" value="{{ ev.starts[:10] }}" required></label>
+      <label class="t-only">Start<input type="time" name="start" id="f-start" value="{{ ev.starts[11:16] }}" step="300"></label>
+      <label class="t-only">End<input type="time" name="end" id="f-end" value="{{ ev.ends[11:16] }}" step="300"></label>
+      <label class="d-day" hidden>Last day<input type="date" name="end_date" id="f-end-date" value="{{ ev.ends[:10] }}"></label>
+      <label>Repeat<select name="repeat" id="f-repeat">{% for k, l in repeats %}<option value="{{ k }}" {% if ev.repeat == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    </div>
+    <label id="until-wrap" style="margin-top: .7rem; max-width: 14rem" {% if not ev.repeat %}hidden{% endif %}>Repeat until <span class="calf-hint">optional</span><input type="date" name="repeat_until" value="{{ ev.repeat_until }}"></label>
+    <div class="calf-toggles">
+      <label class="cal-check"><input type="checkbox" name="all_day" value="1" id="f-allday" {% if ev.all_day %}checked{% endif %}> All day</label>
+      {% if ms_on %}<button type="button" class="linklike small" id="fb-check">Check who's free</button><span class="calf-fb" id="fb-out" aria-live="polite"></span>{% endif %}
+    </div>
+    <p class="small muted" style="margin: .5rem 0 0">Times are {{ tz.replace('America/', '').replace('_', ' ') }} time.</p>
+  </section>
+
+  <section class="calf-sec">
+    <h2><span class="calf-n">4</span>Who's invited</h2>
+    <label for="f-person">People <span class="calf-hint">hub team, the office's contacts, anyone at MCDP, or any email · tap R / O for required or optional</span></label>
+    <div class="calf-chips" id="chips">
+      {% for p in ev.people %}
+      <span class="calf-chip" data-email="{{ p.email }}">{{ p.name or p.email }}{% if p.name %} <small>{{ p.email }}</small>{% endif %}
+        <button type="button" class="req{{ ' r' if p.required else '' }}" title="Required or optional">{{ 'R' if p.required else 'O' }}</button><button type="button" class="x" aria-label="Remove {{ p.name or p.email }}">×</button>
+        <input type="hidden" name="person_name" value="{{ p.name }}"><input type="hidden" name="person_email" value="{{ p.email }}">
+        <input type="hidden" name="person_required" value="{{ 1 if p.required else 0 }}"><input type="hidden" name="person_source" value="{{ p.source }}"></span>
+      {% endfor %}
+      <input class="calf-add" id="f-person" autocomplete="off" placeholder="Add a name or email…" aria-describedby="people-hint">
+      <ul class="calf-menu" id="people-menu" hidden></ul>
+    </div>
+    <p class="calf-suggest" id="suggest" hidden></p>
+    <p class="small muted" id="people-hint" style="margin: .35rem 0 0">Press Enter after typing an email to add it.{% if ms_mailbox %} The invite comes from {{ ms_mailbox }}.{% endif %}</p>
+    <div class="calf-row calf-c3" style="margin-top: .8rem">
+      <label>Reminder<select name="reminder">{% for k, l in reminders %}<option value="{{ k }}" {% if ev.reminder == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+      <label>Show as<select name="show_as">{% for k, l in show_as %}<option value="{{ k }}" {% if ev.show_as == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+      <label>Teams meeting<select name="teams" id="f-teams"><option value="0">No</option><option value="1" {% if ev.teams %}selected{% endif %}>Add a Teams link</option></select></label>
+    </div>
+  </section>
+
+  <section class="calf-sec">
+    <h2><span class="calf-n">5</span>Details</h2>
+    <div class="calf-cond" id="cond">
+      <p class="small muted" style="margin: 0 0 .5rem" id="cond-label"></p>
+      <div class="calf-row calf-c2">
+        <label><span id="extra-label">What you're bringing</span><input name="extra" id="f-extra" maxlength="500" value="{{ ev.extra }}"></label>
+        <label id="cost-wrap">Estimated cost <span class="calf-hint">carried into the visit log, so it counts toward the field budget</span><input name="cost" id="f-cost" inputmode="decimal" value="{{ '%.2f'|format(ev.cost|float) if ev.cost not in (none, '') else '' }}" placeholder="$0.00"></label>
+      </div>
+    </div>
+    <label style="margin-top: .9rem">Additional information <span class="calf-hint">shown in the invite</span>
+      <textarea name="details" id="f-details" maxlength="4000" rows="4">{{ ev.details }}</textarea></label>
+    {% if not ev.ms_id %}<label style="margin-top: .8rem">Attachment <span class="calf-hint">optional · shot list, flyer, agenda · up to {{ max_attach_mb }} MB</span><input type="file" name="attachment"></label>{% endif %}
+    <div class="calf-toggles">
+      <label class="cal-check"><input type="checkbox" name="log_reminder" value="1" {% if ev.log_reminder %}checked{% endif %}> Remind me to log the visit afterwards (it goes to Salesforce)</label>
+      <label class="cal-check"><input type="checkbox" name="private" value="1" {% if ev.private %}checked{% endif %}> Private (others in the hub just see “Busy”)</label>
+    </div>
+  </section>
+
+  <p class="flash flash-error" id="form-err" role="alert" hidden>Pick the practice, category and type first.</p>
+  <div class="calf-actions">
+    <input type="hidden" name="action" id="f-action" value="send">
+    <button class="btn" type="submit" data-action="send" id="send-btn">{{ 'Save and send update' if ev.ms_id else 'Send invite' }}</button>
+    {% if not ev.ms_id %}<button class="btn btn-quiet" type="submit" data-action="save">Save to calendar only</button>{% endif %}
+    <a href="/calendar{% if ev.id %}?event={{ ev.id }}{% endif %}">Cancel</a>
+    {% if ms_on %}<span class="small muted">Sent from {{ ms_mailbox or ms_user.email }}</span>{% endif %}
+  </div>
+</form>
+
+<aside class="calf-preview">
+  <p class="small muted" style="margin: 0 0 .4rem; font-weight: 600">What people get in Outlook</p>
+  <div class="calf-inv">
+    <div class="calf-inv-top"><span>Meeting invite</span><span>From {{ ms_mailbox or ms_user.name or 'Outlook' }}</span></div>
+    <div class="calf-inv-body">
+      <h3 id="pv-subject">—</h3>
+      <dl class="cal-dl">
+        <dt>When</dt><dd id="pv-when">—</dd>
+        <dt>Where</dt><dd id="pv-where">—</dd>
+        <dt>Required</dt><dd id="pv-req">—</dd>
+        <dt>Optional</dt><dd id="pv-opt">—</dd>
+      </dl>
+      <div class="calf-inv-acts"><span>✓ Accept</span><span>? Tentative</span><span>✕ Decline</span></div>
+      <div class="calf-inv-note" id="pv-note">Scheduled from MCDP Hub</div>
+    </div>
+  </div>
+  <p class="small muted" style="margin-top: .6rem">Replies (accepted, tentative, declined) show on the Calendar next to each person.</p>
+</aside>
+</div>
+
+<script>
+(() => {
+  const CATS = {{ cat_json|safe }};
+  const $ = id => document.getElementById(id);
+  const form = $('calf');
+  const practiceName = () => { const o = $('f-practice').selectedOptions[0]; return o && o.value ? o.textContent : ''; };
+  const where = () => (form.querySelector('input[name=where_kind]:checked') || {}).value || '';
+  let custom = $('f-subject-custom').value === '1';
+
+  function fillTypes(keep) {
+    const c = CATS[$('f-cat').value]; const k = $('f-kind');
+    const cur = keep ? k.value : '';
+    k.innerHTML = '<option value="" disabled>Pick a type…</option>' + c.types.map(t => `<option value="${t[0]}">${t[1]}</option>`).join('');
+    k.value = c.types.some(t => t[0] === cur) ? cur : '';
+    if (!k.value) k.selectedIndex = 0;
+  }
+  function catChanged() {
+    fillTypes(false);
+    const c = CATS[$('f-cat').value];
+    const r = form.querySelector(`input[name=where_kind][value="${c.where}"]`); if (r) r.checked = true;
+    whereChanged(); details(); update();
+  }
+  function details() {
+    const c = CATS[$('f-cat').value];
+    $('cond').style.setProperty('--c', c.color);
+    $('cond-label').textContent = 'For ' + c.label + 's';
+    $('extra-label').textContent = c.extra;
+    $('cost-wrap').hidden = !c.cost;
+  }
+  function placeText() {
+    const w = where();
+    if (w === 'online') return '';
+    return $('f-place-label').value;
+  }
+  function subject() {
+    const c = CATS[$('f-cat').value]; const k = $('f-kind').value;
+    const t = (c.types.find(x => x[0] === k) || [])[2];
+    if (!t) return '';
+    const p = practiceName(), pl = placeText();
+    return (p ? p + ' · ' : '') + c.label + ': ' + t + (pl ? ' — ' + pl : '');
+  }
+  function whereChanged() {
+    const w = where();
+    for (const k of ['referral', 'ours', 'address', 'online']) $('where-' + k).hidden = w !== k;
+    if (w === 'online') $('f-teams').value = '1';
+    if (w === 'ours') loadLocations();
+    if (w === 'address') { $('f-place-label').value = $('f-venue').value.trim(); $('f-place-address').value = $('f-addr').value.trim(); }
+    if (w === 'referral') $('f-place-label').value = $('f-office-q').value.trim();
+    if (w !== 'referral') { $('f-office-id').value = $('f-npi').value = $('f-place').value = ''; $('office-note').textContent = ''; $('suggest').hidden = true; }
+    update();
+  }
+  // ---- our locations
+  let locPractice = null;
+  async function loadLocations() {
+    const pid = $('f-practice').value; if (!pid || pid === locPractice) return; locPractice = pid;
+    const r = await fetch('/calendar/lookup/locations?practice=' + pid).then(r => r.json()).catch(() => ({locations: []}));
+    const s = $('f-loc'); const cur = $('f-place-address').value;
+    s.innerHTML = '<option value="">Pick a location…</option>' + r.locations.map((l, i) => `<option value="${i}" ${l.address === cur ? 'selected' : ''}>${esc(l.address || l.label)}</option>`).join('')
+      + '<option value="other">Somewhere else (type the address)</option>';
+    s._locs = r.locations;
+    if (!r.locations.length) s.insertAdjacentHTML('afterbegin', '');
+  }
+  $('f-loc').addEventListener('change', e => {
+    const s = e.target;
+    if (s.value === 'other') { form.querySelector('input[name=where_kind][value=address]').checked = true; whereChanged(); return; }
+    const l = (s._locs || [])[+s.value];
+    $('f-place-label').value = l ? practiceName() : ''; $('f-place-address').value = l ? l.address : '';
+    update();
+  });
+  // ---- referring office search
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  let t1;
+  $('f-office-q').addEventListener('input', e => {
+    $('f-office-id').value = $('f-npi').value = $('f-place').value = ''; $('f-place-label').value = e.target.value.trim(); $('f-place-address').value = '';
+    $('office-note').textContent = ''; update();
+    clearTimeout(t1); const q = e.target.value.trim();
+    if (q.length < 2) { $('office-menu').hidden = true; return; }
+    t1 = setTimeout(async () => {
+      const r = await fetch('/calendar/lookup/offices?q=' + encodeURIComponent(q)).then(r => r.json()).catch(() => ({offices: []}));
+      const m = $('office-menu');
+      m.innerHTML = r.offices.map((o, i) => `<li><button type="button" data-i="${i}">${esc(o.label)}<small>${esc(o.address)}${o.note ? ' · ' + esc(o.note) : ''}</small></button></li>`).join('')
+        || '<li class="small muted" style="padding:.45rem .55rem">No match. Keep typing to use it as written.</li>';
+      m._o = r.offices; m.hidden = false;
+    }, 200);
+  });
+  $('office-menu').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const o = $('office-menu')._o[+b.dataset.i];
+    $('f-office-q').value = o.label; $('f-place-label').value = o.label; $('f-place-address').value = o.address;
+    $('f-office-id').value = o.office_id || ''; $('f-npi').value = o.npi_key || ''; $('f-place').value = o.place_id || '';
+    $('office-note').textContent = o.address + (o.note ? ' · ' + o.note : '');
+    $('office-menu').hidden = true; update(); contacts();
+  });
+  async function contacts() {
+    const q = new URLSearchParams({office_id: $('f-office-id').value, npi: $('f-npi').value, place: $('f-place').value});
+    if (![...q.values()].some(Boolean)) return;
+    const r = await fetch('/calendar/lookup/people?' + q).then(r => r.json()).catch(() => ({people: []}));
+    const s = $('suggest'); const have = emails();
+    const ppl = r.people.filter(p => !have.includes(p.email));
+    if (!ppl.length) { s.hidden = true; return; }
+    s.innerHTML = 'From earlier visits: ' + ppl.map((p, i) => `<button type="button" data-i="${i}">+ ${esc(p.name || p.email)}${p.role ? ' (' + esc(p.role) + ')' : ''}</button>`).join('');
+    s._p = ppl; s.hidden = false;
+  }
+  $('suggest').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return; addPerson($('suggest')._p[+b.dataset.i]); b.remove();
+    if (!$('suggest').querySelector('button')) $('suggest').hidden = true;
+  });
+  // ---- people
+  const emails = () => [...$('chips').querySelectorAll('.calf-chip')].map(c => c.dataset.email);
+  function addPerson(p) {
+    const em = (p.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(em) || emails().includes(em)) return false;
+    const chip = document.createElement('span'); chip.className = 'calf-chip'; chip.dataset.email = em;
+    chip.innerHTML = `${esc(p.name || em)}${p.name ? ' <small>' + esc(p.role || em) + '</small>' : ''}<button type="button" class="req r" title="Required or optional">R</button><button type="button" class="x" aria-label="Remove">×</button>`
+      + `<input type="hidden" name="person_name" value="${esc(p.name || '')}"><input type="hidden" name="person_email" value="${esc(em)}">`
+      + `<input type="hidden" name="person_required" value="1"><input type="hidden" name="person_source" value="${esc(p.source || '')}">`;
+    $('chips').insertBefore(chip, $('f-person')); update(); return true;
+  }
+  $('chips').addEventListener('click', e => {
+    const chip = e.target.closest('.calf-chip'); if (!chip) { if (e.target === $('chips')) $('f-person').focus(); return; }
+    if (e.target.classList.contains('x')) { chip.remove(); update(); }
+    if (e.target.classList.contains('req')) {
+      const req = !e.target.classList.contains('r'); e.target.classList.toggle('r', req); e.target.textContent = req ? 'R' : 'O';
+      chip.querySelector('input[name=person_required]').value = req ? '1' : '0'; update();
+    }
+  });
+  let t2;
+  $('f-person').addEventListener('input', e => {
+    clearTimeout(t2); const q = e.target.value.trim(); const m = $('people-menu');
+    if (q.length < 2) { m.hidden = true; return; }
+    t2 = setTimeout(async () => {
+      const r = await fetch('/calendar/lookup/people?q=' + encodeURIComponent(q)).then(r => r.json()).catch(() => ({people: []}));
+      const have = emails(); const ppl = r.people.filter(p => !have.includes(p.email));
+      const typed = /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(q) && !ppl.some(p => p.email === q.toLowerCase());
+      m.innerHTML = ppl.map((p, i) => `<li><button type="button" data-i="${i}">${esc(p.name || p.email)}<small>${esc(p.email)}${p.role ? ' · ' + esc(p.role) : ''}</small></button></li>`).join('')
+        + (typed ? `<li><button type="button" data-typed="1">Add ${esc(q)}</button></li>` : '');
+      m._p = ppl; m.hidden = !m.innerHTML;
+    }, 200);
+  });
+  $('people-menu').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.typed) addPerson({email: $('f-person').value}); else addPerson($('people-menu')._p[+b.dataset.i]);
+    $('f-person').value = ''; $('people-menu').hidden = true; $('f-person').focus();
+  });
+  $('f-person').addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const v = e.target.value.trim().replace(/,$/, '');
+      if (addPerson({email: v})) { e.target.value = ''; $('people-menu').hidden = true; }
+    } else if (e.key === 'Backspace' && !e.target.value) {
+      const last = [...$('chips').querySelectorAll('.calf-chip')].pop(); if (last) { last.remove(); update(); }
+    }
+  });
+  document.addEventListener('click', e => { if (!e.target.closest('.calf-field, .calf-chips')) { $('office-menu').hidden = true; $('people-menu').hidden = true; } });
+  // ---- subject
+  $('subj-edit').addEventListener('click', () => {
+    $('subj-view').hidden = true; const i = $('f-subject'); i.hidden = false; i.value = i.value || subject(); i.focus();
+    custom = true; $('f-subject-custom').value = '1';
+  });
+  $('f-subject').addEventListener('input', update);
+  // ---- free / busy
+  const fb = $('fb-check');
+  if (fb) fb.addEventListener('click', async () => {
+    const out = $('fb-out'); const d = $('f-date').value;
+    const s = $('f-allday').checked ? d + 'T00:00' : d + 'T' + $('f-start').value, en = $('f-allday').checked ? d + 'T23:59' : d + 'T' + $('f-end').value;
+    const ems = emails(); if (!ems.length) { out.textContent = 'Add people first.'; return; }
+    out.className = 'calf-fb'; out.textContent = 'Checking…';
+    const r = await fetch('/calendar/lookup/freebusy?' + new URLSearchParams({emails: ems.join(','), start: s, end: en})).then(r => r.json()).catch(() => ({ok: false, error: 'Couldn’t check.'}));
+    if (!r.ok) { out.className = 'calf-fb bad'; out.textContent = r.error; return; }
+    const busy = Object.entries(r.people).filter(([, v]) => v === 'busy').map(([k]) => nameOf(k));
+    const unk = Object.entries(r.people).filter(([, v]) => v === 'unknown').length;
+    out.className = 'calf-fb ' + (busy.length ? 'bad' : 'ok');
+    out.textContent = busy.length ? '✕ Busy then: ' + busy.join(', ') : '✓ Everyone we can see is free' + (unk ? ` (${unk} outside MCDP not checked)` : '');
+  });
+  const nameOf = em => { const c = $('chips').querySelector(`.calf-chip[data-email="${CSS.escape(em)}"] input[name=person_name]`); return (c && c.value) || em; };
+  // ---- when
+  function allDay() {
+    const on = $('f-allday').checked;
+    document.querySelectorAll('.t-only').forEach(x => x.hidden = on);
+    document.querySelector('.d-day').hidden = !on;
+    if (on && !$('f-end-date').value) $('f-end-date').value = $('f-date').value;
+  }
+  $('f-allday').addEventListener('change', () => { allDay(); update(); });
+  $('f-repeat').addEventListener('change', e => { $('until-wrap').hidden = !e.target.value; });
+  $('f-start').addEventListener('change', e => {
+    // keep the same length when the start moves
+    const s0 = $('f-start').dataset.prev || e.target.value, en = $('f-end').value;
+    if (s0 && en) {
+      const mins = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+      const len = Math.max(15, mins(en) - mins(s0)), ns = mins(e.target.value) + len;
+      if (ns < 24 * 60) $('f-end').value = String(Math.floor(ns / 60)).padStart(2, '0') + ':' + String(ns % 60).padStart(2, '0');
+    }
+    $('f-start').dataset.prev = e.target.value; update();
+  });
+  $('f-start').dataset.prev = $('f-start').value;
+  $('f-date').addEventListener('change', () => { if ($('f-allday').checked && $('f-end-date').value < $('f-date').value) $('f-end-date').value = $('f-date').value; update(); });
+  ['f-end', 'f-end-date', 'f-details', 'f-extra', 'f-cost'].forEach(id => $(id).addEventListener('input', update));
+  ['f-venue', 'f-addr'].forEach(id => $(id).addEventListener('input', () => { $('f-place-label').value = $('f-venue').value.trim(); $('f-place-address').value = $('f-addr').value.trim(); update(); }));
+  // ---- preview
+  const clock = t => { if (!t) return ''; let h = +t.slice(0, 2); const m = t.slice(3, 5); return `${h % 12 || 12}:${m} ${h < 12 ? 'AM' : 'PM'}`; };
+  function update() {
+    const auto = subject();
+    if (!custom) { $('f-subject').value = auto; $('subj-text').textContent = auto || 'Pick a practice, category and type'; }
+    $('pv-subject').textContent = (custom ? $('f-subject').value : auto) || '—';
+    const d = $('f-date').value;
+    let when = '—';
+    if (d) {
+      const dt = new Date(d + 'T12:00');
+      when = dt.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'});
+      when += $('f-allday').checked ? ' · all day' : ` · ${clock($('f-start').value)}–${clock($('f-end').value)}`;
+    }
+    $('pv-when').textContent = when;
+    const w = where();
+    $('pv-where').textContent = w === 'online' ? 'Microsoft Teams meeting' : [$('f-place-label').value, $('f-place-address').value].filter(Boolean).join(', ') || '—';
+    const chips = [...$('chips').querySelectorAll('.calf-chip')];
+    const nm = c => c.querySelector('input[name=person_name]').value || c.dataset.email;
+    $('pv-req').textContent = chips.filter(c => c.querySelector('input[name=person_required]').value === '1').map(nm).join(', ') || '—';
+    $('pv-opt').textContent = chips.filter(c => c.querySelector('input[name=person_required]').value === '0').map(nm).join(', ') || '—';
+    const c = CATS[$('f-cat').value];
+    const extra = $('f-extra').value.trim();
+    $('pv-note').textContent = [extra ? c.extra + ': ' + extra : '', $('f-details').value.trim(), 'Scheduled from MCDP Hub'].filter(Boolean).join('\n\n');
+    $('send-btn').textContent = {{ 'true' if ev.ms_id else 'false' }} ? 'Save and send update' : (chips.length ? 'Send invite' : 'Save (no one invited)');
+  }
+  $('f-practice').addEventListener('change', () => { locPractice = null; if (where() === 'ours') { $('f-place-label').value = ''; $('f-place-address').value = ''; loadLocations(); } update(); });
+  $('f-cat').addEventListener('change', catChanged);
+  $('f-kind').addEventListener('change', update);
+  form.querySelectorAll('input[name=where_kind]').forEach(r => r.addEventListener('change', whereChanged));
+  form.querySelectorAll('button[data-action]').forEach(b => b.addEventListener('click', () => { $('f-action').value = b.dataset.action; }));
+  form.addEventListener('submit', e => {
+    const p = $('f-person').value.trim(); if (p) addPerson({email: p});
+    if (!$('f-practice').value || !$('f-kind').value) {
+      e.preventDefault(); $('form-err').hidden = false; $('form-err').scrollIntoView({block: 'center'});
+      setTimeout(() => { form.querySelectorAll('button[disabled]').forEach(b => b.disabled = false); update(); }, 0);
+    }
+  });
+  // start
+  if (!$('f-kind').value) $('f-kind').selectedIndex = 0;
+  details(); allDay();
+  for (const k of ['referral', 'ours', 'address', 'online']) $('where-' + k).hidden = where() !== k;
+  if (where() === 'ours') loadLocations();
+  if (custom) { $('subj-view').hidden = true; $('f-subject').hidden = false; }
+  if (where() === 'referral') contacts();
+  update();
+})();
+</script>
+{% endblock %}

@@ -24,6 +24,7 @@
   <input type="hidden" name="office_lat" value="{{ o.lat if o.lat is not none and not o.place_id else '' }}">
   <input type="hidden" name="office_lng" value="{{ o.lng if o.lng is not none and not o.place_id else '' }}">
   <input type="hidden" name="practice_required" value="1">
+  {% if pre %}<input type="hidden" name="event_id" value="{{ pre.event_id }}">{% endif %}
 
   <label class="visit-practice">Visiting for <span class="muted small">(whose reports and Salesforce data this visit goes to)</span>
     <select name="practice_id" required>
@@ -47,14 +48,16 @@
 
   <fieldset class="people-met" id="people-met">
     <legend>Who you met</legend>
+    {% for pp in (pre.people if pre and pre.people else [{}]) %}
     <div class="person">
-      <label>Name<input name="person_name" maxlength="120" placeholder="Name" autocomplete="off"></label>
-      <label>Email<input name="person_email" type="email" maxlength="160" placeholder="Optional" autocomplete="off" inputmode="email"></label>
+      <label>Name<input name="person_name" maxlength="120" placeholder="Name" autocomplete="off" value="{{ pp.name or '' }}"></label>
+      <label>Email<input name="person_email" type="email" maxlength="160" placeholder="Optional" autocomplete="off" inputmode="email" value="{{ pp.email or '' }}"></label>
       <label>Role
-        <select name="person_role"><option value="">Choose…</option>{% for r in roles %}<option>{{ r }}</option>{% endfor %}</select>
+        <select name="person_role"><option value="">Choose…</option>{% for r in roles %}<option {% if pp.role == r %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
       </label>
-      <button type="button" class="person-remove linklike small" aria-label="Remove this person" hidden>Remove</button>
+      <button type="button" class="person-remove linklike small" aria-label="Remove this person" {% if not (pre and pre.people and pre.people|length > 1) %}hidden{% endif %}>Remove</button>
     </div>
+    {% endfor %}
     <button type="button" class="chip" id="add-person">+ Add another person</button>
   </fieldset>
 
@@ -66,7 +69,7 @@
   </fieldset>
 
   <label>What you dropped off
-    <input name="dropped" id="dropped" maxlength="300" placeholder="e.g. Lunch for 8, referral pads" autocomplete="off">
+    <input name="dropped" id="dropped" maxlength="300" placeholder="e.g. Lunch for 8, referral pads" autocomplete="off" value="{{ pre.dropped if pre else '' }}">
   </label>
   <div class="chips" aria-label="Quick add">{% for c in chips %}<button type="button" class="chip" data-chip="{{ c }}">+ {{ c }}</button>{% endfor %}</div>
 
@@ -77,7 +80,7 @@
     </label>
     <img id="receipt-thumb" alt="Receipt" hidden>
     <label class="cost">Cost
-      <span class="money-in"><span aria-hidden="true">$</span><input name="cost" id="cost" inputmode="decimal" placeholder="0.00" autocomplete="off"></span>
+      <span class="money-in"><span aria-hidden="true">$</span><input name="cost" id="cost" inputmode="decimal" placeholder="0.00" autocomplete="off" value="{{ '%.2f'|format(pre.cost) if pre and pre.cost else '' }}"></span>
     </label>
   </div>
   <p class="small muted" id="receipt-status" aria-live="polite">{% if ai_on %}Snap the receipt and the amount fills in; check it before saving.{% else %}Snap the receipt to keep it with the visit, and type the amount.{% endif %}</p>
@@ -140,6 +143,7 @@
     if (box.querySelectorAll(".person").length >= {{ max_people }}) return;
     const row = first.cloneNode(true);
     row.querySelectorAll("input").forEach(i => i.value = "");
+    row.querySelector(".person-remove").hidden = false;
     row.querySelector("select").selectedIndex = 0;
     box.insertBefore(row, $("add-person"));
     syncRemove();

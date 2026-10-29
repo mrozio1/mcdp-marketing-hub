@@ -484,3 +484,11 @@ Tests: `cd ads && ADS_DISABLE_SCHEDULER=1 python -m pytest tests` (includes a mo
 ### Which practice a visit is for
 
 Log a visit starts with a **Visiting for** dropdown. It is filled in from the last visit to that office, then from the practice of our nearest office, then from the agent's last pick, and it must be set before saving. The chosen practice decides the visit's budget, the Field page and report figures, and goes into the Salesforce Task subject ("Field visit for Heights Orthodontics: Maple Street Family Dental") and description. Visits logged before this existed keep using the nearest office's practice.
+
+## Calendar (Outlook invites)
+
+The **Calendar** tab shows events by month, week or list, with field follow-up dates next to them. **New event** builds the subject from three picks (Practice → Category → Type, e.g. "Heights Orthodontics · Referral Visit: Cookie drop-off — Maple Street Family Dental"), plus where, when, who's invited (required or optional), reminder, Teams link, category details (what you're bringing and estimated cost, shot list, agenda…), notes and an attachment.
+
+Invites are sent through Microsoft 365 from a shared mailbox (set on Connections, e.g. `marketing-events@…`), so that mailbox is the organizer and gets the replies; the Calendar shows each person's reply, checked every 20 minutes. Editing sends an update and cancelling sends a cancellation. **Log this visit** on a referral or office visit opens the Field form already filled in (practice, office, people, what was dropped off, cost), and the visit then goes to Salesforce as usual. Editors, and anyone with field visits switched on, can schedule; viewers can look.
+
+Setup (once, by an admin): register an app in Entra ID with the redirect `https://<hub>/microsoft/callback` and the delegated Graph permissions Calendars.ReadWrite, Calendars.ReadWrite.Shared, User.Read, User.ReadBasic.All, offline_access, openid, profile and email; create a client secret; make the person who signs in a member (Full Access and Send As) of the send-from shared mailbox. Then paste the tenant ID, client ID and secret on **Connections → Microsoft 365** and sign in. Until it's connected, events are saved in the hub without invites.

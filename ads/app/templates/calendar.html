@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Calendar{% endblock %}
+{% block mainclass %}wrap cal-wrap{% endblock %}
+{% macro link(view=None, d=None, event=None, day=None, practice=None, category=None, mine=None, fu=None) -%}
+/calendar?{{ {'view': view or qs.view, 'd': d or qs.d, 'practice': qs.practice if practice is none else practice,
+  'category': qs.category if category is none else category, 'mine': qs.mine if mine is none else mine,
+  'fu': qs.fu if fu is none else fu, 'event': event or '', 'day': day or ''}|urlencode }}
+{%- endmacro %}
+{% macro chip(i) -%}
+{% if i.kind == 'followup' %}<a class="cal-ev fu" style="--c: {{ i.color }}" href="/field/log?office={{ i.office_id }}&back=/calendar" title="{{ i.title }} · logged by {{ i.who }}">{{ i.title }}</a>
+{%- else %}<a class="cal-ev{% if sel and sel.id == i.id %} sel{% endif %}{% if i.cancelled %} cancelled{% endif %}{% if i.status in ('saved', 'error') %} unsent{% endif %}" style="--c: {{ i.color }}" href="{{ link(event=i.id, day=i.day.isoformat()) }}" title="{{ i.title }}">{% if i.time %}<b>{{ i.time|hm }}</b> {% endif %}{{ i.short }}</a>{% endif %}
+{%- endmacro %}
+{% block content %}
+{% if can_schedule %}<a class="cal-fab m-only" href="/calendar/new?date={{ picked_day.isoformat() }}" aria-label="New event">+</a>{% endif %}
+<div class="cal-head">
+  <h1>Calendar</h1>
+  <div class="cal-tools">
+    <div class="cal-nav"><a href="{{ link(d=prev_d.isoformat()) }}" aria-label="Earlier">‹</a> {{ title }} <a href="{{ link(d=next_d.isoformat()) }}" aria-label="Later">›</a></div>
+    <a class="btn btn-quiet btn-small" href="{{ link(d=today.isoformat(), day=today.isoformat()) }}">Today</a>
+    <nav class="cal-seg" aria-label="View">
+      {% for k, l in [('month', 'Month'), ('week', 'Week'), ('list', 'List')] %}<a href="{{ link(view=k) }}" {% if view == k %}aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}
+    </nav>
+    {% if can_schedule %}<a class="btn d-only" href="/calendar/new?date={{ (picked_day if picked_day >= today else today).isoformat() }}{% if pid %}&practice={{ pid }}{% endif %}">+ New event</a>{% endif %}
+  </div>
+</div>
+
+<form class="cal-filters" method="get" action="/calendar">
+  <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="d" value="{{ focus.isoformat() }}">
+  <label>Practice<select name="practice" onchange="this.form.submit()"><option value="">All practices</option>
+    {% for p in practices %}<option value="{{ p.id }}" {% if pid == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
+  <details class="cal-filter-more m-only"><summary>More filters{% if category or mine or not fu %} · on{% endif %}</summary></details>
+  <label class="cal-more-f">Category<select name="category" onchange="this.form.submit()"><option value="">All categories</option>
+    {% for c in cats %}<option value="{{ c.key }}" {% if category == c.key %}selected{% endif %}>{{ c.label }}</option>{% endfor %}</select></label>
+  <label class="cal-more-f">People<select name="mine" onchange="this.form.submit()"><option value="">Everyone</option><option value="1" {% if mine %}selected{% endif %}>Just my events</option></select></label>
+  <input type="hidden" name="fu" value="0">
+  <label class="cal-check cal-more-f"><input type="checkbox" name="fu" value="1" {% if fu %}checked{% endif %} onchange="this.form.submit()"> Field follow-ups</label>
+  <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+  <span class="small muted cal-note d-only">{% if ms_on %}Invites go out from {{ ms_mailbox or 'Outlook' }}{% elif is_admin %}<a href="/connections#microsoft">Connect Microsoft 365</a> to send invites{% else %}Saved in the hub; Outlook invites aren't switched on yet{% endif %}</span>
+</form>
+
+<div class="cal-layout">
+  <div>
+  {% if view == 'list' %}
+    {% set days = by_day.keys()|list|sort %}
+    {% for d in days %}
+      <h3 class="cal-list-day">{{ d.strftime('%A, %B') }} {{ d.day }}{% if d == today %} <span class="muted small">today</span>{% endif %}</h3>
+      <ul class="cal-agenda big">
+        {% for i in by_day[d] %}
+        <li style="--c: {{ i.color }}"><span class="when">{{ i.time|clock if i.time else ('all day' if i.kind == 'event' else '') }}{% if i.end_time and i.time %}<br>{{ i.end_time|clock }}{% endif %}</span>
+          <span>{% if i.kind == 'followup' %}<a href="/field/log?office={{ i.office_id }}&back=/calendar">{{ i.title }}</a> <span class="muted">· {{ i.who }}</span>
+          {% else %}<a href="{{ link(event=i.id, day=d.isoformat()) }}"{% if i.cancelled %} style="text-decoration: line-through"{% endif %}><b>{{ i.title }}</b></a>{% if i.people %}<br><span class="muted small">{{ i.people }} invited{% if i.accepted %} · {{ i.accepted }} accepted{% endif %}</span>{% endif %}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty">Nothing on the calendar in the next two months{% if pid or category or mine %} for this filter{% endif %}.</p>
+    {% endfor %}
+  {% else %}
+    <div class="cal-grid {{ 'cal-month' if view == 'month' else 'cal-week' }}">
+      {% for d in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] %}<div class="cal-dow">{{ d }}</div>{% endfor %}
+      {% for week in weeks %}{% for d in week %}
+        {% set evs = by_day.get(d, []) %}
+        <div class="cal-day{% if view == 'month' and d.month != focus.month %} out{% endif %}{% if d == today %} today{% endif %}{% if d == picked_day %} picked{% endif %}">
+          <a class="cal-dn" href="{{ link(day=d.isoformat()) }}">{% if view == 'week' %}<span class="m-only">{{ d.strftime('%a') }} </span>{% endif %}{{ d.day }}</a>
+          {% set cap = 3 if view == 'month' else 30 %}
+          {% for i in evs[:cap] %}{{ chip(i) }}{% endfor %}
+          {% if evs|length > cap %}<a class="cal-more" href="{{ link(view='list', d=d.isoformat()) }}">+{{ evs|length - cap }} more</a>{% endif %}
+          {% if view == 'month' %}<span class="cal-dots">{% for i in evs[:4] %}<i style="--c: {{ i.color }}"></i>{% endfor %}</span>{% endif %}
+        </div>
+      {% endfor %}{% endfor %}
+    </div>
+    {% if view == 'month' %}
+    <section class="m-only cal-dayagenda">
+      <h2>{{ picked_day.strftime('%a, %b') }} {{ picked_day.day }}</h2>
+      {% set evs = by_day.get(picked_day, []) %}
+      {% if evs %}
+      <ul class="cal-agenda big">
+        {% for i in evs %}
+        <li style="--c: {{ i.color }}"><span class="when">{{ i.time|clock if i.time else ('all day' if i.kind == 'event' else '') }}{% if i.end_time and i.time %}<br>{{ i.end_time|clock }}{% endif %}</span>
+          <span>{% if i.kind == 'followup' %}<a href="/field/log?office={{ i.office_id }}&back=/calendar">{{ i.title }}</a>
+          {% else %}<a href="{{ link(event=i.id, day=picked_day.isoformat()) }}"><b>{{ i.short }}</b></a><br><span class="muted small">{{ i.practice }}{% if i.people %} · {{ i.people }} invited{% if i.accepted %} · {{ i.accepted }} accepted{% endif %}{% endif %}</span>{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="muted">Nothing that day.{% if can_schedule %} <a href="/calendar/new?date={{ picked_day.isoformat() }}">Add an event</a>{% endif %}</p>{% endif %}
+    </section>
+    {% endif %}
+  {% endif %}
+  </div>
+
+  <aside class="cal-side">
+    {% if sel %}
+    <section class="cal-card" id="event" style="--c: {{ sel.color }}">
+      {% if not sel.show %}
+        <p class="cal-kicker">Private</p><h2>Busy</h2><p class="small muted">{{ sel.when_text }}. Only the people invited can see the details.</p>
+      {% else %}
+      <p class="cal-kicker">{{ sel.category_label }} · {{ sel.type_label }}</p>
+      <h2{% if sel.status == 'cancelled' %} style="text-decoration: line-through"{% endif %}>{{ sel.subject }}</h2>
+      {% if sel.status == 'cancelled' %}<p class="cal-status bad">Cancelled{% if sel.ms_id %}; Outlook told everyone invited{% endif %}.</p>
+      {% elif sel.status == 'error' %}<p class="cal-status bad">Not sent to Outlook: {{ sel.ms_error }}</p>
+      {% elif sel.status == 'saved' %}<p class="cal-status">Saved in the hub only; no invite sent{% if sel.ms_error and not ms_on %} (Microsoft 365 isn't connected){% endif %}.</p>{% endif %}
+      <dl class="cal-dl">
+        <dt>When</dt><dd>{{ sel.when_text }}{% if sel.repeat_text %}<br><span class="muted">{{ sel.repeat_text }}</span>{% endif %}</dd>
+        {% if sel.place_label or sel.place_address or sel.teams %}<dt>Where</dt><dd>{{ sel.place_label }}{% if sel.place_address %}<br><span class="muted">{{ sel.place_address }}</span>{% endif %}{% if sel.teams %}{% if sel.place_label %}<br>{% endif %}Teams meeting{% endif %}</dd>{% endif %}
+        <dt>Practice</dt><dd>{{ sel.practice_name or '—' }}</dd>
+        <dt>Organizer</dt><dd>{{ ms_mailbox if sel.ms_id and ms_mailbox else sel.created_name or '—' }}{% if sel.ms_id and sel.created_name %}<br><span class="muted small">set up by {{ sel.created_name }}</span>{% endif %}</dd>
+        {% if sel.extra %}<dt>{{ sel.extra_label.split(' / ')[0].replace("What you're bringing or covering", 'Bringing').replace("What you're bringing", 'Bringing') }}</dt><dd>{{ sel.extra }}{% if sel.cost %} · est. {{ sel.cost|money }}{% endif %}</dd>
+        {% elif sel.cost %}<dt>Est. cost</dt><dd>{{ sel.cost|money }}</dd>{% endif %}
+        {% if sel.attachment_name %}<dt>Attached</dt><dd>{{ sel.attachment_name }}</dd>{% endif %}
+      </dl>
+      {% if sel.details %}<p class="small" style="white-space: pre-line">{{ sel.details }}</p>{% endif %}
+      {% if sel.people %}
+      <p class="small" style="margin: .4rem 0 0; font-weight: 600">Invited ({{ sel.people|length }})</p>
+      <ul class="cal-ppl">
+        {% for p in sel.people %}<li><span>{{ p.name or p.email }}{% if p.name %} <span class="muted small">{{ p.email }}</span>{% endif %}{% if not p.required %} <span class="muted small">· optional</span>{% endif %}</span>
+          {% if sel.ms_id %}<span class="cal-rsvp {{ p.response_cls }}">{{ p.response_label }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% if sel.ms_id and sel.rsvp_at %}<p class="small muted">Replies checked {{ sel.rsvp_at.replace('T', ' ')[11:16] }}.</p>{% endif %}
+      {% endif %}
+      <div class="cal-btns">
+        {% if can_log and sel.category in ('referral', 'office') and sel.status != 'cancelled' %}
+          {% set off = ('office=' ~ sel.office_id) if sel.office_id else ('npi=' ~ sel.npi_key) if sel.npi_key else ('place=' ~ sel.place_id) if sel.place_id else '' %}
+          {% if off %}<a class="btn btn-small" href="/field/log?{{ off }}&practice={{ sel.practice_id }}&event={{ sel.id }}&back={{ '/calendar?event=' ~ sel.id|string }}">{{ 'Logged ✓' if sel.visit_id else 'Log this visit' }}</a>{% endif %}
+        {% endif %}
+        {% if sel.can_change and sel.status != 'cancelled' %}<a class="btn btn-quiet btn-small" href="/calendar/{{ sel.id }}/edit">Edit</a>{% endif %}
+        {% if sel.ms_link %}<a class="btn btn-quiet btn-small" href="{{ sel.ms_link }}" target="_blank" rel="noopener">Open in Outlook</a>{% endif %}
+        {% if sel.can_change and sel.status == 'error' %}<form method="post" action="/calendar/{{ sel.id }}/retry" data-busy="Sending…"><button class="btn btn-small" type="submit">Try again</button></form>{% endif %}
+      </div>
+      {% if sel.can_change %}
+      <div class="cal-btns" style="margin-top: .6rem">
+        {% if sel.status != 'cancelled' and sel.ms_id %}
+        <form method="post" action="/calendar/{{ sel.id }}/cancel" data-confirm="Cancel this event? Everyone invited gets a cancellation from Outlook."><button class="linklike danger small" type="submit">Cancel event</button></form>
+        {% else %}
+        <form method="post" action="/calendar/{{ sel.id }}/delete" data-confirm="Remove this event from the calendar?"><button class="linklike danger small" type="submit">Remove</button></form>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if can_log and sel.log_reminder and sel.category in ('referral', 'office') and not sel.visit_id %}<p class="small muted" style="margin: .6rem 0 0">After it's done, “Log this visit” opens the Field form filled in with the practice, office and people, then goes to Salesforce.</p>{% endif %}
+      {% endif %}
+    </section>
+    {% endif %}
+    <section class="cal-card">
+      <h2>Coming up</h2>
+      {% if upcoming %}
+      <ul class="cal-agenda">
+        {% for i in upcoming %}<li style="--c: {{ i.color }}"><span class="when">{{ i.day.strftime('%a') }} {{ i.day.day }}<br>{{ i.time|clock if i.time else 'all day' }}</span><a href="{{ link(event=i.id, d=i.day.isoformat(), day=i.day.isoformat()) }}">{{ i.short }}{% if i.practice %} <span class="muted">· {{ i.practice }}</span>{% endif %}</a></li>{% endfor %}
+      </ul>
+      {% else %}<p class="small muted">Nothing scheduled yet.{% if can_schedule %} <a href="/calendar/new">Add the first event</a>.{% endif %}</p>{% endif %}
+    </section>
+    <section class="cal-card cal-legend-card">
+      <h2>Key</h2>
+      <div class="cal-legend">
+        {% for c in cats %}<span style="--c: {{ c.color }}">{{ c.label }}{% if c.hint %} <span class="muted">({{ c.hint }})</span>{% endif %}</span>{% endfor %}
+        <p class="small muted" style="margin: .3rem 0 0">Dashed = a follow-up date from a logged field visit. Pale = saved in the hub, no invite sent.</p>
+      </div>
+    </section>
+  </aside>
+</div>
+<script>
+  // Mobile: "More filters" shows the rest of the filters.
+  (() => {
+    const more = document.querySelector('.cal-filter-more');
+    if (!more) return;
+    const extra = [...document.querySelectorAll('.cal-more-f')];
+    const sync = () => { if (matchMedia('(max-width: 700px)').matches) extra.forEach(e => e.style.display = more.open ? '' : 'none'); else extra.forEach(e => e.style.display = ''); };
+    more.addEventListener('toggle', sync); addEventListener('resize', sync); sync();
+  })();
+  // An event opened from the grid scrolls into view on phones.
+  if (location.search.includes('event=') && matchMedia('(max-width: 900px)').matches) document.getElementById('event')?.scrollIntoView({block: 'start'});
+</script>
+{% endblock %}
