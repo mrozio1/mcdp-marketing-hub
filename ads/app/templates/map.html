@@ -34,6 +34,8 @@
       <label><input type="checkbox" data-layer="referrer" checked><span class="dot dot-referrer"></span> {{ layers.referrer }} <span class="muted" data-count="referrer"></span></label>
       <label class="sub"><input type="checkbox" data-only-ortho><span class="dot dot-referrer dot-ortho"></span> Only those that also come up for “orthodontist” <span class="muted" data-count="ortho"></span></label>
       <label><input type="checkbox" data-layer="competitor" checked><span class="dot dot-competitor"></span> {{ layers.competitor }} <span class="muted" data-count="competitor"></span></label>
+      <label><input type="checkbox" data-layer="school_private"><span class="dot dot-school_private"></span> Private schools <span class="muted" data-count="school_private"></span></label>
+      <label><input type="checkbox" data-layer="school_charter"><span class="dot dot-school_charter"></span> Charter schools <span class="muted" data-count="school_charter"></span></label>
       <label><input type="checkbox" data-gone><span class="dot dot-gone"></span> No longer listed on Google <span class="muted" data-count="gone"></span></label>
       <label><input type="checkbox" data-only-new><span class="dot dot-new"></span> Only new since the last refresh <span class="muted" data-count="new"></span></label>
       <label><input type="checkbox" data-circles checked> {{ radius|round(0)|int }}-mile rings</label>
@@ -50,6 +52,9 @@
   <div id="map" class="map-canvas" role="region" aria-label="Map of offices, dental practices and orthodontists"></div>
   <p class="rating-key small"><span class="muted">Ring colour = relationship from the last visit:</span>
     <span class="rk rk-cold">Cold</span> <span class="rk rk-warm">Warm</span> <span class="rk rk-hot">Hot</span> <span class="rk rk-referring">Referring</span> <span class="rk rk-due">Follow-up due</span></p>
+  <p class="small muted map-foot" id="schools">Schools: {% if school_status.busy %}fetching from NCES now…{% elif school_status.error %}<span class="danger">{{ school_status.error }}</span>{% elif school_status.at %}{{ school_status.private }} private and {{ school_status.charter }} charter within {{ radius|round(0)|int }} mi, from the U.S. Department of Education (NCES), checked {{ school_status.at[:10] }}; refreshed monthly.{% else %}not fetched yet.{% endif %}
+    {% if can_edit %}<form method="post" action="/map/schools/refresh" style="display:inline" data-busy="Starting…"><button class="linklike small" type="submit">{{ 'Fetch schools' if not school_status.at else 'Refresh schools' }}</button></form>{% endif %}
+    {% if school_status.at %} · <a href="/map/schools.xlsx">Download the school list</a>{% endif %}</p>
   <p class="small muted map-foot">{% if not offices and not can_edit %}No offices yet.{% elif not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>
 </section>
@@ -226,6 +231,7 @@
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const LABEL = {{ layers|tojson }};
   const CAN_LOG = {{ 'true' if can_log else 'false' }};
+  const CAN_SCHEDULE = {{ 'true' if (can_log or can_edit) else 'false' }};
   const RATING = { cold: "Cold", warm: "Warm", hot: "Hot", referring: "Referring" };
 
   // ---- add-office search box ----
@@ -364,6 +370,26 @@
     markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, isNew: p.new, gone: !!p.gone,
                    visited: !!v, due: !!(v && v.due && v.due <= TODAY) });
   }
+  // Private and charter schools (NCES data; everything on the card is ours, not Google's).
+  for (const sc of data.schools || []) {
+    const m = new AdvancedMarkerElement({ position: { lat: sc.lat, lng: sc.lng }, content: dot(sc.layer), title: sc.name, zIndex: 200 });
+    m.addListener("gmp-click", () => {
+      const wrap = el("div", "pin-card");
+      wrap.append(el("p", "pin-layer", sc.layer === "school_private" ? "Private school" : "Charter school"), el("h4", null, sc.name));
+      if (sc.addr) wrap.append(el("p", "small", sc.addr));
+      const facts = [sc.grades ? `Grades ${sc.grades}` : "", sc.enr ? `${sc.enr.toLocaleString()} students` : ""].filter(Boolean).join(" · ");
+      if (facts) wrap.append(el("p", "small", facts));
+      wrap.append(el("p", "muted small", `${sc.mi} mi from ${offName[sc.office] || "our nearest office"}`));
+      const row = el("p", "pin-actions");
+      const b = el("button", "btn btn-small btn-quiet", route.some(s => s.id === sc.k) ? "In route ✓" : "Add to route");
+      b.type = "button"; b.onclick = () => { liveNames[sc.k] = sc.name; addStop({ id: sc.k, name: sc.name, lat: sc.lat, lng: sc.lng }); b.textContent = "In route ✓"; };
+      row.append(b);
+      if (CAN_SCHEDULE) { const a = el("a", "btn btn-small btn-quiet", "Plan an event"); a.href = "/calendar/new?category=event"; row.append(a); }
+      wrap.append(row);
+      info.setContent(wrap); info.open({ map, anchor: m });
+    });
+    markers.push({ m, layer: sc.layer, office: sc.office, ortho: false, isNew: false, gone: false, school: true });
+  }
   // Offices we've visited that aren't Google pins (from the NPI list, or added on the spot).
   for (const x of data.visited_offices) {
     const m = new AdvancedMarkerElement({ position: { lat: x.lat, lng: x.lng }, content: dot("referrer", false, false, false, x), zIndex: 150 });
@@ -394,15 +420,15 @@
   function apply(fit) {
     const on = new Set(ui.layers.filter(i => i.checked).map(i => i.dataset.layer));
     const off = ui.office.value ? Number(ui.office.value) : null;
-    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, new: 0, gone: 0, visited: 0, due: 0 };
+    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, new: 0, gone: 0, visited: 0, due: 0, school_private: 0, school_charter: 0 };
     const bounds = new google.maps.LatLngBounds();
     for (const x of markers) {
       const inOffice = off === null || x.office === off || (x.extra && off !== null);
       const show = inOffice && (x.gone ? ui.gone.checked : on.has(x.layer))
-        && !(ui.onlyVisited.checked && !x.visited && x.layer !== "ours")
-        && !(ui.onlyDue.checked && !x.due && x.layer !== "ours")
+        && !(ui.onlyVisited.checked && !x.visited && x.layer !== "ours" && !x.school)
+        && !(ui.onlyDue.checked && !x.due && x.layer !== "ours" && !x.school)
         && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho)
-        && !(ui.onlyNew.checked && !x.isNew && x.layer !== "ours" || ui.onlyNew.checked && x.gone);
+        && !(ui.onlyNew.checked && !x.isNew && x.layer !== "ours" && !x.school || ui.onlyNew.checked && x.gone);
       x.m.map = show ? map : null;
       if (inOffice) {
         if (x.gone) counts.gone++;

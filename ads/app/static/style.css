@@ -1202,3 +1202,5 @@ details.tool > summary { cursor: pointer; }
 .sz-sw { font: inherit; font-size: .88rem; border: 0; background: var(--paper); color: var(--ink-soft); padding: .35rem .95rem; cursor: pointer; min-height: 0; }
 .sz-sw.on { background: var(--teal); color: #fff; font-weight: 600; }
 @media (max-width: 760px) { .sz-grid { grid-template-columns: minmax(0, 1fr); } .sz-dates td { white-space: normal; } }
+.dot-school_private, .pin-school_private { background: #7A4E9C; width: 11px; height: 11px; border-radius: 3px; }
+.dot-school_charter, .pin-school_charter { background: #C27C0E; width: 11px; height: 11px; border-radius: 3px; }

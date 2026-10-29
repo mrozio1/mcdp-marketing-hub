@@ -496,3 +496,7 @@ Setup (once, by an admin): register an app in Entra ID with the redirect `https:
 ## Seasonal look
 
 Admins pick it on **Team → Seasonal look**: Automatic (by date), one theme, or off. Ten themes: New Year, Valentine's Day, St. Patrick's Day, Spring, Summer, 4th of July, Back to School, Halloween, Thanksgiving and Christmas. Each has a little cursor buddy (ghost, turkey, snowman, heart, bunny, a tooth with braces…), something falling or floating (leaves, snow, confetti, hearts, petals, bubbles, fireworks, pencils) and, for some, an edge decoration (spiderwebs, string lights, bunting). Each piece can be switched off, the dates are editable (month-day; `thanksgiving` means the fourth Thursday of November), and overlapping seasons show the shorter one. **Preview** shows a look just for you. People can turn it off for themselves on their Account page. It never takes clicks, isn't printed, rests in a corner on phones and stays still for reduced-motion settings.
+
+## Schools on the Map
+
+The Map has **Private schools** and **Charter schools** toggles: every school within the Map radius of our offices, from the U.S. Department of Education's NCES data (Private School Universe Survey; Common Core of Data, charter flag), fetched by the hub itself and refreshed monthly. Closed and online-only schools are left out. Click a pin for the address, grades, students and distance; add it to a route; download the list as Excel from under the map. **Refresh schools** under the map fetches them straight away (first time, after adding offices).

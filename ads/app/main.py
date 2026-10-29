@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, scope, seasons, sync, users
+from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -155,6 +155,7 @@ def _startup():
     places.init()
     places.purge_old()
     referrals.init()
+    schools.init()
     field.init()
     salesforce.init()
     cal.init()
@@ -170,6 +171,7 @@ def _startup():
         reviews.start_scheduler()
         places.start_scheduler()
         referrals.start_scheduler()
+        schools.start_scheduler()
         salesforce.start_scheduler(PUBLIC_URL)
         cal.start_scheduler()
 
@@ -2055,7 +2057,30 @@ def market_map(request: Request):
                 radius=places.radius(), brands=db.get_setting("map_brand_terms") or "",
                 max_requests=places.max_requests(), per_office=places.per_office(), layers=places.LAYERS,
                 last=db.get_setting("map_last_refresh"), prev=db.get_setting("map_prev_refresh"),
-                preview=_import_preview())
+                preview=_import_preview(), school_status=schools.status(), school_kinds=schools.KINDS)
+
+
+@app.post("/map/schools/refresh")
+def map_schools_refresh(request: Request):
+    if (r := guard(request)):
+        return r
+    if schools.status().get("busy"):
+        flash(request, "Schools are already being fetched; refresh the page in a minute.")
+    elif not [o for o in places.offices() if o.get("lat") is not None]:
+        flash(request, "Add our offices to the Map first.", "error")
+    else:
+        schools.refresh_in_background()
+        flash(request, "Fetching private and charter schools from NCES in the background. Refresh the page in a minute or two.")
+    return RedirectResponse("/map#schools", status_code=303)
+
+
+@app.get("/map/schools.xlsx")
+def map_schools_xlsx(request: Request, office: str = "", kind: str = ""):
+    if (r := guard(request)):
+        return r
+    data, n = schools.export_xlsx(int(office) if office.isdigit() else None, kind if kind in schools.KINDS else None)
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="schools-near-our-offices.xlsx"'})
 
 
 @app.get("/map/data.json")
@@ -2063,7 +2088,7 @@ def market_map_data(request: Request):
     if not authed(request):
         return Response(status_code=401)
     places.purge_old()
-    return {**places.map_data(), **field.map_overlay()}
+    return {**places.map_data(), **field.map_overlay(), **schools.map_data()}
 
 
 def _map_back(anchor=""):
