@@ -23,6 +23,15 @@
   </form>
   </div>
 </details>
+{% if season_cfg.optout %}
+<section class="panel narrow section-gap" id="seasonal">
+  <h2 style="margin:0 0 .3rem">Seasonal decorations</h2>
+  <p class="small muted" style="margin:0 0 .7rem">The little ghost, falling leaves, snow and friends that the admins switch on for the season.{% if season_now %} Showing now: {{ season_labels[season_now] }}.{% endif %}</p>
+  <form method="post" action="/account/seasonal" class="sz-switch-form">
+    <button class="sz-sw {{ 'on' if me.get('seasonal', 1) else '' }}" type="submit" name="on" value="1" {% if me.get('seasonal', 1) %}aria-pressed="true"{% endif %}>On</button><button class="sz-sw {{ '' if me.get('seasonal', 1) else 'on' }}" type="submit" name="on" value="0" {% if not me.get('seasonal', 1) %}aria-pressed="true"{% endif %}>Off for me</button>
+  </form>
+</section>
+{% endif %}
 <details class="drawer" id="password" {% if error %}open{% endif %}>
   <summary><span class="drawer-title">Change password</span><span class="drawer-hint">Signs you out on other devices</span></summary>
   <div class="drawer-body">

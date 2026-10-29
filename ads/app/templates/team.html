@@ -91,6 +91,48 @@
   </details>
   </div>
 </details>
+
+<section class="panel sz-card section-gap" id="seasonal" aria-labelledby="sz-h">
+  <div class="sz-head"><h2 id="sz-h" style="margin:0">Seasonal look</h2>
+    <span class="sz-now">{% if season_now %}Showing now: {{ season_labels[season_now] }}{% if season_until and season_cfg.mode == 'auto' %} · until {{ season_until.strftime('%b') }} {{ season_until.day }}{% endif %}{% else %}Nothing showing right now{% endif %}</span></div>
+  <p class="small muted" style="margin:.4rem 0 0">A little decoration for everyone in the hub. It never covers buttons, never appears on printed reports or PDFs, and stays still for anyone whose device asks for reduced motion.</p>
+  <form method="post" action="/team/seasonal">
+    <fieldset class="sz-themes">
+      <legend class="sr-only">Which look</legend>
+      {% for k, label, blurb, icon in season_choices %}
+      <label class="sz-t"><input type="radio" name="mode" value="{{ k }}" {% if season_cfg.mode == k %}checked{% endif %}><i class="rad" aria-hidden="true"></i>
+        <span class="sz-ic" aria-hidden="true">{{ icon }}</span><b>{{ label }}</b><span>{{ blurb }}</span>
+        {% if k not in ('auto', 'off') %}<a class="small" href="/?season_preview={{ k }}" target="_blank" rel="noopener">Preview</a>{% endif %}</label>
+      {% endfor %}
+    </fieldset>
+    <div class="sz-grid">
+      <div>
+        <h3>What shows</h3>
+        <label class="sz-opt"><input type="checkbox" name="buddy" value="1" {% if season_cfg.buddy %}checked{% endif %}><span>Cursor buddy<small>The ghost, turkey, snowman and friends follow your mouse. On phones they rest in a corner.</small></span></label>
+        <label class="sz-opt"><input type="checkbox" name="falling" value="1" {% if season_cfg.falling %}checked{% endif %}><span>Falling (or floating) things<small>Leaves, snow, confetti, hearts, petals, bubbles, fireworks, depending on the season.</small></span></label>
+        <label class="sz-opt"><input type="checkbox" name="corners" value="1" {% if season_cfg.corners %}checked{% endif %}><span>Edge decorations<small>Spiderwebs at Halloween, string lights at Christmas, bunting on the 4th of July.</small></span></label>
+        <h3 style="margin-top:1rem">How much</h3>
+        <fieldset class="calf-pills" style="margin:0"><legend class="sr-only">How much</legend>
+          <label><input type="radio" name="amount" value="light" {% if season_cfg.amount != 'normal' %}checked{% endif %}><span>Light</span></label>
+          <label><input type="radio" name="amount" value="normal" {% if season_cfg.amount == 'normal' %}checked{% endif %}><span>Normal</span></label></fieldset>
+        <h3 style="margin-top:1rem">Everyone's choice</h3>
+        <label class="sz-opt"><input type="checkbox" name="optout" value="1" {% if season_cfg.optout %}checked{% endif %}><span>Let each person switch it off for themselves<small>Adds a “Seasonal decorations” switch to their Account page.</small></span></label>
+      </div>
+      <div>
+        <h3>Automatic dates <span class="muted small" style="font-weight:400">(month-day; untick to skip a season)</span></h3>
+        <table class="sz-dates">
+          {% for r in season_rows %}
+          <tr{% if r.now %} class="sz-on"{% endif %}><td><label class="sz-opt" style="margin:0"><input type="checkbox" name="auto_{{ r.key }}" value="1" {% if r.auto %}checked{% endif %} aria-label="Include {{ r.label }} in Automatic"><span>{{ r.label }}</span></label></td>
+            <td><input name="start_{{ r.key }}" value="{{ r.start }}" aria-label="{{ r.label }} starts" maxlength="12"> – <input name="end_{{ r.key }}" value="{{ r.end }}" aria-label="{{ r.label }} ends" maxlength="12"></td>
+            <td class="small muted">{% if r.now %}<strong style="color:var(--teal)">on now</strong>{% elif r.next %}{{ r.next[0].strftime('%b') }} {{ r.next[0].day }}{% endif %}</td></tr>
+          {% endfor %}
+        </table>
+        <p class="small muted" style="margin-top:.5rem">“thanksgiving” means Thanksgiving Day (the fourth Thursday of November), worked out each year. When two seasons overlap, the shorter one shows (the 4th of July inside Summer).</p>
+      </div>
+    </div>
+    <div class="sz-foot"><button class="btn" type="submit">Save</button><span class="small muted">Saved changes show for everyone the next time a page loads. “Preview” shows a look just for you, in a new tab.</span></div>
+  </form>
+</section>
 <script>
   const cb = document.getElementById("copy-link");
   if (cb) cb.onclick = async () => {

@@ -53,7 +53,8 @@ COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", 
            "last_login": "TEXT DEFAULT ''", "field_budget": "REAL DEFAULT 0", "home_address": "TEXT DEFAULT ''",
            "home_lat": "REAL", "home_lng": "REAL",
            "field": "INTEGER NOT NULL DEFAULT 0",
-           "social": "INTEGER NOT NULL DEFAULT 1"}   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
+           "social": "INTEGER NOT NULL DEFAULT 1",
+           "seasonal": "INTEGER NOT NULL DEFAULT 1"}   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
 
 
 def init():
@@ -76,7 +77,7 @@ def init():
         c.execute("UPDATE users SET role='viewer', field=1 WHERE role='agent'")
 
 
-SWITCHES = {"field": "Field visits", "social": "Social"}
+SWITCHES = {"field": "Field visits", "social": "Social", "seasonal": "Seasonal decorations"}
 
 
 def set_switch(uid, name, on):

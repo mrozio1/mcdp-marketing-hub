@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, scope, sync, users
+from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, scope, seasons, sync, users
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -232,6 +232,11 @@ def page(request, name, **ctx):
     ctx["can_log"] = bool(u) and bool(u.get("field"))
     ctx["show_social"] = bool(u) and bool(u.get("social", 1))
     ctx.setdefault("inbox_open", reviews.open_count() if u else 0)
+    preview = request.query_params.get("season_preview", "") if ctx["is_admin"] else ""
+    try:
+        ctx["season"] = seasons.for_page(u, preview) if u else None
+    except Exception:          # decoration only: never break a page over it
+        ctx["season"] = None
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -373,7 +378,19 @@ def account(request: Request):
     if (r := guard(request)):
         return r
     return page(request, "account.html", error=None, labels=users.ROLE_LABELS, help=users.ROLE_HELP,
-                min_len=users.MIN_PASSWORD)
+                min_len=users.MIN_PASSWORD, season_cfg=seasons.settings(), season_now=seasons.current()[0],
+                season_labels=seasons.LABEL)
+
+
+@app.post("/account/seasonal")
+def account_seasonal(request: Request, on: str = Form("1")):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if u and u["id"]:
+        users.set_switch(u["id"], "seasonal", on == "1")
+        flash(request, "Seasonal decorations are on for you." if on == "1" else "Seasonal decorations are off for you.")
+    return RedirectResponse("/account#seasonal", status_code=303)
 
 
 @app.post("/account/password", response_class=HTMLResponse)
@@ -388,7 +405,8 @@ def account_password(request: Request, current: str = Form(""), password: str = 
     problem = problem or users.password_problem(password, confirm)
     if problem:
         return page(request, "account.html", error=problem, labels=users.ROLE_LABELS, help=users.ROLE_HELP,
-                    min_len=users.MIN_PASSWORD)
+                    min_len=users.MIN_PASSWORD, season_cfg=seasons.settings(), season_now=seasons.current()[0],
+                    season_labels=seasons.LABEL)
     _sign_in(request, users.set_password(u["id"], password))
     flash(request, "Password changed. Other devices have been signed out.")
     return RedirectResponse("/account", status_code=303)
@@ -408,9 +426,26 @@ def team(request: Request):
     if (r := guard(request)):
         return r
     link = request.session.pop("team_link", None)
+    season_rows, season_cfg, season_now, season_until = seasons.rows()
     return page(request, "team.html", people=users.all_users(), roles=users.ROLES, labels=users.ROLE_LABELS,
                 help=users.ROLE_HELP, link=link, link_days=users.LINK_DAYS, shared=me(request)["id"] == 0,
-                now=db.now())
+                now=db.now(), season_rows=season_rows, season_cfg=season_cfg, season_now=season_now, season_until=season_until,
+                season_labels=seasons.LABEL, season_choices=seasons.choices())
+
+
+@app.post("/team/seasonal")
+async def team_seasonal(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    bad = seasons.save({k: form.get(k) for k in form.keys()})
+    if bad:
+        flash(request, "Saved, but these dates weren't understood, so they kept their old ones: " + ", ".join(bad)
+              + ". Use month-day, like 10-01.", "error")
+    else:
+        now, until = seasons.current()
+        flash(request, "Seasonal look saved. " + (f"Showing now: {seasons.LABEL[now]}." if now else "Nothing is showing right now."))
+    return RedirectResponse("/team#seasonal", status_code=303)
 
 
 @app.post("/team/add")

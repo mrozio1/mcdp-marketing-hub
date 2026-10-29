@@ -117,5 +117,6 @@
 })();
 </script>
 {% endif %}
+{% if season %}<script>window.HUB_SEASON = {{ season|tojson }};</script><script src="/static/seasonal.js?v=2" defer></script>{% endif %}
 </body>
 </html>
