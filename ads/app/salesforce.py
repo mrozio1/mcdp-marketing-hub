@@ -183,8 +183,26 @@ def query(soql):
     return api("GET", "/query", params={"q": soql}).get("records", [])
 
 
+# Fields that are nice to fill but not needed. If the org hides one (field-level security, or it doesn't exist),
+# Salesforce answers "No such column 'X' on sobject of type Y": leave it out and try again rather than fail the visit.
+OPTIONAL = {"Account": {"Description", "Type", "Phone", "Website", "BillingStreet", "BillingCity", "BillingState",
+                        "BillingPostalCode", "BillingCountry"},
+            "Contact": {"Description", "Title", "Salutation", "Email"},
+            "Task": {"Description", "Priority", "WhoId", "OwnerId"}}
+NO_COLUMN = re.compile(r"No such column '(\w+)' on sobject of type (\w+)")
+
+
 def create(sobject, fields):
-    got = api("POST", f"/sobjects/{sobject}", body={k: v for k, v in fields.items() if v not in (None, "")})
+    body = {k: v for k, v in fields.items() if v not in (None, "")}
+    while True:
+        try:
+            got = api("POST", f"/sobjects/{sobject}", body=body)
+            break
+        except SFError as e:
+            m = NO_COLUMN.search(str(e))
+            if not m or m.group(1) not in body or m.group(1) not in OPTIONAL.get(sobject, ()):
+                raise
+            body.pop(m.group(1))
     if not got.get("id"):
         raise SFError(f"Salesforce didn't create the {sobject}: {got}")
     return got["id"]

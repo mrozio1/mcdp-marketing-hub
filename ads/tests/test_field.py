@@ -499,3 +499,25 @@ def test_visit_is_attributed_to_a_practice(env, monkeypatch):
     assert "For practice: Havens Orthodontics" in sf.description(full)
     with db.conn() as c:
         c.execute("UPDATE visits SET sf_status='sent' WHERE notes='attrib-test'")
+
+
+def test_salesforce_skips_fields_the_org_hides(monkeypatch):
+    """'No such column Description on Contact': field-level security hides it; send without it."""
+    from app import salesforce as sf
+    sent = []
+
+    def api(method, path, body=None, params=None, absolute=False):
+        sent.append(dict(body))
+        for k in ("Description", "Title"):
+            if k in body:
+                raise sf.SFError(f"No such column '{k}' on sobject of type Contact (HTTP 400)")
+        return {"id": "003NEW", "success": True}
+    monkeypatch.setattr(sf, "api", api)
+    assert sf.create("Contact", {"LastName": "Oak", "Title": "Doctor", "Description": "x", "AccountId": "001"}) == "003NEW"
+    assert sent[-1] == {"LastName": "Oak", "AccountId": "001"} and len(sent) == 3
+    # a required field is never dropped
+    def api2(method, path, body=None, params=None, absolute=False):
+        raise sf.SFError("No such column 'LastName' on sobject of type Contact (HTTP 400)")
+    monkeypatch.setattr(sf, "api", api2)
+    with pytest.raises(sf.SFError):
+        sf.create("Contact", {"LastName": "Oak"})
