@@ -259,7 +259,7 @@ def test_microsoft_connection_settings(env, monkeypatch):
     assert go.status_code == 303 and go.headers["location"].startswith(f"https://login.microsoftonline.com/{t}/oauth2/v2.0/authorize?")
     assert "Calendars.ReadWrite.Shared" in go.headers["location"] and "code_challenge" in go.headers["location"]
     assert env["viewer"].get("/connections", follow_redirects=True).text.count("Connect Microsoft 365") == 0
-    assert "fc05e406" not in env["viewer"].get("/calendar").text
+    assert "33333333-dddd" not in env["viewer"].get("/calendar").text
     # without the user's own mailbox, events go to /me
     db.set_setting("ms_user", json.dumps({"email": MAILBOX}))
     assert ms.base() == "/me"
