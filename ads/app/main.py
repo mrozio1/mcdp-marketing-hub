@@ -3128,7 +3128,7 @@ async def save_microsoft(request: Request, tenant_id: str = Form(""), client_id:
     tenant_id, client_id, client_secret, mailbox = tenant_id.strip(), client_id.strip(), client_secret.strip(), mailbox.strip().lower()
     timezone_name = timezone_name.strip()
     if not GUID.match(tenant_id) or not GUID.match(client_id):
-        flash(request, "The Directory (tenant) ID and Application (client) ID are both long IDs like 2c65d3b3-…; copy them from the app's Overview in Entra.", "error")
+        flash(request, "The Directory (tenant) ID and Application (client) ID are both long IDs like 1a2b3c4d-…; copy them from the app's Overview in Entra.", "error")
     elif not client_secret and not db.get_setting("ms_client_secret"):
         flash(request, "Paste the client secret's Value (not its Secret ID).", "error")
     elif client_secret and GUID.match(client_secret):

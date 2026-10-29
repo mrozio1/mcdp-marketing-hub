@@ -248,7 +248,7 @@ def test_microsoft_connection_settings(env, monkeypatch):
     assert "Microsoft 365" in page and "/microsoft/callback" in page
     r = a.post("/connections/microsoft", data={"tenant_id": "nope", "client_id": "x", "client_secret": "s"}, follow_redirects=True)
     assert "tenant) ID and Application (client) ID" in r.text
-    t, cid = "2c65d3b3-ff3f-425c-a258-425dbde98608", "fc05e406-e096-4a27-ad81-d3334e56c44b"
+    t, cid = "11111111-aaaa-4bbb-8ccc-222222222222", "33333333-dddd-4eee-8fff-444444444444"
     r = a.post("/connections/microsoft", data={"tenant_id": t, "client_id": cid, "client_secret": "11111111-2222-3333-4444-555555555555"},
                follow_redirects=True)
     assert "Secret ID" in r.text
