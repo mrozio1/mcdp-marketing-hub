@@ -212,6 +212,25 @@ def test_draft_endpoint_uses_ai_and_privacy_rules(env, monkeypatch):
     assert r.status_code == 403
 
 
+def test_draft_that_is_working_notes_is_retried_not_saved(env, monkeypatch):
+    rv, ai = env["reviews"], env["ai"]
+    answers = iter([").\n   *  Under 60 words? Yes (~", "<reply>Thank you so much for the birthday wishes! 🎂</reply>"])
+    calls = []
+    monkeypatch.setattr(ai, "_chat", lambda messages, **kw: calls.append(kw) or next(answers))
+    iid = next(r["id"] for r in rv.inbox()[0] if r["external_id"].endswith("/r1"))
+    r = env["editor"].post(f"/reviews/items/{iid}/draft", headers={"Accept": "application/json"})
+    assert r.json()["draft"] == "Thank you so much for the birthday wishes! 🎂" and len(calls) == 2
+    assert calls[0]["max_tokens"] >= 2000
+    monkeypatch.setattr(ai, "_chat", lambda messages, **kw: "Under 60 words? Yes")
+    r = env["editor"].post(f"/reviews/items/{iid}/draft", headers={"Accept": "application/json"})
+    assert r.status_code == 422 and "notes instead of a reply" in r.json()["error"]
+    assert rv.item(iid)["draft"] == "Thank you so much for the birthday wishes! 🎂"      # the good one is kept
+    # broken drafts already saved are cleared at start-up so a fresh one is made
+    rv.save_draft(iid, ").\n   *  Under 60 words? Yes (~")
+    rv.init()
+    assert rv.item(iid)["draft"] == ""
+
+
 def test_goals_keep_their_history(env):
     rv = env["reviews"]
     h = env["heights"]

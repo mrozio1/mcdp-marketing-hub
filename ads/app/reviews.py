@@ -119,6 +119,10 @@ def init():
         for col, ddl in REPORT_COLS.items():
             if col not in have:
                 c.execute(f"ALTER TABLE inbox ADD COLUMN {col} {ddl}")
+        # Clear AI drafts that were really the model's working notes, so a fresh one is made.
+        for r in c.execute("SELECT id, draft FROM inbox WHERE status='open' AND draft != ''").fetchall():
+            if looks_broken(r["draft"]):
+                c.execute("UPDATE inbox SET draft='' WHERE id=?", (r["id"],))
 
 
 # ------------------------------------------------------------------ small helpers
@@ -732,7 +736,7 @@ DRAFT_RULES = (
     "- Question (hours, insurance, prices, availability): never invent facts; invite them to call or message the "
     "office, and say the team will be happy to help.\n"
     "- Under 60 words. No hashtags, no emoji unless the comment used them, no sign-off with a staff name.\n"
-    "Reply with the text of the reply only.")
+    "Write only the finished reply, between <reply> and </reply>. Don't show your checks, notes or options.")
 
 
 def draft_reply(iid):
@@ -748,10 +752,42 @@ def draft_reply(iid):
     if it["post_text"]:
         ctx.append(f"Comment is on our post: {it['post_text'][:300]}")
     ctx.append(f"Their words: {it['text'][:1500] or '(no text, rating only)'}")
-    text = ai._chat([{"role": "system", "content": DRAFT_RULES}, {"role": "user", "content": "\n".join(ctx)}],
-                    temperature=0.6, max_tokens=400).strip().strip('"')
-    save_draft(iid, text)
-    return text
+    for attempt in (0, 1):
+        # Plenty of room: Gemini's hidden "thinking" counts against max_tokens, and a cut-off answer is
+        # its working notes, not a reply.
+        raw = ai._chat([{"role": "system", "content": DRAFT_RULES}, {"role": "user", "content": "\n".join(ctx)}],
+                       temperature=0.6 if attempt == 0 else 0.3, max_tokens=2500)
+        text = clean_draft(raw)
+        if text:
+            save_draft(iid, text)
+            return text
+    raise ReviewsError("The AI's draft came back as notes instead of a reply. Click “New draft” to try again, "
+                       "or write the reply yourself.")
+
+
+_NOTE_MARKS = ("under 60 words", "word count", "constraint", "check:", "checklist", "hipaa", "no hashtags",
+               "rules:", "draft:", "option 1", "option a", "let me", "i will", "i'll write", "the user", "<reply")
+
+
+def looks_broken(text):
+    """A draft that's really the model's working notes (or cut off)."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    low = t.lower()
+    if any(m in low for m in _NOTE_MARKS):
+        return True
+    if t[0] in ")]*-•>#" or t.count("\n") > 4 or len(t.split()) > 90:
+        return True
+    return t[-1] not in ".!?)\"'’”" and not any(ch for ch in t[-2:] if ord(ch) > 0x2000)   # ends mid-sentence (emoji endings are fine)
+
+
+def clean_draft(raw):
+    import re
+    t = re.sub(r"(?is)<think(?:ing)?>.*?</think(?:ing)?>", "", raw or "")
+    m = re.search(r"(?is)<reply>\s*(.*?)\s*</reply>", t)
+    t = (m.group(1) if m else t.replace("<reply>", "")).strip().strip('"').strip()
+    return "" if looks_broken(t) else t
 
 
 # ------------------------------------------------------------------ goals and monthly counts
