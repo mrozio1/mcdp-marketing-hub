@@ -393,14 +393,19 @@
     const box = document.getElementById("reply-text"), status = document.getElementById("draft-status");
     if (!box) return;
     const url = "/reviews/items/{{ cur.id if cur else 0 }}/draft";
-    const draft = async () => {
+    const draft = async (retry = true) => {
       status.textContent = "Writing a draft…";
+      let r;
       try {
-        const r = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
+        r = await fetch(url, { method: "POST", headers: { "Accept": "application/json" } });
         const j = await r.json();
         if (j.draft) { box.value = j.draft; status.textContent = "Draft ready — edit as needed."; }
         else status.textContent = j.error || "Couldn't write a draft.";
-      } catch (e) { status.textContent = "Couldn't write a draft."; }
+      } catch (e) {
+        // Not a JSON answer: the hub was restarting, or the connection timed out. Try once more, then say why.
+        if (retry) { setTimeout(() => draft(false), 4000); return; }
+        status.textContent = "Couldn't write a draft" + (r ? ` (the hub answered ${r.status}${r.status >= 500 ? "; it may be restarting" : ""})` : " (no connection)") + ". Click “New draft” to try again.";
+      }
     };
     {% if ai_on and cur and cur.status == 'open' and can_edit and not cur.draft and cur.flag != 'spam' %}draft();{% endif %}
     const again = document.getElementById("new-draft");
