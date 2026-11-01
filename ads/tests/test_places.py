@@ -161,6 +161,8 @@ def test_first_refresh_labels_everything_once(env):
     db.set_setting("map_brand_terms", "Heights Orthodontics")
     db.set_setting("map_radius_miles", "25")
     places.add_office("Heights – Defiance", OFFICE["id"], OFFICE["lat"], OFFICE["lng"])
+    with db.conn() as c:     # the office existed before the first refresh, whatever today's date is
+        c.execute("UPDATE map_offices SET created_at=?", ((T0 - timedelta(days=1)).isoformat(timespec="seconds"),))
     LOG.clear()
     res = places.refresh(T0)
     assert res["ok"] and not res["capped"] and res["gone"] == 0

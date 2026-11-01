@@ -29,7 +29,8 @@
   <label class="visit-practice">Visiting for <span class="muted small">(whose reports and Salesforce data this visit goes to)</span>
     <select name="practice_id" required>
       <option value="" {% if not suggested_practice %}selected{% endif %} disabled>Pick a practice…</option>
-      {% for q in practice_choices %}<option value="{{ q.id }}" {% if q.id == suggested_practice %}selected{% endif %}>{{ q.name }}</option>{% endfor %}
+      {% set ns = namespace(done=false) %}
+      {% for q in practice_options %}<option value="{{ q.value }}" {% if q.pid == suggested_practice and not ns.done %}selected{% set ns.done = true %}{% endif %}>{{ q.name }}{% if q.address %} — {{ q.address }}{% endif %}</option>{% endfor %}
     </select>
   </label>
 

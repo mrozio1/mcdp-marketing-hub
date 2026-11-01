@@ -521,3 +521,27 @@ def test_salesforce_skips_fields_the_org_hides(monkeypatch):
     monkeypatch.setattr(sf, "api", api2)
     with pytest.raises(sf.SFError):
         sf.create("Contact", {"LastName": "Oak"})
+
+
+def test_visiting_for_lists_practice_addresses(env):
+    a, f, db = env["agent"], env["field"], env["db"]
+    h = env["heights"]
+    with db.conn() as c:
+        c.execute("INSERT OR REPLACE INTO gbp_locations(name, title, address, practice_id) VALUES "
+                  "('accounts/1/locations/71', 'Heights Orthodontics', '43767 Van Dyke Ave, Sterling Heights, MI 48314, USA', ?)", (h,))
+        c.execute("INSERT OR REPLACE INTO gbp_locations(name, title, address, practice_id) VALUES "
+                  "('accounts/1/locations/72', 'Heights Orthodontics', '2000 Hall Rd, Macomb, MI 48044', ?)", (h,))
+    form = a.get("/field/log?place=ChIJ_dentist_maple001").text
+    assert "Heights Orthodontics — 2000 Hall Rd, Macomb, MI</option>" in form
+    assert "Heights Orthodontics — 43767 Van Dyke Ave, Sterling Heights, MI</option>" in form
+    assert f'value="{h}-1"' in form and "Havens Orthodontics</option>" in form      # no address on file: name only
+    a.post("/field/visits", data={"place_id": "ChIJ_dentist_maple001", "name": "Maple Street Family Dental",
+                                  "visited_at": date.today().isoformat() + "T07:30", "practice_required": "1",
+                                  "practice_id": f"{h}-1", "notes": "addr-test"})
+    v = [x for x in f.visits_between(date.today(), date.today() + timedelta(days=1)) if x["notes"] == "addr-test"][0]
+    assert v["practice_id"] == h and v["practice_location"] == "43767 Van Dyke Ave, Sterling Heights, MI"
+    from app import salesforce as sf
+    assert "For practice: Heights Orthodontics (43767 Van Dyke Ave, Sterling Heights, MI)" in sf.description(f.visit(v["id"]))
+    with db.conn() as c:
+        c.execute("UPDATE visits SET sf_status='sent' WHERE notes='addr-test'")
+        c.execute("DELETE FROM gbp_locations WHERE name IN ('accounts/1/locations/71', 'accounts/1/locations/72')")

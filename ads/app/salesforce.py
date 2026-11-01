@@ -311,7 +311,7 @@ def description(v, hub_url=""):
     from .field import RATING_LABELS
     lines = [f"Logged in MCDP Hub by {v.get('user_name') or 'a field agent'}."]
     if practice_name(v):
-        lines.append(f"For practice: {practice_name(v)}")
+        lines.append(f"For practice: {practice_name(v)}" + (f" ({v['practice_location']})" if v.get("practice_location") else ""))
     if v.get("people"):
         lines.append("Met: " + "; ".join(
             (p["name"] or p["email"]) + (f" ({p['role']})" if p["role"] else "") + (f" <{p['email']}>" if p["email"] and p["name"] else "")

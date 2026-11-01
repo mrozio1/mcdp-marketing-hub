@@ -2404,7 +2404,7 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
     return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
-                suggested_practice=suggested, pre=pre)
+                practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre)
 
 
 @app.post("/field/visits")

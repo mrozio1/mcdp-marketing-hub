@@ -90,7 +90,42 @@ def init():
         have = {r["name"] for r in c.execute("PRAGMA table_info(visits)")}
         if "practice_id" not in have:          # the practice the visit was made for, chosen when logging
             c.execute("ALTER TABLE visits ADD COLUMN practice_id INTEGER")
+        if "practice_location" not in have:    # which of that practice's addresses was picked
+            c.execute("ALTER TABLE visits ADD COLUMN practice_location TEXT DEFAULT ''")
     os.makedirs(receipt_dir(), exist_ok=True)
+
+
+def short_address(a):
+    a = re.sub(r",?\s*(USA|United States)$", "", (a or "").strip())
+    return re.sub(r"\s+\d{5}(-\d{4})?$", "", a)
+
+
+def practice_locations(pid):
+    """The practice's physical addresses (its Google Business locations), in a fixed order."""
+    with db.conn() as c:
+        try:
+            rows = c.execute("SELECT address FROM gbp_locations WHERE practice_id=? AND address != '' ORDER BY address",
+                             (pid,)).fetchall()
+        except Exception:
+            rows = []
+    out = []
+    for r in rows:
+        a = short_address(r["address"])
+        if a and a not in out:
+            out.append(a)
+    return out
+
+
+def practice_options(practices):
+    """'Visiting for' choices: one per practice address. value = practice id, or id-N when a practice has several."""
+    out = []
+    for p in practices:
+        locs = practice_locations(p["id"])
+        if len(locs) <= 1:
+            out.append({"value": str(p["id"]), "pid": p["id"], "name": p["name"], "address": locs[0] if locs else ""})
+        else:
+            out += [{"value": f"{p['id']}-{i}", "pid": p["id"], "name": p["name"], "address": a} for i, a in enumerate(locs)]
+    return out
 
 
 def suggested_practice(o, user_id=None):
@@ -363,12 +398,18 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     rating = (form.get("rating") or "").strip().lower()
     if rating and rating not in RATINGS:
         raise FieldError("Pick how warm the relationship is.")
-    practice_id = None
+    practice_id, practice_location = None, ""
     raw_pid = str(form.get("practice_id") or "").strip()
     if raw_pid:
-        if not raw_pid.isdigit() or not db.practice(int(raw_pid)):
+        pid_part, _, loc_part = raw_pid.partition("-")
+        if not pid_part.isdigit() or not db.practice(int(pid_part)):
             raise FieldError("Pick which of our practices this visit was for.")
-        practice_id = int(raw_pid)
+        practice_id = int(pid_part)
+        locs = practice_locations(practice_id)
+        if loc_part.isdigit() and int(loc_part) < len(locs):
+            practice_location = locs[int(loc_part)]
+        elif len(locs) == 1:
+            practice_location = locs[0]
     elif form.get("practice_required"):
         raise FieldError("Pick which of our practices this visit was for.")
     cost = money_in(form.get("cost"))
@@ -391,12 +432,12 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO visits(office_id, user_id, user_name, visited_at, met_name, met_role, rating, dropped, cost, "
-            "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id, practice_location) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (o["id"], user.get("id") or None, user.get("name", ""), _when(form.get("visited_at")),
              met_name, met_role, rating,
              _clean(form.get("dropped"), 300), cost, receipt, _date_or_blank(form.get("followup")),
-             str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id))
+             str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id, practice_location))
         vid = cur.lastrowid
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
