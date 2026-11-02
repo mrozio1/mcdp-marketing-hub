@@ -271,6 +271,31 @@ def test_scoreboard_counts_from_google_and_by_hand(env):
     assert wb.active["A3"].value in ("Havens Orthodontics", "Heights Orthodontics")
 
 
+def test_scoreboard_by_month_and_monthly_report(env):
+    rv, db = env["reviews"], env["db"]
+    months = rv.months_back(12)
+    last = months[-2]                                       # last month: Heights has 5 reviews (from the test above)
+    with db.conn() as c:
+        c.execute("UPDATE gbp_reviews SET stars=2, text='Long wait', author='Pat', reply='' WHERE id=?",
+                  (f"accounts/1/locations/11/reviews/s{last}0",))
+        c.execute("UPDATE gbp_reviews SET reply='Thank you!' WHERE id=?", (f"accounts/1/locations/11/reviews/s{last}1",))
+    board = rv.scoreboard(month=last)
+    assert board["month"] == last and not board["is_current"] and board["months"][-1] == last
+    assert board["this"] == 5 + 2 and board["history"][0]["month"] == rv.month_label(last)   # no "(so far)"
+    assert rv.scoreboard(month="2099-01")["month"] == months[-1]                             # future -> this month
+    page = env["editor"].get(f"/reviews?tab=score&m={last}").text
+    assert f'<option value="{last}" selected>' in page and "Run report for " + rv.month_label(last) in page
+    assert f"/reviews/report?m={last}" in page and f"/reviews.xlsx?m={last}" in page
+    rep = env["editor"].get(f"/reviews/report?m={last}").text
+    assert "Google reviews report" in rep and rv.month_label(last) in rep and "Long wait" in rep and "Pat" in rep
+    rep1 = rv.month_report(last, env["heights"])
+    assert rep1["n"] == 5 and rep1["low"] == 1 and rep1["replied"] == 1 and rep1["rows"][0]["change"] == 5 - 4
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(env["viewer"].get(f"/reviews.xlsx?m={last}").content))
+    assert rv.month_label(last) in wb.active["A1"].value and len(wb.sheetnames) == 2
+    assert wb[wb.sheetnames[1]].max_row == 1 + 5
+
+
 def test_comment_readers_parse_meta_shapes(env, monkeypatch):
     cx = env["cx"]
     since = date.today() - timedelta(days=60)

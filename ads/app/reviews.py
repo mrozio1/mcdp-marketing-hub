@@ -870,11 +870,32 @@ def _practice_data(plist, months):
     return out
 
 
-def scoreboard(practice_id=None, today=None, plist=None):
+def month_end(key, today=None):
+    """The last day of a month key, or today for the current month."""
+    today = today or date.today()
+    y, m = int(key[:4]), int(key[5:7])
+    nxt = date(y + (m == 12), m % 12 + 1, 1)
+    return min(today, nxt - timedelta(days=1))
+
+
+def valid_month(key, today=None):
+    """A YYYY-MM key that isn't in the future, else None."""
+    today = today or date.today()
+    try:
+        d = date(int(key[:4]), int(key[5:7]), 1)
+    except (TypeError, ValueError, IndexError):
+        return None
+    return key if len(key) == 7 and d <= today.replace(day=1) else None
+
+
+def scoreboard(practice_id=None, today=None, plist=None, month=None):
+    """month (YYYY-MM): the month the board is about; default the current month."""
     today = today or date.today()
     plist = plist if plist is not None else practices()
-    months = months_back(12, today)
+    month = valid_month(month, today) if month else None
+    months = months_back(12, month_end(month, today) if month else today)
     cur = months[-1]
+    is_current = cur == months_back(1, today)[0]
     data = _practice_data(plist, months)
     grows = _goal_rows()
     ids = [practice_id] if practice_id else [p["id"] for p in plist]
@@ -898,14 +919,15 @@ def scoreboard(practice_id=None, today=None, plist=None):
             res, kind = "No count", "none"
         elif v >= g:
             res, kind = "Met" + (f" (+{v - g})" if v > g else ""), "met"
-        elif months[i] == cur:
+        elif months[i] == cur and is_current:
             res, kind = f"{g - v} to go", "progress"
         else:
             res, kind = f"Missed by {g - v}", "missed"
-        history.append({"month": month_label(months[i]) + (" (so far)" if months[i] == cur else ""), "got": v,
+        history.append({"month": month_label(months[i]) + (" (so far)" if months[i] == cur and is_current else ""), "got": v,
                         "goal": g, "result": res, "kind": kind,
                         "partial": bool(reporting[i]) and reporting[i] < len(ids)})
-    full = [(v, g) for v, g in zip(series[:-1], goals[:-1]) if v is not None]
+    full = [(v, g) for v, g in zip(series if not is_current else series[:-1], goals if not is_current else goals[:-1])
+            if v is not None]
     met_count = sum(1 for v, g in full if v >= g)
     rows = []
     now = utcnow()
@@ -926,7 +948,7 @@ def scoreboard(practice_id=None, today=None, plist=None):
         d = data[p["id"]]
         got = d["series"][-1]
         g = goal_for(p["id"], cur, grows)
-        last6 = [(d["series"][i], goal_for(p["id"], months[i], grows)) for i in range(5, 11)]
+        last6 = [(d["series"][i], goal_for(p["id"], months[i], grows)) for i in (range(5, 11) if is_current else range(6, 12))]
         days = (now - _dt(d["last"])).days if d["last"] else None
         rows.append({"id": p["id"], "name": p["name"], "rating": d["rating"], "total": d["total"], "got": got, "goal": g,
                      "pct": min(100, round((got or 0) / g * 100)) if g else 100, "met": got is not None and got >= g,
@@ -947,14 +969,63 @@ def scoreboard(practice_id=None, today=None, plist=None):
             "rating": (sum(r * t for r, t in rated) / n) if n else None, "total": n or None,
             "quiet": sum(1 for r in sel if r["days"] is not None and r["days"] > 30),
             "reported": sum(r["reported"] for r in sel), "removed": sum(r["removed"] for r in sel),
-            "current_label": month_label(cur), "default_goal": goal_for(0, cur, grows)}
+            "current_label": month_label(cur), "default_goal": goal_for(0, cur, grows), "month": cur,
+            "is_current": is_current, "prev_label": month_label(months[-2])}
 
 
-def export_xlsx(plist=None, today=None):
+def month_reviews(month, practice_id=None, plist=None):
+    """Every Google review created that month (newest first), with its practice."""
+    plist = plist if plist is not None else practices()
+    loc_p = {l["name"]: l["practice_id"] for l in locations() if l["practice_id"]}
+    names = {p["id"]: p["name"] for p in plist}
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute("SELECT * FROM gbp_reviews WHERE substr(created, 1, 7) = ? ORDER BY created DESC",
+                                           (month,))]
+    out = []
+    for r in rows:
+        pid = loc_p.get(r["location"])
+        if pid not in names or (practice_id and pid != practice_id):
+            continue
+        out.append({**r, "practice_id": pid, "practice": names[pid]})
+    return out
+
+
+def month_report(month, practice_id=None, plist=None, today=None):
+    """Everything the printable monthly report shows."""
+    plist = plist if plist is not None else practices()
+    board = scoreboard(practice_id, today=today, plist=plist, month=month)
+    revs = month_reviews(board["month"], practice_id, plist)
+    stars = [r["stars"] for r in revs if r["stars"]]
+    by_p = {}
+    for r in revs:
+        b = by_p.setdefault(r["practice_id"], {"n": 0, "stars": [], "low": 0, "replied": 0})
+        b["n"] += 1
+        if r["stars"]:
+            b["stars"].append(r["stars"])
+            b["low"] += r["stars"] <= 3
+        b["replied"] += bool(r["reply"])
+    rows = []
+    prev_i = -2
+    data = _practice_data(plist, board["months"])
+    for row in board["rows"]:
+        if practice_id and row["id"] != practice_id:
+            continue
+        b = by_p.get(row["id"], {"n": 0, "stars": [], "low": 0, "replied": 0})
+        prev = data[row["id"]]["series"][prev_i]
+        rows.append({**row, "avg_stars": (sum(b["stars"]) / len(b["stars"])) if b["stars"] else None, "low": b["low"],
+                     "replied": b["replied"], "n_reviews": b["n"], "prev": prev,
+                     "change": (row["got"] - prev) if row["got"] is not None and prev is not None else None})
+    return {"board": board, "reviews": revs, "rows": rows, "n": len(revs),
+            "avg": (sum(stars) / len(stars)) if stars else None, "five": sum(1 for x in stars if x == 5),
+            "low": sum(1 for x in stars if x <= 3), "replied": sum(1 for r in revs if r["reply"])}
+
+
+def export_xlsx(plist=None, today=None, month=None):
     import openpyxl
     from openpyxl.styles import Font, PatternFill
     plist = plist if plist is not None else practices()
-    months = months_back(12, today)
+    month = valid_month(month, today) if month else None
+    months = months_back(12, month_end(month, today) if month else today)
     data = _practice_data(plist, months)
     grows = _goal_rows()
     wb = openpyxl.Workbook()
@@ -979,6 +1050,16 @@ def export_xlsx(plist=None, today=None):
         ws.append(row)
     ws.column_dimensions["A"].width = 34
     ws.freeze_panes = "B3"
+    # the month's reviews, one per row
+    ws2 = wb.create_sheet(f"Reviews {month_label(months[-1])}")
+    ws2.append(["Date", "Practice", "Stars", "Reviewer", "Review", "Replied"])
+    for c in ws2[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="0F7471")
+    for r in month_reviews(months[-1], plist=plist):
+        ws2.append([r["created"][:10], r["practice"], r["stars"], r["author"], (r["text"] or "")[:1000], "Yes" if r["reply"] else "No"])
+    for col, w in zip("ABCDEF", (12, 30, 7, 22, 80, 9)):
+        ws2.column_dimensions[col].width = w
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

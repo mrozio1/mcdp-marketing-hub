@@ -8,7 +8,7 @@
     <p class="lede rv-lede">Google reviews and Facebook and Instagram comments in one place, so nothing goes unanswered.</p>
   </div>
   <form method="get" action="/reviews" class="rv-scope">
-    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="hidden" name="tab" value="{{ tab }}">{% if tab == 'score' and sb_month %}<input type="hidden" name="m" value="{{ sb_month }}">{% endif %}
     <label>Showing
       <select name="practice" onchange="this.form.submit()">
         <option value="">All practices</option>
@@ -240,9 +240,19 @@
 
 {% else %}
 {# ================================================================ SCOREBOARD #}
+<form class="rv-monthbar" method="get" action="/reviews">
+  <input type="hidden" name="tab" value="score">{% if pid %}<input type="hidden" name="practice" value="{{ pid }}">{% endif %}
+  <label>Month<select name="m" onchange="this.form.submit()">
+    {% for k, l in sb_months %}<option value="{{ k }}" {% if k == board.month %}selected{% endif %}>{{ l }}{% if loop.first %} (this month){% endif %}</option>{% endfor %}
+  </select></label>
+  <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+  <a class="btn btn-small" href="/reviews/report?{{ {'m': board.month, 'practice': pid or ''}|urlencode }}">Run report for {{ board.current_label }}</a>
+  <a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': board.month}|urlencode }}">Download Excel</a>
+  {% if not board.is_current %}<a class="small" href="/reviews?{{ {'tab': 'score', 'practice': pid or ''}|urlencode }}">Back to this month</a>{% endif %}
+</form>
 <dl class="glance rv-glance">
-  <div><dt>New reviews this month</dt><dd>{{ board.this if board.this is not none else '—' }} <span class="rv-of">of {{ board.this_goal }}</span></dd>
-    <p class="small muted">Last month: {{ board.last if board.last is not none else '—' }} of {{ board.last_goal }}</p></div>
+  <div><dt>New reviews{{ ' this month' if board.is_current else ' · ' ~ board.current_label }}</dt><dd>{{ board.this if board.this is not none else '—' }} <span class="rv-of">of {{ board.this_goal }}</span></dd>
+    <p class="small muted">{{ board.prev_label }}: {{ board.last if board.last is not none else '—' }} of {{ board.last_goal }}</p></div>
   {% if pid %}
   <div><dt>Google rating</dt><dd>{{ '%.1f'|format(board.rating) if board.rating else '—' }}</dd>
     <p class="small muted">{% if board.total %}{{ '{:,}'.format(board.total) }} reviews in total{% else %}Shows once Google is connected{% endif %}</p></div>
@@ -253,7 +263,7 @@
     <p class="small muted">Full months with a count</p></div>
   {% else %}
   <div><dt>Practices at goal</dt><dd>{{ board.at_goal }} <span class="rv-of">of {{ board.of }}</span></dd>
-    <p class="small muted">So far this month</p></div>
+    <p class="small muted">{{ 'So far this month' if board.is_current else 'In ' ~ board.current_label }}</p></div>
   <div><dt>Average rating</dt><dd>{{ '%.1f'|format(board.rating) if board.rating else '—' }}</dd>
     <p class="small muted">{% if board.total %}Across {{ '{:,}'.format(board.total) }} reviews{% else %}Shows once Google is connected{% endif %}</p></div>
   <div><dt>Quiet practices</dt><dd>{{ board.quiet }}</dd>
@@ -280,7 +290,7 @@
         </div>
         {% endfor %}
       </div>
-      <p class="small muted">{{ board.current_label }} is the month so far. A dash means no count for that month.</p>
+      <p class="small muted">{% if board.is_current %}{{ board.current_label }} is the month so far. {% else %}The 12 months up to {{ board.current_label }}. {% endif %}A dash means no count for that month.</p>
     </div>
     <div class="panel rv-history">
       <table class="data">
@@ -294,7 +304,7 @@
       </table>
       <div class="rv-history-foot">
         <span class="small muted">Goal met in {{ board.met_count }} of the last {{ board.full_months }} full month{{ '' if board.full_months == 1 else 's' }} with a count</span>
-        <a class="btn btn-quiet btn-small" href="/reviews.xlsx">Download Excel</a>
+        <a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': board.month}|urlencode }}">Download Excel</a>
       </div>
     </div>
   </div>
@@ -306,16 +316,16 @@
     <div><h2 id="bp-h">By practice</h2><p class="small muted">{{ board.current_label }} · pick a practice to see only that practice</p></div>
     <nav class="seg" aria-label="Filter">
       {% for k, l in [('all', 'All'), ('under', 'Under goal'), ('quiet', 'No review in 30 days')] %}
-      <a href="/reviews?{{ {'tab': 'score', 'filter': k}|urlencode }}" {% if filt == k %}aria-current="page"{% endif %}>{{ l }}</a>
+      <a href="/reviews?{{ {'tab': 'score', 'filter': k, 'm': sb_month}|urlencode }}" {% if filt == k %}aria-current="page"{% endif %}>{{ l }}</a>
       {% endfor %}
     </nav>
   </div>
   <div class="table-scroll"><table class="practices rv-table">
-    <thead><tr><th>Practice</th><th>Rating</th><th>This month</th><th>Goal met, last 6 mo.</th><th>Last review</th><th>Inbox</th><th>Reported / removed</th></tr></thead>
+    <thead><tr><th>Practice</th><th>Rating</th><th>{{ 'This month' if board.is_current else board.current_label }}</th><th>Goal met, last 6 mo.</th><th>Last review</th><th>Inbox</th><th>Reported / removed</th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>
-        <th scope="row"><a href="/reviews?{{ {'tab': 'score', 'practice': r.id}|urlencode }}">{{ r.name }}</a>{% if not r.source %}<span class="scope-sub small muted">No count yet</span>{% elif r.source == 'manual' %}<span class="scope-sub small muted">Typed in</span>{% endif %}</th>
+        <th scope="row"><a href="/reviews?{{ {'tab': 'score', 'practice': r.id, 'm': sb_month}|urlencode }}">{{ r.name }}</a>{% if not r.source %}<span class="scope-sub small muted">No count yet</span>{% elif r.source == 'manual' %}<span class="scope-sub small muted">Typed in</span>{% endif %}</th>
         <td>{% if r.rating %}{{ '%.1f'|format(r.rating) }} <span class="muted">({{ r.total }})</span>{% else %}—{% endif %}</td>
         <td class="rv-prog-cell"><span>{{ r.got if r.got is not none else '—' }} of {{ r.goal }}</span>
           <span class="rv-prog" aria-hidden="true"><span class="{{ 'met' if r.met else 'under' }}" style="width: {{ r.pct }}%"></span></span></td>

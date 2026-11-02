@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Google reviews · {{ board.current_label }}{% endblock %}
+{% block content %}
+<div class="no-print rv-monthbar">
+  <a href="/reviews?{{ {'tab': 'score', 'm': month, 'practice': pid or ''}|urlencode }}">← Google scoreboard</a>
+  <form method="get" action="/reviews/report" style="display:contents">
+    {% if pid %}<input type="hidden" name="practice" value="{{ pid }}">{% endif %}
+    <label>Month<select name="m" onchange="this.form.submit()">{% for k, l in months %}<option value="{{ k }}" {% if k == month %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  </form>
+  <a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': month}|urlencode }}">Download Excel</a>
+  <button class="btn btn-small" type="button" onclick="window.print()">Save as PDF</button>
+</div>
+
+<p class="eyebrow">Google reviews report</p>
+<h1>{{ practice.name if practice else 'All practices' }} · {{ board.current_label }}{% if board.is_current %} <span class="muted small">(so far)</span>{% endif %}</h1>
+
+<dl class="glance rv-glance">
+  <div><dt>New reviews</dt><dd>{{ board.this if board.this is not none else '—' }} <span class="rv-of">of {{ board.this_goal }} goal</span></dd>
+    <p class="small muted">{{ board.prev_label }}: {{ board.last if board.last is not none else '—' }} of {{ board.last_goal }}</p></div>
+  <div><dt>Average stars</dt><dd>{{ '%.1f'|format(rep.avg) if rep.avg else '—' }}</dd>
+    <p class="small muted">{{ rep.five }} five-star · {{ rep.low }} at 3 stars or below</p></div>
+  <div><dt>Replied</dt><dd>{{ rep.replied }} <span class="rv-of">of {{ rep.n }}</span></dd>
+    <p class="small muted">Reviews from {{ board.current_label }} with a reply</p></div>
+  {% if not pid %}<div><dt>Practices at goal</dt><dd>{{ board.at_goal }} <span class="rv-of">of {{ board.of }}</span></dd>
+    <p class="small muted">Overall rating {{ '%.1f'|format(board.rating) if board.rating else '—' }} (today)</p></div>{% endif %}
+</dl>
+
+<section class="rv-section">
+  <h2>By practice</h2>
+  <div class="table-scroll"><table class="practices rv-table">
+    <thead><tr><th>Practice</th><th>New reviews</th><th>vs {{ board.prev_label }}</th><th>Goal</th><th>Avg stars</th><th>3★ or below</th><th>Replied</th><th>Rating today</th></tr></thead>
+    <tbody>
+    {% for r in rep.rows %}
+      <tr><th scope="row">{{ r.name }}{% if r.source == 'manual' %}<span class="scope-sub small muted">Typed in</span>{% endif %}</th>
+        <td>{{ r.got if r.got is not none else '—' }}</td>
+        <td>{% if r.change is not none %}<span class="{{ 'ok-note' if r.change > 0 else ('danger' if r.change < 0 else 'muted') }}">{{ '+' if r.change > 0 else '' }}{{ r.change }}</span>{% else %}—{% endif %}</td>
+        <td class="{{ 'ok-note' if r.met else ('danger' if r.got is not none and not board.is_current else '') }}">{{ 'Met' if r.met else (r.goal ~ ' (missed by ' ~ (r.goal - (r.got or 0)) ~ ')' if r.got is not none and not board.is_current else r.goal) }}</td>
+        <td>{{ '%.1f'|format(r.avg_stars) if r.avg_stars else '—' }}</td>
+        <td class="{{ 'danger' if r.low else '' }}">{{ r.low or '—' }}</td>
+        <td>{% if r.n_reviews %}{{ r.replied }} of {{ r.n_reviews }}{% else %}—{% endif %}</td>
+        <td>{% if r.rating %}{{ '%.1f'|format(r.rating) }} <span class="muted">({{ r.total }})</span>{% else %}—{% endif %}</td></tr>
+    {% else %}<tr><td colspan="8" class="muted">No practices.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="rv-section">
+  <h2>Reviews received in {{ board.current_label }} <span class="muted small">({{ rep.n }})</span></h2>
+  {% if rep.reviews %}
+  <div class="table-scroll"><table class="practices rv-table">
+    <thead><tr><th>Date</th><th>Practice</th><th>Stars</th><th>Review</th><th>Replied</th></tr></thead>
+    <tbody>{% for r in rep.reviews %}
+      <tr><td style="white-space:nowrap">{{ r.created[:10] }}</td><td>{{ r.practice }}</td>
+        <td class="{{ 'danger' if r.stars and r.stars <= 3 else '' }}" style="white-space:nowrap">{{ '★' * (r.stars or 0) }}</td>
+        <td class="small">{{ (r.text or '(rating only)')|truncate(220) }}{% if r.author %} <span class="muted">— {{ r.author }}</span>{% endif %}</td>
+        <td>{{ 'Yes' if r.reply else 'No' }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="muted">No Google reviews synced for {{ board.current_label }}{% if rep.rows and rep.rows|selectattr('source', 'equalto', 'manual')|list %} (typed-in counts don't include the reviews themselves){% endif %}.</p>{% endif %}
+</section>
+<p class="small muted">From Google Business Profile, as synced into the hub. Ratings marked “today” are the current rating, not the rating at the end of the month.</p>
+{% endblock %}

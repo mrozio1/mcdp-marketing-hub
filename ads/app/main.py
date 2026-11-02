@@ -2596,13 +2596,15 @@ def reviews_page(request: Request):
     if cur:
         cur["posts_as"] = POSTS_AS[cur["source"]].format(acct=cur["account_name"], me=(me(request) or {}).get("name", "you").split(" ")[0])
         cur["no_reply_hint"] = reviews.no_reply_hint(cur)
-    board = reviews.scoreboard(pid, plist=plist)
+    sb_month = reviews.valid_month(q.get("m") or "") or None
+    board = reviews.scoreboard(pid, plist=plist, month=sb_month)
+    sb_months = [(k, reviews.month_label(k)) for k in reviews.months_back(24)[::-1]]
     rows = board["rows"]
     if filt == "under":
         rows = [x for x in rows if not x["met"]]
     elif filt == "quiet":
         rows = [x for x in rows if x["days"] is not None and x["days"] > 30]
-    qs = {"practice": pid or "", "tab": tab, "src": src, "status": status}
+    qs = {"practice": pid or "", "tab": tab, "src": src, "status": status, "m": sb_month or ""}
     month_opts = reviews.months_back(13)[::-1][1:]
     with db.conn() as c:
         manual = {(m["practice_id"], m["month"]): m["count"] for m in c.execute("SELECT * FROM review_manual")}
@@ -2616,16 +2618,31 @@ def reviews_page(request: Request):
                 month_opts=month_opts, man_month=man_month, manual=manual, month_label=reviews.month_label,
                 meta_on=cx.meta_configured(), fb_linked=any(db.social_ids(p, "fb") or db.social_ids(p, "ig") for p in plist),
                 reported_n=reviews.reported_count(pid, plist), report_reasons=reviews.REPORT_REASONS,
-                report_tool=reviews.REPORT_TOOL, followup_days=reviews.REPORT_FOLLOWUP_DAYS)
+                report_tool=reviews.REPORT_TOOL, followup_days=reviews.REPORT_FOLLOWUP_DAYS,
+                sb_month=sb_month or "", sb_months=sb_months)
 
 
 @app.get("/reviews.xlsx")
-def reviews_export(request: Request):
+def reviews_export(request: Request, m: str = ""):
     if (r := guard(request)):
         return r
-    data = reviews.export_xlsx()
+    month = reviews.valid_month(m) or reviews.months_back(1)[0]
+    data = reviews.export_xlsx(month=month)
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f'attachment; filename="google-reviews-{date.today().isoformat()}.xlsx"'})
+                    headers={"Content-Disposition": f'attachment; filename="google-reviews-{month}.xlsx"'})
+
+
+@app.get("/reviews/report", response_class=HTMLResponse)
+def reviews_month_report(request: Request, m: str = "", practice: str = ""):
+    if (r := guard(request)):
+        return r
+    plist = reviews.practices()
+    pid = int(practice) if practice.isdigit() and int(practice) in {p["id"] for p in plist} else None
+    month = reviews.valid_month(m) or reviews.months_back(1)[0]
+    rep = reviews.month_report(month, pid, plist)
+    return page(request, "reviews_report.html", rep=rep, board=rep["board"], pid=pid,
+                practice=next((p for p in plist if p["id"] == pid), None), month=month,
+                months=[(k, reviews.month_label(k)) for k in reviews.months_back(24)[::-1]])
 
 
 DONE_MSG = {"reply": "Reply posted.", "like": "Liked. Marked done.", "hide": "Comment hidden. Marked done.",
