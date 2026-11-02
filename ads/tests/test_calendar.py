@@ -82,6 +82,19 @@ class FakeGraph:
         return {}
 
 
+def test_timed_event_ignores_stale_last_day(env):
+    """The hidden "Last day" box keeps the form's first date; a timed event moved to a later day must still save."""
+    cal, h = env["cal"], env["heights"]
+    practices = [{"id": h, "name": "Heights Orthodontics"}]
+    today, later = date.today().isoformat(), (date.today() + timedelta(days=4)).isoformat()
+    ev, _ = cal.parse(form(h, date=later, end_date=today, start="10:00", end="12:00"), practices)
+    assert ev["starts"].startswith(later) and ev["ends"].startswith(later + "T12:00")
+    with pytest.raises(cal.CalError, match="after the start"):
+        cal.parse(form(h, date=later, end_date=today, start="12:00", end="10:00"), practices)
+    ev, _ = cal.parse(form(h, date=today, end_date=later, all_day="1"), practices)      # all-day events still span days
+    assert ev["ends"].startswith(later)
+
+
 def test_calendar_page_and_who_can_schedule(env):
     a, v, ag = env["admin"], env["viewer"], env["agent"]
     page = v.get("/calendar").text

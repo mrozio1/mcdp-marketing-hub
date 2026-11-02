@@ -339,7 +339,7 @@
     $('f-start').dataset.prev = e.target.value; update();
   });
   $('f-start').dataset.prev = $('f-start').value;
-  $('f-date').addEventListener('change', () => { if ($('f-allday').checked && $('f-end-date').value < $('f-date').value) $('f-end-date').value = $('f-date').value; update(); });
+  $('f-date').addEventListener('change', () => { if (!$('f-allday').checked || $('f-end-date').value < $('f-date').value) $('f-end-date').value = $('f-date').value; update(); });
   ['f-end', 'f-end-date', 'f-details', 'f-extra', 'f-cost'].forEach(id => $(id).addEventListener('input', update));
   ['f-venue', 'f-addr'].forEach(id => $(id).addEventListener('input', () => { $('f-place-label').value = $('f-venue').value.trim(); $('f-place-address').value = $('f-addr').value.trim(); update(); }));
   // ---- preview

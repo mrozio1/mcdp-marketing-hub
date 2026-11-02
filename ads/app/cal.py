@@ -195,7 +195,8 @@ def parse(form, practices):
     all_day = g("all_day") in ("1", "on", "true")
     day = g("date")
     start = _dt(day, "00:00" if all_day else g("start"))
-    end = _dt(g("end_date") or day, "00:00" if all_day else g("end"))
+    # "Last day" only applies to all-day events; timed events end on the same day they start
+    end = _dt((g("end_date") or day) if all_day else day, "00:00" if all_day else g("end"))
     if not all_day and end <= start:
         raise CalError("The end time should be after the start time.")
     if all_day and end < start:
@@ -251,7 +252,7 @@ def draft(form, old=None):
                "kind": g("kind"), "subject": g("subject"), "subject_custom": int(g("subject_custom") == "1"),
                "where_kind": g("where_kind"), "place_label": g("place_label"), "place_address": g("place_address"),
                "office_id": int(g("office_id")) if g("office_id").isdigit() else None, "npi_key": g("npi_key"),
-               "place_id": g("place_id"), "starts": f"{d}T{g('start') or '10:00'}", "ends": f"{g('end_date') or d}T{g('end') or '10:45'}",
+               "place_id": g("place_id"), "starts": f"{d}T{g('start') or '10:00'}", "ends": f"{(g('end_date') or d) if g('all_day') in ('1', 'on') else d}T{g('end') or '10:45'}",
                "all_day": int(g("all_day") in ("1", "on")), "repeat": g("repeat"), "repeat_until": g("repeat_until"),
                "reminder": int(g("reminder")) if g("reminder").lstrip("-").isdigit() else 60, "show_as": g("show_as") or "busy",
                "teams": int(g("teams") in ("1", "on")), "extra": g("extra"), "cost": g("cost") or None, "details": g("details"),
