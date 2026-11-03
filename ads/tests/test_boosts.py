@@ -130,7 +130,7 @@ def test_filter_only_practice_uses_the_master_accounts(client, monkeypatch):
     assert shown(c.get(f"/p/{new}").text, "Brand awareness Oct")    # pulled through the master's account
     conn = c.get("/connections").text
     assert "(master&#39;s, by filter words)" in conn or "(master's, by filter words)" in conn
-    dash = c.get("/practices").text
+    dash = c.get("/practices?m=2026-10").text
     assert "Filter matches no campaigns" in dash              # Wesley: words match nothing
     assert "Nothing linked yet" in dash
     assert db.practice(new)["meta_account_id"] in ("", None)        # nothing was written to the practice
@@ -144,7 +144,7 @@ def test_sync_errors_show_on_the_practices_list(client, monkeypatch):
         raise sync.cx.ConnectorError("The customer account can't be accessed because it is not yet enabled")
     monkeypatch.setattr(sync.cx, "meta_campaign_rows", gone)
     sync.sync_all(today=TODAY)
-    assert "Meta Ads sync failed" in c.get("/practices").text
+    assert "Meta Ads sync failed" in c.get("/practices?m=2026-10").text
 
 
 def test_a_blank_practice_is_not_the_master(client, monkeypatch):
@@ -152,7 +152,7 @@ def test_a_blank_practice_is_not_the_master(client, monkeypatch):
     master, heights, waterford = _setup(db, sync, monkeypatch)
     blank = db.add_practice("Eric Groeneveld", 0, 0, "")
     assert "Master" not in c.get(f"/p/{blank}").text.split("<h1", 1)[1].split("</h1>", 1)[0]
-    dash = c.get("/practices").text
+    dash = c.get("/practices?m=2026-10").text
     row = dash.split("Eric Groeneveld", 1)[1][:400]
     assert "tag-master" not in row
 

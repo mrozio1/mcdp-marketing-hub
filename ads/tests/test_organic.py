@@ -22,6 +22,8 @@ def hub(tmp_path, monkeypatch):
     from app import actions, ai, connectors, db, main, organic, sync
     for m in (connectors, db, sync, organic, actions, main):
         importlib.reload(m)
+    real_window = sync.sync_window       # pages read "this month"; these tests live in October 2026
+    monkeypatch.setattr(sync, "sync_window", lambda today=None: real_window(today or date(2026, 10, 12)))
     from fastapi.testclient import TestClient
     c = TestClient(main.app)
     c.__enter__()

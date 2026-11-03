@@ -17,12 +17,18 @@ SYNC_HOUR_UTC = int(os.environ.get("ADS_SYNC_HOUR_UTC", "10"))
 
 
 def sync_window(today=None):
-    """Month to date, except in the first 3 days of a month: the whole previous month."""
+    """This month to date (the Practices page defaults to the current month)."""
     today = today or date.today()
-    if today.day <= 3:
-        last_month_end = today.replace(day=1) - timedelta(days=1)
-        return last_month_end.replace(day=1), last_month_end
     return today.replace(day=1), today
+
+
+def closing_window(today=None):
+    """In the first 3 days of a month, the whole previous month too, so its late conversions settle."""
+    today = today or date.today()
+    if today.day > 3:
+        return None
+    last_month_end = today.replace(day=1) - timedelta(days=1)
+    return last_month_end.replace(day=1), last_month_end
 
 
 def _parsed(rows, platform, level, since, until):
@@ -330,6 +336,14 @@ def sync_all(today=None, refresh_lists=False):
             owners = build_owners(practices, cache)
         except Exception:   # never let the ownership lookup stop the numbers syncing
             owners = campaign_owners()
+        closing = closing_window(today)
+        if closing:   # last month first, so this month's pull is the newest upload
+            cache_prev = {}
+            for p in practices:
+                try:
+                    sync_practice(p, *closing, google, cache_prev, owners)
+                except Exception:
+                    pass
         for p in practices:
             r = sync_practice(p, since, until, google, cache, owners)
             if google_error and p.get("google_customer_id"):

@@ -106,11 +106,33 @@ def test_google_robot_not_added_anywhere(env, monkeypatch):
         cx.GoogleClient(mp.REFRESH).accounts()
 
 
+def test_first_days_sync_this_month_and_close_last_month(env):
+    """On Nov 2 the sync pulls November to date (the Practices page's default) and the whole of October."""
+    cx, db, sync = env
+    db.set_setting("google_refresh_token", mp.REFRESH)
+    pid = db.add_practice("Month Toggle Ortho", 3000, 900)
+    db.set_practice_accounts(pid, "555001", "4445556666")
+    sync.sync_all(today=date(2026, 11, 2))
+    nov, octo = db.latest_upload(pid, "google", "campaign", "2026-11"), db.latest_upload(pid, "google", "campaign", "2026-10")
+    assert (nov["date_start"], nov["date_end"]) == ("2026-11-01", "2026-11-02")
+    assert (octo["date_start"], octo["date_end"]) == ("2026-10-01", "2026-10-31")
+    assert db.latest_upload(pid, "google", "campaign")["id"] == nov["id"]          # newest = this month
+    assert db.latest_upload(pid, "meta", "campaign", "2026-10")["date_end"] == "2026-10-31"
+    assert db.latest_upload(pid, "google", "campaign", "2026-08") is None
+    from app import main
+    db.archive_rows(pid, "google", [{"campaign": "Old one", "date": date(2026, 8, 4), "spend": 12.5, "impressions": 100,
+                                     "clicks": 3, "conversions": 1}], date(2026, 8, 1), date(2026, 8, 31))
+    v = main.platform_view(next(q for q in db.practices() if q["id"] == pid), "google", "Google Ads", month="2026-08")   # older months: the daily archive
+    assert v["upload"]["source"] == "archive" and v["totals"]["spend"] == 12.5
+
+
 def test_sync_window():
-    from app.sync import sync_window
+    from app.sync import closing_window, sync_window
     assert sync_window(date(2026, 10, 13)) == (date(2026, 10, 1), date(2026, 10, 13))
-    assert sync_window(date(2026, 10, 2)) == (date(2026, 9, 1), date(2026, 9, 30))
-    assert sync_window(date(2026, 1, 3)) == (date(2025, 12, 1), date(2025, 12, 31))
+    assert sync_window(date(2026, 11, 3)) == (date(2026, 11, 1), date(2026, 11, 3))       # always the current month
+    assert closing_window(date(2026, 11, 3)) == (date(2026, 10, 1), date(2026, 10, 31))   # last month is closed out too
+    assert closing_window(date(2026, 1, 2)) == (date(2025, 12, 1), date(2025, 12, 31))
+    assert closing_window(date(2026, 10, 13)) is None
 
 
 def test_sync_all_feeds_analysis_and_prunes(env):
@@ -124,7 +146,7 @@ def test_sync_all_feeds_analysis_and_prunes(env):
     r = status["results"][str(pid)]
     assert r["meta"]["ok"] and r["google"]["ok"] and r["google"]["terms"] == 2
     ups = db.uploads(pid)
-    assert len([u for u in ups if u["platform"] == "google" and u["level"] == "campaign"]) == 3   # pruned to 3
+    assert len([u for u in ups if u["platform"] == "google" and u["level"] == "campaign"]) == 2   # pruned to 2 per month
     g = db.latest_upload(pid, "google", "campaign")
     rows = db.upload_rows(g["id"])
     camps, tot, findings = analyze_campaigns(rows)

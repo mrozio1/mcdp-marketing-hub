@@ -288,12 +288,19 @@ def seed_archive():
     return n
 
 
-def prune_synced(pid, platform, level, keep=3):
-    """Nightly syncs replace each other; keep only the newest few."""
+def prune_synced(pid, platform, level, keep=2, months=3):
+    """Nightly syncs replace each other: keep the newest few per month, for the newest few months
+    (older months are still in the daily archive)."""
     with conn() as c:
-        old = [r["id"] for r in c.execute(
-            "SELECT id FROM uploads WHERE practice_id=? AND platform=? AND level=? AND source='sync' "
-            "ORDER BY uploaded_at DESC, id DESC LIMIT -1 OFFSET ?", (pid, platform, level, keep))]
+        rows = c.execute("SELECT id, substr(coalesce(date_start, ''), 1, 7) AS m FROM uploads WHERE practice_id=? AND "
+                         "platform=? AND level=? AND source='sync' ORDER BY uploaded_at DESC, id DESC",
+                         (pid, platform, level)).fetchall()
+        seen, old = {}, []
+        for r in rows:
+            seen.setdefault(r["m"], 0)
+            seen[r["m"]] += 1
+            if seen[r["m"]] > keep or len(seen) > months:
+                old.append(r["id"])
         c.executemany("DELETE FROM uploads WHERE id=?", [(i,) for i in old])
 
 
@@ -308,10 +315,17 @@ def delete_upload(pid, uid):
         c.execute("DELETE FROM uploads WHERE id=? AND practice_id=?", (uid, pid))
 
 
-def latest_upload(pid, platform, level):
+def latest_upload(pid, platform, level, month=None):
+    """The newest upload; with month ('YYYY-MM'), the newest one covering that month."""
     with conn() as c:
-        r = c.execute("SELECT * FROM uploads WHERE practice_id=? AND platform=? AND level=? "
-                      "ORDER BY uploaded_at DESC, id DESC LIMIT 1", (pid, platform, level)).fetchone()
+        if month:
+            r = c.execute("SELECT * FROM uploads WHERE practice_id=? AND platform=? AND level=? AND "
+                          "(substr(date_start, 1, 7)=? OR substr(coalesce(date_end, date_start), 1, 7)=?) "
+                          "ORDER BY substr(date_start, 1, 7)=? DESC, uploaded_at DESC, id DESC LIMIT 1",
+                          (pid, platform, level, month, month, month)).fetchone()
+        else:
+            r = c.execute("SELECT * FROM uploads WHERE practice_id=? AND platform=? AND level=? "
+                          "ORDER BY uploaded_at DESC, id DESC LIMIT 1", (pid, platform, level)).fetchone()
         return dict(r) if r else None
 
 

@@ -4,9 +4,18 @@
 {% block content %}
 <div class="title-row">
   <h1>Practices</h1>
+  <form method="get" action="/practices" class="month-pick">
+    <label>Month
+      <select name="m" onchange="this.form.submit()">
+        {% for k, label in month_opts %}<option value="{{ k }}" {% if k == month %}selected{% endif %}>{{ label }}{% if loop.first %} (this month){% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button class="btn btn-quiet" type="submit">Show</button></noscript>
+    {% if not is_current %}<a class="small" href="/practices">Back to this month</a>{% endif %}
+  </form>
   {% if any_connection and can_edit %}
   <form method="post" action="/sync" data-busy="Starting…" class="sync-form">
-    <input type="hidden" name="back" value="/practices">
+    <input type="hidden" name="back" value="/practices{% if not is_current %}?m={{ month }}{% endif %}">
     <button class="btn btn-quiet" type="submit" {% if sync_running %}disabled{% endif %}>{{ "Syncing…" if sync_running else "Sync now" }}</button>
     <span class="muted small">{% if last_sync.at %}Last synced {{ last_sync.at.replace('T', ' ')[:16] }}{% else %}Not synced yet{% endif %}</span>
   </form>
@@ -20,7 +29,7 @@
 {% else %}
 <table class="practices">
   <thead>
-    <tr><th scope="col">Practice</th><th scope="col">Google Ads this month</th><th scope="col">Meta Ads this month</th><th scope="col" class="num">Money at stake</th></tr>
+    <tr><th scope="col">Practice</th><th scope="col">Google Ads · {{ "this month" if is_current else month_label }}</th><th scope="col">Meta Ads · {{ "this month" if is_current else month_label }}</th><th scope="col" class="num">Money at stake</th></tr>
   </thead>
   <tbody>
   {% for it in items %}
@@ -39,7 +48,7 @@
     {% if it.organic %}
     <tr class="organic-row">
       <th scope="row"><span class="sr-only">{{ it.p.name }} organic posts</span></th>
-      <td colspan="2"><div class="organic-line"><span class="organic-label">Organic this month</span>
+      <td colspan="2"><div class="organic-line"><span class="organic-label">Organic · {{ "this month" if is_current else month_label }}</span>
         <div>{% for n in it.organic %}<span class="organic-net"><strong>{{ n.label }}</strong> {{ n.count }} post{{ '' if n.count == 1 else 's' }}{% if n.views is not none %} · {{ n.views|compact }} views{% endif %} · {{ n.interactions|compact }} engagements{% if n.rate %} · {{ '%.1f'|format(n.rate * 100) }}% rate{% endif %}</span>{% endfor %}</div>
       </div></td>
       <td></td>
@@ -48,7 +57,7 @@
   {% endfor %}
   </tbody>
 </table>
-<p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, from each practice’s latest exports.</p>
+<p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, for {{ month_label }}.</p>
 {% endif %}
 
 {% if can_edit %}

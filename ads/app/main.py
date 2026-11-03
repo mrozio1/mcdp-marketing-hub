@@ -243,15 +243,36 @@ def page(request, name, **ctx):
 
 
 # ---------- analysis view-model ----------
-def platform_view(practice, key, label, all_practices=None):
+def month_bounds(key, today=None):
+    """'YYYY-MM' → (first day, last day or today if it's this month)."""
+    import calendar as _cal
+    from datetime import date as _date
+    today = today or _date.today()
+    y, m = int(key[:4]), int(key[5:7])
+    end = _date(y, m, _cal.monthrange(y, m)[1])
+    return _date(y, m, 1), min(end, today)
+
+
+def platform_view(practice, key, label, all_practices=None, month=None):
+    """month: 'YYYY-MM' to show that month (the newest upload covering it, else the daily archive);
+    None for the newest upload whatever its dates."""
     budget = practice.get(f"{key}_budget") or 0
-    up = db.latest_upload(practice["id"], key, "campaign") or db.latest_upload(practice["id"], key, "ad")
+    up = (db.latest_upload(practice["id"], key, "campaign", month)
+          or db.latest_upload(practice["id"], key, "ad", month))
+    archived_rows = None
+    if month and not up:
+        since, until = month_bounds(month)
+        archived_rows = db.archived(practice["id"], key, since, until)
+        if archived_rows:
+            up = {"id": None, "platform": key, "level": "campaign", "source": "archive", "filename": "Daily archive",
+                  "date_start": since.isoformat(), "date_end": max(r["date"] for r in archived_rows).isoformat(),
+                  "uploaded_at": "", "row_count": len(archived_rows)}
     view = {"key": key, "label": label, "upload": up, "budget": budget, "campaigns": [], "findings": [],
             "totals": None, "pacing": {"available": False}, "search_terms": None, "search_upload": None,
             "filtered": scope.has_filter(practice), "camp_total": 0, "breakdown": None, "all_names": [],
             "boosted": scope.boosted_names() if key == "meta" else set()}
     if up:
-        all_rows = db.upload_rows(up["id"])
+        all_rows = archived_rows if archived_rows is not None else db.upload_rows(up["id"])
         rows = scope.apply(all_rows, practice, platform=key)
         view["camp_total"] = len({r["campaign"] for r in all_rows})
         view["all_names"] = sorted({r["campaign"] for r in all_rows if r.get("campaign")}, key=str.lower)
@@ -260,7 +281,7 @@ def platform_view(practice, key, label, all_practices=None):
             view.update(campaigns=camps, totals=tot, findings=findings, pacing=pacing(rows, budget))
         if not view["filtered"] and all_practices is not None:
             view["breakdown"] = scope.breakdown(practice, key, all_rows, all_practices)
-    st_up = db.latest_upload(practice["id"], key, "search_term")
+    st_up = db.latest_upload(practice["id"], key, "search_term", month)
     if st_up:
         st_rows = scope.apply(db.upload_rows(st_up["id"]), practice, platform=key)
         if st_rows:
@@ -272,9 +293,9 @@ def platform_view(practice, key, label, all_practices=None):
     return view
 
 
-def practice_views(p, with_breakdown=False):
+def practice_views(p, with_breakdown=False, month=None):
     allp = db.practices() if with_breakdown else None
-    return [platform_view(p, k, l, allp) for k, l in PLATFORMS]
+    return [platform_view(p, k, l, allp, month) for k, l in PLATFORMS]
 
 
 def period_for(views):
@@ -626,9 +647,9 @@ def setup_problems(p, eff, views, result):
     return out
 
 
-def organic_summary(p, allp):
-    """This month's Facebook / Instagram post numbers for the practices list."""
-    since, until = sync.sync_window()
+def organic_summary(p, allp, month=None):
+    """A month's Facebook / Instagram post numbers for the practices list (default this month)."""
+    since, until = month_bounds(month) if month else sync.sync_window()
     try:
         org = organic.organic_view(p, allp, is_master(p, allp), since, until)
     except Exception:
@@ -651,23 +672,27 @@ def master_reports(request: Request, kind: str = "month", key: str = ""):
 
 
 @app.get("/practices", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(request: Request, m: str = ""):
     if (r := guard(request)):
         return r
+    month_opts = reviews.months_back(13)[::-1]           # newest first; this month is the default
+    month = m if m in month_opts else month_opts[0]
     items = []
     allp = db.practices()
     eff = {q["id"]: q for q in scope.with_inherited(allp)}
     results = sync.last_sync().get("results", {})
     for p in allp:
-        views = practice_views(p)
+        views = practice_views(p, month=month)
         problems = setup_problems(p, eff[p["id"]], views, results.get(str(p["id"]), {}))
         waste = sum(f["amount"] for v in views for f in v["findings"] if f["kind"] in ("zero-conv-campaign", "high-cpa"))
         waste += sum((v["search_terms"] or {}).get("wasted_total", 0) for v in views)
         items.append({"p": p, "views": views, "waste": round(waste, 2), "master": is_master(p, allp),
                       "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium")),
-                      "problems": problems, "organic": organic_summary(p, allp)})
+                      "problems": problems, "organic": organic_summary(p, allp, month)})
     items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
-    return page(request, "dashboard.html", items=items, kits_waiting=brand.waiting_review(allp))
+    return page(request, "dashboard.html", items=items, kits_waiting=brand.waiting_review(allp),
+                month=month, is_current=month == month_opts[0], month_label=reviews.month_label(month),
+                month_opts=[(k, reviews.month_label(k)) for k in month_opts])
 
 
 @app.post("/practices")
