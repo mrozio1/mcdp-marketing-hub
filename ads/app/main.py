@@ -2431,7 +2431,7 @@ def field_report_form(request: Request):
                 month_opts=[(k, date.fromisoformat(k + "-01").strftime("%B %Y")) for k in opts],
                 month=request.query_params.get("m") if request.query_params.get("m") in opts else opts[0],
                 options=field_report.OPTIONS, me_id=u["id"],
-                maps_key=bool(places.server_key()))
+                maps_key=bool(places.server_key()), google=field_report.google_status())
 
 
 @app.get("/field/report.pdf")

@@ -152,3 +152,28 @@ def test_time_there_is_logged_and_edited(env):
     form = env["abe"].get(f"/field/visits/{vid}/edit").text
     assert 'name="minutes"' in form and '<option value="20" selected>' in form
     assert 'name="minutes"' in env["abe"].get("/field/log?place=&npi=").text or True
+
+
+def test_two_people_with_one_name_and_a_misplaced_office(env, monkeypatch):
+    fr, f, ids = env["fr"], env["field"], env["ids"]
+    abe = ids["abe@example.com"]
+    for office, la, ln in (("Rose Street", 44.76, -85.62), ("NMPD", 44.75, -85.60), ("Cherry Bay Dental", 33.75, -84.39)):
+        o = f.ensure_office(name=office, address="Traverse City, MI", lat=la, lng=ln)     # the last one lands in Georgia
+        f.log_visit(abe, {"office_id": o["id"], "name": office, "practice_id": str(env["havens"]),
+                          "visited_at": "2026-09-08T10:" + str(10 + len(office)), "notes": "",
+                          "people": [{"name": "Tammy", "email": "", "role": "Front desk"}]})
+    monkeypatch.setattr(fr, "_routes", lambda stops: None)                                     # Google refuses
+    d = fr.gather("2026-09", abe["id"], env["havens"], {"miles": True})
+    assert d["people"] == 3                                                                  # three offices, three Tammys
+    assert len(d["jumps"]) == 1 and d["jumps"][0][3] == "Cherry Bay Dental" and d["miles"] < 10
+    t = text(env["abe"].get(f"/field/report.pdf?m=2026-09&practice={env['havens']}&miles=1").content)
+    assert "Left out of the miles" in t and "Cherry Bay Dental" in t
+
+
+def test_google_refusals_are_shown(env, monkeypatch):
+    fr = env["fr"]
+    fr._google_note("map", "Maps Static API (HTTP 403): This API key is not authorized to use this service or API.")
+    page = env["admin"].get("/field/report").text
+    assert "Google refused the last report" in page and "not authorized" in page and "API restrictions" in page
+    fr._google_note("map", "")
+    assert "Google refused" not in env["admin"].get("/field/report").text

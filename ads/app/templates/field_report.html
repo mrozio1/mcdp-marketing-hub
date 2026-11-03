@@ -40,6 +40,10 @@
     {% endfor %}
   </fieldset>
 
+  {% set gm, gr = (google.map or {}).error, (google.routes or {}).error %}
+  {% if gm or gr %}<div class="flash flash-error small"><strong>Google refused the last report's {{ 'map and routes' if gm and gr else ('map' if gm else 'driving routes') }}:</strong>
+    {% if gm %}<br>{{ gm }}{% endif %}{% if gr %}<br>{{ gr }}{% endif %}
+    <br>Usually the server key's <em>API restrictions</em> (Google Cloud → Credentials → the server key) don't list Maps Static API and Routes API yet; turning them on in the Library isn't enough on its own. Changes take a few minutes.</div>{% endif %}
   <button class="btn btn-big" type="submit">Download PDF</button>
   <p class="small muted">The practice's logo and colours are used when one practice is picked (set them on its page under Ad images). With all practices, the master record's logo is used.</p>
 </form>

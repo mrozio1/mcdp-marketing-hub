@@ -14,6 +14,7 @@ import io
 import json
 import math
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -117,11 +118,46 @@ def month_bounds(month):
 
 
 def point(v):
-    """Where a visit was: the office's spot, else the phone's when it checked in."""
-    for la, ln in (("office_lat", "office_lng"), ("phone_lat", "phone_lng")):
+    """Where a visit was: the phone's spot when it checked in at the office (the most reliable), else the
+    office's saved location, else wherever the phone was."""
+    order = (("phone_lat", "phone_lng"), ("office_lat", "office_lng")) if v.get("on_site") == 1 else \
+        (("office_lat", "office_lng"), ("phone_lat", "phone_lng"))
+    for la, ln in order:
         if v.get(la) is not None and v.get(ln) is not None:
             return float(v[la]), float(v[ln])
     return None
+
+
+JUMP_MILES = 120     # a same-day hop longer than this is almost always an office saved in the wrong place
+
+
+# ---- what Google said the last time it was asked (shown on the report page, so a refusal isn't silent)
+def _google_note(kind, msg):
+    try:
+        got = json.loads(db.get_setting("field_report_google") or "{}")
+    except ValueError:
+        got = {}
+    got[kind] = {"error": (msg or "")[:400], "at": db.now()}
+    db.set_setting("field_report_google", json.dumps(got))
+
+
+def google_status():
+    try:
+        return json.loads(db.get_setting("field_report_google") or "{}")
+    except ValueError:
+        return {}
+
+
+def _http_error(e):
+    try:
+        raw = e.read().decode(errors="replace")
+    except Exception:
+        raw = ""
+    try:
+        j = json.loads(raw)
+        return (j.get("error") or {}).get("message") or raw
+    except ValueError:
+        return " ".join(raw.split())[:300] or str(e)
 
 
 def interval(visited_at, followup):
@@ -222,9 +258,15 @@ def _routes(stops):
         with urllib.request.urlopen(req, timeout=20) as r:
             j = json.load(r)
         legs = j["routes"][0]["legs"]
+        _google_note("routes", "")
         return [round((l.get("distanceMeters") or 0) / 1609.344, 1) for l in legs]
-    except Exception:
-        return None
+    except urllib.error.HTTPError as e:
+        _google_note("routes", f"Routes API (HTTP {e.code}): {_http_error(e)}")
+    except (KeyError, IndexError):
+        _google_note("routes", "Routes API found no driving route between these stops.")
+    except Exception as e:
+        _google_note("routes", f"Routes API couldn't be reached: {e}")
+    return None
 
 
 def gather(month, agent_id=None, practice_id=None, opts=None):
@@ -260,9 +302,14 @@ def gather(month, agent_id=None, practice_id=None, opts=None):
             d["between"] = sum(v["gap"] or 0 for v in vs)
             d["miles"], d["legs"], d["estimated"] = None, [], False
             pts = [v["pt"] for v in vs if v["pt"]]
+            d["jumps"] = []
             if opts.get("miles") and len(pts) > 1:
                 d["legs"], d["estimated"] = drive_miles(pts)
-                d["miles"] = round(sum(d["legs"]), 1)
+                with_pt = [v for v in vs if v["pt"]]
+                for i, leg in enumerate(d["legs"]):
+                    if leg > JUMP_MILES:      # left out of the totals and named, so the office can be fixed
+                        d["jumps"].append((with_pt[i]["office_name"], with_pt[i + 1]["office_name"], leg))
+                d["miles"] = round(sum(l for l in d["legs"] if l <= JUMP_MILES), 1)
                 any_estimate = any_estimate or d["estimated"]
             elif opts.get("miles"):
                 d["miles"] = 0.0
@@ -270,11 +317,14 @@ def gather(month, agent_id=None, practice_id=None, opts=None):
         a["spend"] = round(sum(d["spend"] for d in a["days"]), 2)
         a["miles"] = round(sum(d["miles"] or 0 for d in a["days"]), 1)
         a["in_office"] = sum(d["in_office"] for d in a["days"])
-    people = {(p["name"] or p["email"]).lower() for r in rows for p in r["people"] if p["name"] or p["email"]}
+    # the same name at different offices is a different person (two Tammys); an email ties them together
+    people = {(p["email"].lower(),) if p["email"] else (r["office_id"], p["name"].strip().lower())
+              for r in rows for p in r["people"] if p["name"] or p["email"]}
     return {"agents": agents, "visits": len(rows), "offices": len({r["office_id"] for r in rows}), "people": len(people),
             "spend": round(sum(r["cost"] or 0 for r in rows), 2), "miles": round(sum(a["miles"] for a in agents), 1),
             "in_office": sum(a["in_office"] for a in agents), "timed": sum(1 for r in rows if r.get("minutes")),
-            "estimated": any_estimate, "days": sum(len(a["days"]) for a in agents)}
+            "estimated": any_estimate, "days": sum(len(a["days"]) for a in agents),
+            "jumps": [(a["name"], d["day"], *j) for a in agents for d in a["days"] for j in d.get("jumps", [])]}
 
 
 # ------------------------------------------------------------------ maps
@@ -313,9 +363,15 @@ def static_map(points, color):
         with urllib.request.urlopen(url, timeout=20) as r:
             data = r.read()
             if not data.startswith(b"\x89PNG"):
+                _google_note("map", "Maps Static API sent something other than a map image.")
                 return None
-    except Exception:
+    except urllib.error.HTTPError as e:
+        _google_note("map", f"Maps Static API (HTTP {e.code}): {_http_error(e)}")
         return None
+    except Exception as e:
+        _google_note("map", f"Maps Static API couldn't be reached: {e}")
+        return None
+    _google_note("map", "")
     with open(cache, "wb") as f:
         f.write(data)
     return data
@@ -434,6 +490,10 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
     if opts.get("time"):
         notes.append("Time in an office is what was logged with the visit; time between runs from leaving one office "
                      "(arrival + time there) to arriving at the next.")
+    for nm, dy, a_off, b_off, leg in data["jumps"]:
+        notes.append(f"<font color='#A3401C'>Left out of the miles: {leg:,.0f} mi from {E(a_off)} to {E(b_off)} on "
+                     f"{date.fromisoformat(dy):%b %-d} ({E(nm)}). One of those offices is probably saved in the wrong place; "
+                     f"check its address on the Map.</font>")
     for n in notes:
         out += [Spacer(1, 3), Paragraph(n, small)]
     if not data["visits"]:
@@ -487,7 +547,9 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                 spoke = "<br/>".join(E(p["name"] or p["email"]) + (f" <font color='#5B5852'>({E(p['role'])})</font>" if p["role"] else "")
                                      for p in v["people"]) or "<font color='#5B5852'>—</font>"
                 office = f"<b>{E(v['office_name'])}</b>" + (f"<br/><font size='7.4' color='#5B5852'>{E(v['office_address'])}</font>" if v.get("office_address") else "")
-                if opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]):
+                if opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]) and d["legs"][i - 1] > JUMP_MILES:
+                    office += "<br/><font size='7.4' color='#A3401C'>location looks wrong (left out of the miles)</font>"
+                elif opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]):
                     office += (f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{d['legs'][i - 1]:.1f} mi "
                                + (f"from stop {label(i)}" if numbered else "from the last stop") + "</font>")
                 row = ([Paragraph(label(v["n"]) or str(v["n"]), num_style)] if numbered else []) + \
@@ -535,6 +597,7 @@ def _sketch(pts, w, h, color, rl, Drawing, Rect, Line, Circle, String):
     for i, (x, y) in enumerate(xy, 1):
         d.add(Circle(x, y, 8, fillColor=color, strokeColor=rl.white, strokeWidth=1.5))
         d.add(String(x, y - 3, label(i), fontName="Helvetica-Bold", fontSize=8, fillColor=rl.white, textAnchor="middle"))
-    d.add(String(6, 5, "Sketch of the stops; turn on Google's Maps Static API for a street map.", fontName="Helvetica",
+    why = (google_status().get("map") or {}).get("error") or "no Google Maps server key"
+    d.add(String(6, 5, ("Sketch of the stops. Google didn't send a street map: " + why)[:190], fontName="Helvetica",
                  fontSize=6.5, fillColor=rl.HexColor("#5B5852")))
     return d
