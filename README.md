@@ -513,3 +513,14 @@ Setup (once): in the Google Cloud project used for Reviews, enable the *Google S
 *Business Profile Performance API*; then on Search → Setup click **Sign in with Google** again (the sign-in now
 also asks for read-only Search Console access) with the account that sees the practice websites in Search
 Console. Check which website belongs to which practice in the same Setup panel.
+
+## Field visit PDF reports
+
+Field → **PDF report** makes a branded PDF for a month: by field agent (or all of them as a group), and by
+practice (or all). Always included: date, referral office, who was spoken to (with role), what was brought,
+conversation notes, follow-up interval. Optional: spend, time in each office and between offices, a numbered map
+of each day's stops, and driving mileage. Field agents only ever get their own visits; turn on **Field manager**
+for someone on the Team page to let them see and report on every agent. Branding uses the practice's logo
+(practice page → Ad images) and colours (taken from the logo, or set by hand under it). Street maps and driving
+miles use the Google Maps server key with the *Maps Static API* and *Routes API* turned on; without them the
+report draws a plain sketch and estimates miles (straight line × 1.25).

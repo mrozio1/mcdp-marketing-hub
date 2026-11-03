@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility
+from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -735,6 +735,7 @@ def practice_page(request: Request, pid: int, show: str = "all"):
     included = {c["name"] for v in views for c in v["campaigns"]}
     add_options = sorted({n for v in views for n in v["all_names"]} - included, key=str.lower)
     return page(request, "practice.html", p=p, eff=scope.effective(p, allp), views=views, uploads=db.uploads(pid),
+                report_colors=field_report.colors(pid), report_colors_set=all(field_report.saved_colors(pid)),
                 master=is_master(p, allp), add_options=add_options,
                 show=show, org=org, combo=organic.combined(views, org),
                 social_status=sync.cached_list("social_status") or {},
@@ -2360,8 +2361,8 @@ def field_page(request: Request):
         return r
     period, day, who, prac = _field_args(request)
     u = me(request)
-    see_all = u["role"] == "admin"
-    if not see_all:   # everyone except admins sees only their own visits, spend and follow-ups
+    see_all = users.sees_all_field(u)
+    if not see_all:   # everyone except admins and field managers sees only their own visits, spend and follow-ups
         who = u["id"]
     start, end, label, prev_d, next_d = field.period_bounds(period, day)
     rows = field.visits_between(start, end, who, prac)
@@ -2387,13 +2388,77 @@ def field_export(request: Request):
         return r
     period, day, who, prac = _field_args(request)
     u = me(request)
-    if u["role"] != "admin":
+    if not users.sees_all_field(u):
         who = u["id"]
     start, end, label, *_ = field.period_bounds(period, day)
     rows = field.visits_between(start, end, who, prac)
-    data = field.export_xlsx(rows, f"Field visits · {label}" + ("" if u["role"] == "admin" else f" · {u['name']}"))
+    data = field.export_xlsx(rows, f"Field visits · {label}" + ("" if users.sees_all_field(u) else f" · {u['name']}"))
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="field-visits-{start.isoformat()}.xlsx"'})
+
+
+# ---------- Field visit PDF reports ----------
+def _report_scope(request):
+    """(user, may see everyone, agents to choose from, practices to choose from)."""
+    u = me(request)
+    allp = db.practices()
+    choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+    everyone = users.sees_all_field(u)
+    agents = sorted([t for t in users.all_users() if t.get("field") or t["id"] == u["id"]], key=lambda t: t["name"].lower()) \
+        if everyone else [u]
+    return u, everyone, agents, choices, allp
+
+
+@app.get("/field/report", response_class=HTMLResponse)
+def field_report_form(request: Request):
+    if (r := guard(request)):
+        return r
+    u, everyone, agents, choices, allp = _report_scope(request)
+    opts = reviews.months_back(13)[::-1]
+    return page(request, "field_report.html", everyone=everyone, agents=agents, practice_choices=choices,
+                month_opts=[(k, date.fromisoformat(k + "-01").strftime("%B %Y")) for k in opts],
+                month=request.query_params.get("m") if request.query_params.get("m") in opts else opts[0],
+                options=field_report.OPTIONS, me_id=u["id"],
+                maps_key=bool(places.server_key()))
+
+
+@app.get("/field/report.pdf")
+def field_report_pdf(request: Request, m: str = "", agent: str = "", practice: str = ""):
+    if (r := guard(request)):
+        return r
+    u, everyone, agents, choices, allp = _report_scope(request)
+    month = reviews.valid_month(m) or date.today().isoformat()[:7]
+    agent_id = int(agent) if agent.isdigit() else None
+    if not everyone or (agent_id and agent_id not in {a["id"] for a in agents}):
+        agent_id = u["id"]                     # people without manager access only ever get their own visits
+    pid = int(practice) if practice.isdigit() and int(practice) in {q["id"] for q in choices} else None
+    q = request.query_params
+    opts = {k: q.get(k) == "1" for k, *_ in field_report.OPTIONS}
+    master = next((p for p in allp if master_report._is_master(p, allp)), None)
+    brand_pid = pid or (master["id"] if master else None)
+    pname = next((p["name"] for p in choices if p["id"] == pid), "")
+    aname = next((a["name"] for a in agents if a["id"] == agent_id), "") if agent_id else ""
+    try:
+        data = field_report.build(month, agent_id, pid, opts, brand_pid=brand_pid, practice_name=pname, agent_name=aname)
+    except ImportError:
+        flash(request, "PDF reports need the server updated (the PDF library isn't installed yet). Run the update command.", "error")
+        return RedirectResponse("/field/report", status_code=303)
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{pname or 'all-practices'}-{aname or 'all-agents'}".lower()).strip("-")
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="field-visits-{month}-{slug}.pdf"'})
+
+
+@app.post("/p/{pid}/brand/colors")
+def brand_colors(request: Request, pid: int, primary: str = Form(""), accent: str = Form(""), reset: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if reset:
+        db.set_setting(f"brand_colors_{pid}", None)
+        flash(request, "Report colours reset; they come from the logo again.")
+    else:
+        field_report.set_colors(pid, primary, accent)
+        flash(request, "Brand colours saved.")
+    return RedirectResponse(f"/p/{pid}#brand-images", status_code=303)
 
 
 @app.get("/field/log", response_class=HTMLResponse)
@@ -2429,7 +2494,7 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
     suggested = (int(chosen) if chosen.isdigit() else None) or next(
         (h["practice_id"] for h in history if h.get("practice_id")), None) or field.suggested_practice(o, (me(request) or {}).get("id"))
     return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
-                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
+                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
                 practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre)
 
@@ -2440,7 +2505,7 @@ async def field_log(request: Request):
         return r
     form = await request.form()
     data = {k: form.get(k) for k in ("office_id", "place_id", "npi_key", "name", "address", "office_lat", "office_lng", "visited_at",
-                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes",
+                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes", "minutes",
                                      "practice_id", "practice_required",
                                      "phone_lat", "phone_lng", "phone_acc")}
     names = form.getlist("person_name")
@@ -2487,7 +2552,7 @@ def field_edit_form(request: Request, vid: int, error: str = ""):
     o = field.office(v["office_id"]) or {"id": v["office_id"], "name": v["office_name"], "address": v["office_address"]}
     back = request.query_params.get("back", "")
     return page(request, "field_log.html", o=o, ev=v, history=[], ratings=field.RATING_LABELS, roles=field.MET_ROLES,
-                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, browser_key="", map_id=places.map_id(), error=error,
+                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key="", map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=back if back.startswith("/") and not back.startswith("//") else "/field",
                 practice_choices=choices, practice_options=opts, suggested_practice=v["practice_id"],
                 selected_value=sel, pre=None)
@@ -2502,7 +2567,7 @@ async def field_edit(request: Request, vid: int):
         flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
         return RedirectResponse("/field", status_code=303)
     form = await request.form()
-    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "notes", "practice_id",
+    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "notes", "minutes", "practice_id",
                                      "practice_required", "remove_receipt")}
     names = form.getlist("person_name")
     emails, roles = form.getlist("person_email"), form.getlist("person_role")

@@ -721,6 +721,13 @@
             <input type="hidden" name="kind" value="logo"><input type="file" name="files" accept="image/png,image/jpeg,image/webp" required aria-label="Logo file">
             <button class="btn btn-quiet" type="submit">{{ 'Replace logo' if brand_logo else 'Upload logo' }}</button></form>{% endif %}
         </div>
+        <form method="post" action="/p/{{ p.id }}/brand/colors" class="brand-colors">
+          <span class="small"><strong>Brand colours</strong> <span class="muted">(for PDF reports{{ ', taken from the logo' if not report_colors_set else '' }})</span></span>
+          <label>Main <input type="color" name="primary" value="{{ report_colors[0] }}" {% if not can_edit %}disabled{% endif %}></label>
+          <label>Accent <input type="color" name="accent" value="{{ report_colors[1] }}" {% if not can_edit %}disabled{% endif %}></label>
+          {% if can_edit %}<button class="btn btn-quiet btn-small" type="submit">Save colours</button>
+          {% if report_colors_set %}<button class="linklike small" type="submit" name="reset" value="1">Use the logo's</button>{% endif %}{% endif %}
+        </form>
         {% if can_edit %}
         <form method="post" action="/p/{{ p.id }}/brand/images/upload" enctype="multipart/form-data" class="stack" data-busy="Adding…">
           <input type="hidden" name="kind" value="photo">

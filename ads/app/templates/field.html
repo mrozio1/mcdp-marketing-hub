@@ -45,7 +45,7 @@
   <div><dt>Spend</dt><dd>{{ sums.spend|money }}</dd></div>
   <div><dt>Checked in on site</dt><dd>{% if sums.checked %}{{ sums.on_site }}<span class="of"> of {{ sums.checked }}</span>{% else %}—{% endif %}</dd></div>
 </dl>
-<p class="small"><a href="/field.xlsx?{{ qs|urlencode }}">Export these visits to Excel</a></p>
+<p class="small"><a href="/field.xlsx?{{ qs|urlencode }}">Export these visits to Excel</a> · <a href="/field/report?m={{ day.isoformat()[:7] }}">PDF report</a></p>
 
 {% if rows and browser_key %}
 <section class="panel" aria-label="Where visits were logged">

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Field visit report{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/field">Field visits</a></p>
+<h1>Field visit report</h1>
+<p class="lede">A PDF of the month's visits, in the practice's colours and logo{% if not everyone %}. It covers your own visits{% endif %}.</p>
+
+<form method="get" action="/field/report.pdf" target="_blank" class="panel fr-form">
+  <div class="fr-grid">
+    <label>Month
+      <select name="m">{% for k, l in month_opts %}<option value="{{ k }}" {% if k == month %}selected{% endif %}>{{ l }}{% if loop.first %} (this month){% endif %}</option>{% endfor %}</select>
+    </label>
+    <label>Field agent
+      {% if everyone %}
+      <select name="agent">
+        <option value="">All field agents (as a group)</option>
+        {% for a in agents %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <input value="{{ agents[0].name }}" disabled><input type="hidden" name="agent" value="{{ me_id }}">
+      {% endif %}
+    </label>
+    <label>Practice
+      <select name="practice">
+        <option value="">All practices</option>
+        {% for p in practice_choices %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <fieldset class="fr-always">
+    <legend>Always in the report</legend>
+    <p class="small muted">Date and time of each visit · the referral office · who was spoken to, with their role · what was brought · what was talked about · the follow-up interval</p>
+  </fieldset>
+
+  <fieldset class="fr-opts">
+    <legend>Include</legend>
+    {% for key, label, hint in options %}
+    <label class="fr-opt"><input type="checkbox" name="{{ key }}" value="1" checked data-key="{{ key }}"><span><strong>{{ label }}</strong><small>{{ hint }}{% if key == 'map' and not maps_key %} (needs the Google Maps key on Connections; a plain sketch is used until then){% endif %}</small></span></label>
+    {% endfor %}
+  </fieldset>
+
+  <button class="btn btn-big" type="submit">Download PDF</button>
+  <p class="small muted">The practice's logo and colours are used when one practice is picked (set them on its page under Ad images). With all practices, the master record's logo is used.</p>
+</form>
+<script>
+  // remember the ticks for next time (this browser only)
+  document.querySelectorAll(".fr-opt input").forEach(b => {
+    try { const v = localStorage.getItem("fr-" + b.dataset.key); if (v !== null) b.checked = v === "1"; } catch (e) {}
+    b.addEventListener("change", () => { try { localStorage.setItem("fr-" + b.dataset.key, b.checked ? "1" : "0"); } catch (e) {} });
+  });
+</script>
+{% endblock %}

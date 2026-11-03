@@ -92,6 +92,8 @@ def init():
             c.execute("ALTER TABLE visits ADD COLUMN practice_id INTEGER")
         if "practice_location" not in have:    # which of that practice's addresses was picked
             c.execute("ALTER TABLE visits ADD COLUMN practice_location TEXT DEFAULT ''")
+        if "minutes" not in have:              # how long they were in the office (optional)
+            c.execute("ALTER TABLE visits ADD COLUMN minutes INTEGER")
     os.makedirs(receipt_dir(), exist_ok=True)
 
 
@@ -185,6 +187,18 @@ def _date_or_blank(s):
         return date.fromisoformat(s).isoformat()
     except ValueError:
         raise FieldError("That follow-up date isn't valid.")
+
+
+MINUTE_CHOICES = (5, 10, 15, 20, 30, 45, 60, 90, 120)
+
+
+def minutes_in(v):
+    """Time in the office, in minutes (1-600), or None."""
+    try:
+        m = int(str(v or "").strip())
+    except ValueError:
+        return None
+    return m if 0 < m <= 600 else None
 
 
 def _when(s):
@@ -419,12 +433,13 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO visits(office_id, user_id, user_name, visited_at, met_name, met_role, rating, dropped, cost, "
-            "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id, practice_location) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id, practice_location, "
+            "minutes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (o["id"], user.get("id") or None, user.get("name", ""), _when(form.get("visited_at")),
              met_name, met_role, rating,
              _clean(form.get("dropped"), 300), cost, receipt, _date_or_blank(form.get("followup")),
-             str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id, practice_location))
+             str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id, practice_location,
+             minutes_in(form.get("minutes"))))
         vid = cur.lastrowid
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
@@ -452,10 +467,10 @@ def update_visit(vid, form, receipt_bytes=None, receipt_type="", by=""):
     when = _when(form.get("visited_at")) if form.get("visited_at") else v["visited_at"]
     with db.conn() as c:
         c.execute("UPDATE visits SET visited_at=?, met_name=?, met_role=?, rating=?, dropped=?, cost=?, receipt=?, followup=?, "
-                  "notes=?, practice_id=?, practice_location=? WHERE id=?",
+                  "notes=?, practice_id=?, practice_location=?, minutes=? WHERE id=?",
                   (when, met_name, met_role, rating, _clean(form.get("dropped"), 300), money_in(form.get("cost")), receipt,
                    _date_or_blank(form.get("followup")), str(form.get("notes") or "").strip()[:4000],
-                   practice_id, practice_location, vid))
+                   practice_id, practice_location, minutes_in(form.get("minutes")), vid))
         c.execute("DELETE FROM visit_people WHERE visit_id=?", (vid,))
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])

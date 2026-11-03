@@ -51,7 +51,12 @@
 
   {% if not ev %}<p class="geo-status small" id="geo-status" aria-live="polite">Checking where you are…</p>{% endif %}
 
-  <label>When<input type="datetime-local" name="visited_at" id="visited-at"{% if ev %} value="{{ ev.visited_at[:16] }}"{% endif %}></label>
+  <div class="visit-when-row">
+    <label>When<input type="datetime-local" name="visited_at" id="visited-at"{% if ev %} value="{{ ev.visited_at[:16] }}"{% endif %}></label>
+    <label>Time there <span class="muted small">(optional)</span>
+      <select name="minutes"><option value="">—</option>{% for m in minute_choices %}<option value="{{ m }}" {% if ev and ev.minutes == m %}selected{% endif %}>{{ m if m < 60 else (m // 60) ~ (' h' if m % 60 == 0 else ' h ' ~ (m % 60)) }}{{ ' min' if m < 60 else (' min' if m % 60 else '') }}</option>{% endfor %}</select>
+    </label>
+  </div>
 
   <fieldset class="people-met" id="people-met">
     <legend>Who you met</legend>

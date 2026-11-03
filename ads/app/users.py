@@ -54,7 +54,8 @@ COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", 
            "home_lat": "REAL", "home_lng": "REAL",
            "field": "INTEGER NOT NULL DEFAULT 0",
            "social": "INTEGER NOT NULL DEFAULT 1",
-           "seasonal": "INTEGER NOT NULL DEFAULT 1"}   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
+           "seasonal": "INTEGER NOT NULL DEFAULT 1",
+           "field_manager": "INTEGER NOT NULL DEFAULT 0"}   # sees and reports on every field agent's visits   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
 
 
 def init():
@@ -77,7 +78,12 @@ def init():
         c.execute("UPDATE users SET role='viewer', field=1 WHERE role='agent'")
 
 
-SWITCHES = {"field": "Field visits", "social": "Social", "seasonal": "Seasonal decorations"}
+SWITCHES = {"field": "Field visits", "social": "Social", "seasonal": "Seasonal decorations", "field_manager": "Field manager"}
+
+
+def sees_all_field(u):
+    """Admins and field managers see (and report on) every field agent; everyone else only themselves."""
+    return bool(u) and (u.get("role") == "admin" or bool(u.get("field_manager")))
 
 
 def set_switch(uid, name, on):
