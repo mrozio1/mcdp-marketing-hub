@@ -114,6 +114,10 @@ def test_toggles_leave_things_out(env):
     assert "Spend" in full and "$42.50" in full and "mi from stop" in full and "There · between" in full and "Sketch of the stops" in full
     assert "Spend" not in bare and "$42.50" not in bare and "Miles" not in bare and "There · between" not in bare
     assert "Sketch of the stops" not in bare and "Pam Beesly" in bare and "In 2 weeks (Oct 19)" in bare
+    assert "Time" not in bare.replace("Time in", "") and "9:30 AM" not in bare and " # " not in bare      # no clock times, no numbers
+    assert "9:30 AM" in full and "Monday, October 5" in bare                                            # the date always shows
+    nomap = text(a.get(f"/field/report.pdf?m=2026-10&practice={env['heights']}&miles=1").content)
+    assert "mi from the last stop" in nomap and "from stop" not in nomap
     empty = text(a.get("/field/report.pdf?m=2026-09").content)
     assert "No field visits logged" in empty
 

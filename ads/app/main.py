@@ -222,7 +222,19 @@ def flash(request, msg, kind="ok"):
     request.session["flash"] = {"msg": msg, "kind": kind}
 
 
+def _static_version():
+    """Changes whenever style.css changes, so browsers fetch the new one after an update."""
+    try:
+        return str(int(os.path.getmtime(os.path.join(os.path.dirname(__file__), "static", "style.css"))))
+    except OSError:
+        return "1"
+
+
+STATIC_V = _static_version()
+
+
 def page(request, name, **ctx):
+    ctx["static_v"] = STATIC_V
     ctx["flash"] = request.session.pop("flash", None) or getattr(request.state, "camp_flash", None)
     ctx["ai_on"] = ai.available()
     ctx["last_sync"] = sync.last_sync()

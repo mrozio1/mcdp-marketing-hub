@@ -440,8 +440,9 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
         out += [Spacer(1, 18), Paragraph(f"No field visits logged for {E(whose)} in {month_label}.", body)]
 
     # ---- each agent, each day
-    cols = [("#", 0.3), ("Time", 0.78), ("Referral office", 1.8), ("Spoke with", 1.55), ("Brought", 1.3),
-            ("Conversation", 2.5), ("Follow up", 1.1)]
+    numbered, timed = bool(opts.get("map")), bool(opts.get("time"))   # stop numbers go with the map, clock times with time
+    cols = ([("#", 0.3)] if numbered else []) + ([("Time", 0.78)] if timed else []) + [
+        ("Referral office", 1.8), ("Spoke with", 1.55), ("Brought", 1.3), ("Conversation", 2.5), ("Follow up", 1.1)]
     if opts.get("spend"):
         cols.append(("Spend", 0.72))
     if opts.get("time"):
@@ -487,8 +488,10 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                                      for p in v["people"]) or "<font color='#5B5852'>—</font>"
                 office = f"<b>{E(v['office_name'])}</b>" + (f"<br/><font size='7.4' color='#5B5852'>{E(v['office_address'])}</font>" if v.get("office_address") else "")
                 if opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]):
-                    office += f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{d['legs'][i - 1]:.1f} mi from stop {label(i)}</font>"
-                row = [Paragraph(label(v["n"]) or str(v["n"]), num_style), Paragraph(v["at"].strftime("%-I:%M %p"), body),
+                    office += (f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{d['legs'][i - 1]:.1f} mi "
+                               + (f"from stop {label(i)}" if numbered else "from the last stop") + "</font>")
+                row = ([Paragraph(label(v["n"]) or str(v["n"]), num_style)] if numbered else []) + \
+                      ([Paragraph(v["at"].strftime("%-I:%M %p"), body)] if timed else []) + [
                        Paragraph(office, body), Paragraph(spoke, body), Paragraph(E(v["dropped"]) or "—", body),
                        Paragraph(E(v["notes"]).replace("\n", "<br/>") or "<font color='#5B5852'>—</font>", body),
                        Paragraph(E(v["interval"]) or "<font color='#5B5852'>None set</font>", body)]
@@ -503,9 +506,10 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                      ("LINEBELOW", (0, 1), (-1, -1), 0.4, hair), ("TOPPADDING", (0, 1), (-1, -1), 5),
                      ("BOTTOMPADDING", (0, 1), (-1, -1), 5)]
             for i in range(1, len(rows)):
-                style.append(("BACKGROUND", (0, i), (0, i), A if _lum(accent) < 0.7 else P))
+                if numbered:
+                    style.append(("BACKGROUND", (0, i), (0, i), A if _lum(accent) < 0.7 else P))
                 if i % 2 == 0:
-                    style.append(("BACKGROUND", (1, i), (-1, i), tint))
+                    style.append(("BACKGROUND", (1 if numbered else 0, i), (-1, i), tint))
             t.setStyle(TableStyle(style))
             out.append(KeepTogether(block + [t]) if len(d["visits"]) <= 6 else KeepTogether(block[:2]))
             if len(d["visits"]) > 6:
