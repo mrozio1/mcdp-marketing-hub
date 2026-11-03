@@ -75,7 +75,8 @@
         {% if v.followup %}<p class="small">Follow up {{ v.followup }}</p>{% endif %}
         <p class="small visit-actions">
           {% if can_log %}<a href="/field/log?{{ {'office': v.office_id, 'back': '/field?' ~ (qs|urlencode)}|urlencode }}">Log another visit here</a>{% endif %}
-          {% if (can_edit or v.user_id == my_id) and can_log %}
+          {% if can_edit or (v.user_id == my_id and can_log) %}
+          <a href="/field/visits/{{ v.id }}/edit?{{ {'back': '/field?' ~ (qs|urlencode)}|urlencode }}">Edit</a>
           <form method="post" action="/field/visits/{{ v.id }}/delete" data-confirm="Remove this visit{{ ' and its receipt' if v.receipt else '' }}?"><button class="linklike danger small" type="submit">Remove</button></form>
           {% endif %}
         </p>

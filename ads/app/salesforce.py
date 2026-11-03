@@ -208,6 +208,20 @@ def create(sobject, fields):
     return got["id"]
 
 
+def update(sobject, sid, fields):
+    """PATCH a record; blank values are left alone, optional fields the org hides are skipped."""
+    body = {k: v for k, v in fields.items() if v not in (None, "")}
+    while body:
+        try:
+            api("PATCH", f"/sobjects/{sobject}/{sid}", body=body)
+            return
+        except SFError as e:
+            m = NO_COLUMN.search(str(e))
+            if not m or m.group(1) not in body or m.group(1) not in OPTIONAL.get(sobject, ()):
+                raise
+            body.pop(m.group(1))
+
+
 def _q(s):
     return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -343,6 +357,11 @@ def send_visit(vid, hub_url=""):
     owner = owner_for(v)
     who = contacts[0] if contacts else None
     task = v.get("sf_task_id") or ""
+    if task:      # edited after it was sent: bring the Task up to date
+        update("Task", task, {"Subject": _subject("Field visit", v), "ActivityDate": v["visited_at"][:10],
+                              "WhatId": acc, "WhoId": who, "Description": description(v, hub_url)})
+        if v.get("sf_followup_id") and v.get("followup"):
+            update("Task", v["sf_followup_id"], {"ActivityDate": v["followup"]})
     if not task:
         task = create("Task", {"Subject": _subject("Field visit", v), "ActivityDate": v["visited_at"][:10],
                                "Status": "Completed", "Priority": "Normal", "WhatId": acc, "WhoId": who, "OwnerId": owner,

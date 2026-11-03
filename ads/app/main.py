@@ -38,8 +38,8 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
 PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
-FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!.*/delete$)")   # logging visits: field visits switched on
-FIELD_DELETE = re.compile(r"^/field/visits/\d+/delete$")          # own visit (field on) or any visit (editors); checked in the route
+FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
+FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
 CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and changing events: editors, or field visits on
 ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|team)(/|$)"), re.compile(r"^/map/setup$"),
@@ -2467,12 +2467,67 @@ async def field_log(request: Request):
                             status_code=303)
 
 
+def _can_change_visit(v, u):
+    return bool(v and u and ((v["user_id"] == u["id"] and u.get("field")) or users.rank(u["role"]) >= users.rank("editor")))
+
+
+@app.get("/field/visits/{vid}/edit", response_class=HTMLResponse)
+def field_edit_form(request: Request, vid: int, error: str = ""):
+    if (r := guard(request)):
+        return r
+    v, u = field.visit(vid), me(request)
+    if not _can_change_visit(v, u):
+        flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
+        return RedirectResponse("/field", status_code=303)
+    allp = db.practices()
+    choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+    opts = field.practice_options(choices)
+    sel = next((o["value"] for o in opts if o["pid"] == v["practice_id"] and o["address"] == (v["practice_location"] or "")), None) \
+        or next((o["value"] for o in opts if o["pid"] == v["practice_id"]), "")
+    o = field.office(v["office_id"]) or {"id": v["office_id"], "name": v["office_name"], "address": v["office_address"]}
+    back = request.query_params.get("back", "")
+    return page(request, "field_log.html", o=o, ev=v, history=[], ratings=field.RATING_LABELS, roles=field.MET_ROLES,
+                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, browser_key="", map_id=places.map_id(), error=error,
+                ai_on=ai.available(), back=back if back.startswith("/") and not back.startswith("//") else "/field",
+                practice_choices=choices, practice_options=opts, suggested_practice=v["practice_id"],
+                selected_value=sel, pre=None)
+
+
+@app.post("/field/visits/{vid}")
+async def field_edit(request: Request, vid: int):
+    if (r := guard(request)):
+        return r
+    v, u = field.visit(vid), me(request)
+    if not _can_change_visit(v, u):
+        flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
+        return RedirectResponse("/field", status_code=303)
+    form = await request.form()
+    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "notes", "practice_id",
+                                     "practice_required", "remove_receipt")}
+    names = form.getlist("person_name")
+    emails, roles = form.getlist("person_email"), form.getlist("person_role")
+    data["people"] = [{"name": n, "email": emails[i] if i < len(emails) else "", "role": roles[i] if i < len(roles) else ""}
+                      for i, n in enumerate(names)]
+    up = form.get("receipt")
+    blob = await up.read() if up is not None and getattr(up, "filename", "") else None
+    back = form.get("back") or ""
+    back = back if back.startswith("/") and not back.startswith("//") else "/field"
+    try:
+        nv = await asyncio.to_thread(field.update_visit, vid, data, blob, "", u.get("name", ""))
+    except field.FieldError as e:
+        return RedirectResponse(f"/field/visits/{vid}/edit?" + urllib.parse.urlencode({"error": str(e), "back": back}), status_code=303)
+    if nv.get("sf_task_id"):
+        salesforce.send_in_background(PUBLIC_URL)
+    flash(request, f"Visit to {nv['office_name']} updated{' (Salesforce is updated in a moment)' if nv.get('sf_task_id') else ''}.")
+    return RedirectResponse(back, status_code=303)
+
+
 @app.post("/field/visits/{vid}/delete")
 def field_delete(request: Request, vid: int):
     if (r := guard(request)):
         return r
     v, u = field.visit(vid), me(request)
-    if v and ((v["user_id"] == u["id"] and u.get("field")) or users.rank(u["role"]) >= users.rank("editor")):
+    if _can_change_visit(v, u):
         field.delete_visit(vid)
         flash(request, "Visit removed.")
     else:

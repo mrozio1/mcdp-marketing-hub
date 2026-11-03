@@ -227,6 +227,38 @@ def test_only_own_visits_removable_by_agents(env):
     assert env["field"].visit(vid) is None
 
 
+def test_edit_own_visit(env):
+    a, f, db, h = env["agent"], env["field"], env["db"], env["heights"]
+    log(a, place_id="ChIJ_dentist_maple001", name="Maple Street Family Dental", practice_id=str(h), with_receipt=True)
+    with db.conn() as c:
+        vid = c.execute("SELECT MAX(id) FROM visits").fetchone()[0]
+    v = f.visit(vid)
+    form = a.get(f"/field/visits/{vid}/edit?back=/field").text
+    assert "Edit visit" in form and f'action="/field/visits/{vid}"' in form and "Maple Street Family Dental" in form
+    assert 'value="Lunch"' in form and "Asked about Invisalign" in form and 'value="48.20"' in form and "Receipt on file" in form
+    assert f'value="{v["visited_at"][:16]}"' in form and 'value="warm" checked' in form
+    r = a.post(f"/field/visits/{vid}", data={"back": "/field?period=week", "visited_at": date.today().isoformat() + "T08:05",
+                                             "practice_id": str(h), "rating": "hot", "dropped": "Coffee", "cost": "12",
+                                             "notes": "Moved to morning", "followup": "", "remove_receipt": "1",
+                                             "person_name": ["Pam", "Dr. Lee"], "person_email": ["", "lee@maple.com"],
+                                             "person_role": ["Office manager", "Doctor"]}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/field?period=week"
+    v2 = f.visit(vid)
+    assert v2["visited_at"].endswith("T08:05") and v2["rating"] == "hot" and v2["cost"] == 12 and v2["receipt"] == ""
+    assert [p["name"] for p in v2["people"]] == ["Pam", "Dr. Lee"] and v2["met_name"] == "Pam, Dr. Lee"
+    assert v2["office_id"] == v["office_id"] and v2["on_site"] == v["on_site"]          # office and check-in stay put
+    assert "Edit</a>" in a.get("/field?period=day").text
+    bad = a.post(f"/field/visits/{vid}", data={"practice_id": str(h), "person_name": ["x"], "person_email": ["not-an-email"]})
+    assert "doesn" in a.get(bad.headers.get("location", "/field")).text or f.visit(vid)["people"][0]["name"] == "Pam"
+    # someone else (viewer, field off) can't edit; an admin can
+    assert "Only the person" in env["viewer"].get(f"/field/visits/{vid}/edit", follow_redirects=True).text
+    env["viewer"].post(f"/field/visits/{vid}", data={"notes": "hacked", "practice_id": str(h)})
+    assert f.visit(vid)["notes"] == "Moved to morning"
+    env["admin"].post(f"/field/visits/{vid}", data={"notes": "Checked by Ann", "practice_id": str(h), "rating": "hot",
+                                                    "person_name": ["Pam"], "person_email": [""], "person_role": [""]})
+    assert f.visit(vid)["notes"] == "Checked by Ann"
+
+
 def test_old_field_agent_level_becomes_viewer_with_switch(env):
     db, users = env["db"], env["users"]
     with db.conn() as c:
@@ -319,6 +351,10 @@ class FakeSF:
         self.n = 0
 
     def __call__(self, method, path, body=None, params=None, absolute=False):
+        if method == "PATCH":
+            _, obj, sid = path.rsplit("/", 2)
+            next(r for r in self.rows[obj] if r["Id"] == sid).update(body)
+            return {}
         if method == "POST":
             obj = path.rsplit("/", 1)[1]
             self.n += 1
@@ -375,6 +411,20 @@ def test_salesforce_sync(env, monkeypatch):
     n = len(tasks)
     assert sf.send_pending()["sent"] == 0 and len(fake.rows["Task"]) == n
     assert "in Salesforce" in a.get("/field?period=day").text
+    # Editing a visit that's already in Salesforce updates its Task rather than making a new one.
+    with db.conn() as c:
+        vid = c.execute("SELECT id FROM visits WHERE notes='Wants referral pads'").fetchone()[0]
+    a.post(f"/field/visits/{vid}", data={"visited_at": date.today().isoformat() + "T09:45", "rating": "warm", "dropped": "Lunch",
+                                         "cost": "61.50", "notes": "Wants referral pads and a lunch-and-learn",
+                                         "followup": (date.today() + timedelta(days=14)).isoformat(),
+                                         "person_name": ["Pam Beesly"], "person_email": ["pam@maple.com"], "person_role": ["Office manager"]})
+    assert f.visit(vid)["sf_status"] == ""
+    assert sf.send_pending()["sent"] == 1 and len(fake.rows["Task"]) == n
+    visit_t = [t for t in fake.rows["Task"] if t["Subject"] == "Field visit: Maple Street Family Dental"][0]
+    assert "$61.50" in visit_t["Description"] and "lunch-and-learn" in visit_t["Description"] and "Relationship: Warm" in visit_t["Description"]
+    assert "Dr. Joe Oak" not in visit_t["Description"]
+    fu = [t for t in fake.rows["Task"] if t["Subject"].startswith("Follow up:")][0]
+    assert fu["ActivityDate"] == (date.today() + timedelta(days=14)).isoformat()
     # A failure is kept on the visit and shown, and retried later.
     def broken(*a, **k):
         raise sf.SFError("REQUIRED_FIELD_MISSING (HTTP 400)")

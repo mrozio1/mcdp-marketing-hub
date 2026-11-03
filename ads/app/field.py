@@ -398,20 +398,7 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     rating = (form.get("rating") or "").strip().lower()
     if rating and rating not in RATINGS:
         raise FieldError("Pick how warm the relationship is.")
-    practice_id, practice_location = None, ""
-    raw_pid = str(form.get("practice_id") or "").strip()
-    if raw_pid:
-        pid_part, _, loc_part = raw_pid.partition("-")
-        if not pid_part.isdigit() or not db.practice(int(pid_part)):
-            raise FieldError("Pick which of our practices this visit was for.")
-        practice_id = int(pid_part)
-        locs = practice_locations(practice_id)
-        if loc_part.isdigit() and int(loc_part) < len(locs):
-            practice_location = locs[int(loc_part)]
-        elif len(locs) == 1:
-            practice_location = locs[0]
-    elif form.get("practice_required"):
-        raise FieldError("Pick which of our practices this visit was for.")
+    practice_id, practice_location = _practice_in(form)
     cost = money_in(form.get("cost"))
     plat, plng, pacc = _f(form.get("phone_lat")), _f(form.get("phone_lng")), _f(form.get("phone_acc"))
     dist = on_site = None
@@ -442,6 +429,63 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
         return vid
+
+
+def update_visit(vid, form, receipt_bytes=None, receipt_type="", by=""):
+    """Change a logged visit: who it was for, when, who was met, rating, what was dropped, cost, receipt,
+    follow-up and notes. The office and the phone's check-in location stay as logged. Returns the visit."""
+    v = visit(vid)
+    if not v:
+        raise FieldError("That visit isn't there any more.")
+    rating = (form.get("rating") or "").strip().lower()
+    if rating and rating not in RATINGS:
+        raise FieldError("Pick how warm the relationship is.")
+    practice_id, practice_location = _practice_in(form)
+    people = people_in(form)
+    met_name = _clean(", ".join(person_label(p) for p in people), 300)
+    met_role = _clean(", ".join(dict.fromkeys(p["role"] for p in people if p["role"])), 200)
+    receipt, old_receipt = v["receipt"], ""
+    if receipt_bytes:
+        receipt, old_receipt = save_receipt(receipt_bytes, receipt_type), v["receipt"]
+    elif form.get("remove_receipt"):
+        receipt, old_receipt = "", v["receipt"]
+    when = _when(form.get("visited_at")) if form.get("visited_at") else v["visited_at"]
+    with db.conn() as c:
+        c.execute("UPDATE visits SET visited_at=?, met_name=?, met_role=?, rating=?, dropped=?, cost=?, receipt=?, followup=?, "
+                  "notes=?, practice_id=?, practice_location=? WHERE id=?",
+                  (when, met_name, met_role, rating, _clean(form.get("dropped"), 300), money_in(form.get("cost")), receipt,
+                   _date_or_blank(form.get("followup")), str(form.get("notes") or "").strip()[:4000],
+                   practice_id, practice_location, vid))
+        c.execute("DELETE FROM visit_people WHERE visit_id=?", (vid,))
+        c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
+                      [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
+        # already in Salesforce: send the changes there too
+        c.execute("UPDATE visits SET sf_status='' WHERE id=? AND COALESCE(sf_task_id, '') != ''", (vid,))
+    if old_receipt:
+        try:
+            os.remove(os.path.join(receipt_dir(), old_receipt))
+        except OSError:
+            pass
+    return visit(vid)
+
+
+def _practice_in(form):
+    """(practice id, location) from the form's 'pid' or 'pid-N' choice."""
+    practice_id, practice_location = None, ""
+    raw_pid = str(form.get("practice_id") or "").strip()
+    if raw_pid:
+        pid_part, _, loc_part = raw_pid.partition("-")
+        if not pid_part.isdigit() or not db.practice(int(pid_part)):
+            raise FieldError("Pick which of our practices this visit was for.")
+        practice_id = int(pid_part)
+        locs = practice_locations(practice_id)
+        if loc_part.isdigit() and int(loc_part) < len(locs):
+            practice_location = locs[int(loc_part)]
+        elif len(locs) == 1:
+            practice_location = locs[0]
+    elif form.get("practice_required"):
+        raise FieldError("Pick which of our practices this visit was for.")
+    return practice_id, practice_location
 
 
 def visit(vid):
