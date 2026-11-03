@@ -1210,3 +1210,8 @@ details.tool > summary { cursor: pointer; }
 .rv-monthbar { display: flex; gap: .7rem; align-items: end; flex-wrap: wrap; margin: 0 0 1.25rem; }
 .rv-monthbar label { font-size: .85rem; display: flex; gap: .45rem; align-items: center; }
 .rv-monthbar select { width: auto; }
+.rv-hm { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0; }
+.rv-hm label { font-size: 0.9rem; color: var(--ink-soft); }
+.rv-hm select { width: auto; padding: 0.15rem 1.6rem 0.15rem 0.45rem; font-size: 0.9rem; }
+.rv-month-card { grid-column: span 2; }
+@media (max-width: 640px) { .rv-month-card { grid-column: auto; } }

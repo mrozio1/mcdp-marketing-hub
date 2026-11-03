@@ -8,7 +8,7 @@
     <p class="lede rv-lede">Google reviews and Facebook and Instagram comments in one place, so nothing goes unanswered.</p>
   </div>
   <form method="get" action="/reviews" class="rv-scope">
-    <input type="hidden" name="tab" value="{{ tab }}">{% if tab == 'score' and sb_month %}<input type="hidden" name="m" value="{{ sb_month }}">{% endif %}
+    <input type="hidden" name="tab" value="{{ tab }}">{% if tab == 'score' and sb_month %}<input type="hidden" name="m" value="{{ sb_month }}">{% endif %}{% if tab == 'inbox' and hm_pick %}<input type="hidden" name="hm" value="{{ hm_pick }}"><input type="hidden" name="status" value="{{ status }}">{% endif %}
     <label>Showing
       <select name="practice" onchange="this.form.submit()">
         <option value="">All practices</option>
@@ -33,6 +33,22 @@
     <p class="small {{ 'rv-warn' if stats.overdue else 'muted' }}">{% if stats.overdue %}{{ stats.overdue }} overdue (over {{ overdue }}h){% else %}Nothing overdue{% endif %}</p></div>
   <div><dt>Handled this week</dt><dd>{{ stats.handled }}</dd>
     <p class="small muted">{{ stats.replies }} repl{{ 'y' if stats.replies == 1 else 'ies' }} · {{ stats.likes }} like{{ '' if stats.likes == 1 else 's' }} · {{ stats.hidden }} hidden{% if stats.marked %} · {{ stats.marked }} no reply needed{% endif %}</p></div>
+  <div class="rv-month-card"><dt>
+    <form method="get" action="/reviews" class="rv-hm">
+      {% for k, v in qs.items() if k not in ('hm', 'status') and v %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      <input type="hidden" name="status" value="done">
+      <label for="rv-hm">Handled the month of:</label>
+      <select id="rv-hm" name="hm" onchange="this.form.submit()">
+        {% for k, label in hm_opts %}<option value="{{ k }}" {% if k == hm %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+    </form></dt>
+    <dd>{{ hstats.handled }}</dd>
+    <p class="small muted">{{ hstats.replies }} repl{{ 'y' if hstats.replies == 1 else 'ies' }} · {{ hstats.likes }} like{{ '' if hstats.likes == 1 else 's' }} · {{ hstats.hidden }} hidden{% if hstats.marked %} · {{ hstats.marked }} no reply needed{% endif %}{% if hstats.removed %} · {{ hstats.removed }} removed by Google{% endif %}</p>
+    <p class="small muted">{{ hstats.by_source.google }} Google · {{ hstats.by_source.facebook }} Facebook · {{ hstats.by_source.instagram }} Instagram{% if hstats.median_hours is not none %} · typical reply {{ duration(hstats.median_hours) }}{% endif %}</p>
+    <p class="small {{ 'rv-warn' if hstats.rate is not none and hstats.rate < 0.8 else 'muted' }}">{% if hstats.received %}{{ hstats.answered }} of {{ hstats.received }} new that month answered ({{ (hstats.rate * 100)|round|int }}%){% else %}Nothing new came in that month{% endif %}</p>
+    {% if hm_pick %}<p class="small"><a href="/reviews?{{ dict(qs, hm='', status='open')|urlencode }}">Clear month</a></p>{% endif %}
+  </div>
   <div><dt>Typical response time</dt><dd>{{ duration(stats.median_hours) }}</dd>
     <p class="small muted">Replies in the last 30 days</p></div>
 </dl>
@@ -60,7 +76,7 @@
 {% else %}
 <div class="rv-inbox">
   <div class="rv-list">
-    <p class="small muted">{{ {'open': 'Unhappy first, then oldest first, so nothing slips', 'reported': 'Reported to Google, oldest report first', 'done': 'Most recently handled first'}[status] }}</p>
+    <p class="small muted">{{ {'open': 'Unhappy first, then oldest first, so nothing slips', 'reported': 'Reported to Google, oldest report first', 'done': ('Handled in ' ~ month_label(hm_pick) ~ ', most recent first') if hm_pick else 'Most recently handled first'}[status] }}</p>
     <ul>
       {% for it in items %}
       <li><a class="rv-item{% if cur and it.id == cur.id %} on{% endif %}" href="/reviews?{{ dict(qs, item=it.id)|urlencode }}#detail" {% if cur and it.id == cur.id %}aria-current="true"{% endif %}>

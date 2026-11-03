@@ -2615,7 +2615,10 @@ def reviews_page(request: Request):
     src = q.get("src") if q.get("src") in ("google", "facebook", "instagram") else "all"
     status = q.get("status") if q.get("status") in ("done", "reported") else "open"
     filt = q.get("filter") if q.get("filter") in ("under", "quiet") else "all"
-    items, counts = reviews.inbox(pid, src, status, plist)
+    hm_opts = reviews.months_back(13)[::-1]                    # "Handled the month of", newest first
+    hm_pick = q.get("hm") if q.get("hm") in hm_opts else ""
+    hm = hm_pick or hm_opts[0]
+    items, counts = reviews.inbox(pid, src, status, plist, month=hm_pick or None)
     sel = _num(q.get("item"))
     cur = next((i for i in items if i["id"] == sel), None) or (items[0] if items else None)
     if cur:
@@ -2629,14 +2632,16 @@ def reviews_page(request: Request):
         rows = [x for x in rows if not x["met"]]
     elif filt == "quiet":
         rows = [x for x in rows if x["days"] is not None and x["days"] > 30]
-    qs = {"practice": pid or "", "tab": tab, "src": src, "status": status, "m": sb_month or ""}
+    qs = {"practice": pid or "", "tab": tab, "src": src, "status": status, "m": sb_month or "", "hm": hm_pick}
     month_opts = reviews.months_back(13)[::-1][1:]
     with db.conn() as c:
         manual = {(m["practice_id"], m["month"]): m["count"] for m in c.execute("SELECT * FROM review_manual")}
     man_month = q.get("mm") if q.get("mm") in month_opts else month_opts[0]
     return page(request, "reviews.html", plist=plist, pid=pid, practice=next((p for p in plist if p["id"] == pid), None),
                 tab=tab, src=src, status=status, filt=filt, items=items, counts=counts, cur=cur,
-                stats=reviews.inbox_stats(pid, plist), board=board, rows=rows, qs=qs, sources=reviews.SOURCES,
+                stats=reviews.inbox_stats(pid, plist), board=board,
+                hstats=reviews.month_handled(hm, pid, plist), hm=hm, hm_pick=hm_pick,
+                hm_opts=[(k, reviews.month_label(k)) for k in hm_opts], rows=rows, qs=qs, sources=reviews.SOURCES,
                 flag_text=reviews.FLAG_TEXT, duration=reviews.duration, inbox_status=reviews.last_status(),
                 gbp_client=all(cx.gbp_client()), gbp_on=reviews.gbp_connected(), locations=reviews.locations(),
                 gbp_redirect=_gbp_redirect(request), overdue=reviews.overdue_hours(), every=reviews.check_minutes(),

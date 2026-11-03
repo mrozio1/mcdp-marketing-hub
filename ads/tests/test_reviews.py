@@ -296,6 +296,36 @@ def test_scoreboard_by_month_and_monthly_report(env):
     assert wb[wb.sheetnames[1]].max_row == 1 + 5
 
 
+def test_handled_the_month_of(env):
+    """Monthly handled numbers next to the weekly ones, with a month dropdown that filters Done."""
+    rv, db = env["reviews"], env["db"]
+    months = rv.months_back(3)
+    old = months[0]                                          # two months back
+    s, e = rv.month_utc_bounds(old)
+    mid = s[:8] + "15T15:00:00"
+    with db.conn() as c:
+        for i, (out, src, acct) in enumerate([("replied", "facebook", "pg1"), ("liked", "facebook", "pg1"),
+                                              ("replied", "instagram", "ig1"), ("outside", "facebook", "pg2")]):
+            c.execute("INSERT INTO inbox(key, source, account_id, external_id, author, text, created, status, outcome, "
+                      "handled_by, handled_at, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (f"hm-{i}", src, acct, f"hm{i}", "Sam", f"Month comment {i}", s[:8] + "14T12:00:00", "done", out, "Ed Editor", mid, mid))
+        c.execute("INSERT INTO inbox(key, source, account_id, external_id, author, text, created, status, first_seen) "
+                  "VALUES ('hm-open', 'facebook', 'pg1', 'hm-open', 'Lee', 'Still waiting', ?, 'open', ?)", (s[:8] + "20T12:00:00", mid))
+    h = rv.month_handled(old)
+    assert h["handled"] == 3 and h["replies"] == 2 and h["likes"] == 1                       # handled outside isn't counted
+    assert h["by_source"] == {"google": 0, "facebook": 2, "instagram": 1} and h["median_hours"] == 27
+    assert h["received"] == 5 and h["answered"] == 4 and round(h["rate"], 2) == 0.8
+    assert rv.month_handled(old, env["havens"])["handled"] == 0                              # practice filter
+    assert rv.month_utc_bounds("2026-11") == ("2026-11-01T04:00:00", "2026-12-01T05:00:00")   # Michigan time
+    page = env["editor"].get("/reviews").text
+    assert "Handled the month of:" in page and f'<option value="{months[-1]}" selected>' in page
+    page = env["editor"].get(f"/reviews?status=done&hm={old}").text
+    assert f'<option value="{old}" selected>' in page and "Handled in " + rv.month_label(old) in page
+    assert "Month comment 0" in page and "Clear month" in page
+    with db.conn() as c:
+        c.execute("DELETE FROM inbox WHERE external_id LIKE 'hm%'")
+
+
 def test_comment_readers_parse_meta_shapes(env, monkeypatch):
     cx = env["cx"]
     since = date.today() - timedelta(days=60)

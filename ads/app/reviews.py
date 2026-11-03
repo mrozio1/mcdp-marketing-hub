@@ -365,15 +365,19 @@ def _decorate(rows, owners, plist, names, now):
     return out
 
 
-def inbox(practice_id=None, source="all", status="open", plist=None):
+def inbox(practice_id=None, source="all", status="open", plist=None, month=None):
     """Items for the inbox list, already sorted: open = unhappy first, then oldest first;
-    done = most recently handled first."""
+    done = most recently handled first (only those handled in month, 'YYYY-MM', when given)."""
     plist = plist if plist is not None else practices()
     owners = account_practice(db.practices())
     names = account_names()
     now = utcnow()
     with db.conn() as c:
-        if status == "done":
+        if status == "done" and month:
+            start, end = month_utc_bounds(month)
+            rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='done' AND handled_at>=? AND handled_at<? "
+                                               "ORDER BY handled_at DESC, id DESC", (start, end))]
+        elif status == "done":
             rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='done' ORDER BY handled_at DESC, id DESC")]
         elif status == "reported":
             rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='reported' ORDER BY reported_at, id")]
@@ -386,7 +390,7 @@ def inbox(practice_id=None, source="all", status="open", plist=None):
     if source != "all":
         rows = [r for r in rows if r["source"] == source]
     if status == "done":
-        rows = rows[:DONE_SHOWN]
+        rows = rows[:DONE_SHOWN * (5 if month else 1)]
     else:
         rows.sort(key=lambda r: (0 if r["flag"] == "unhappy" else 1, r["created"]))
     return rows, counts
@@ -481,6 +485,46 @@ def inbox_stats(practice_id=None, plist=None):
             "hidden": sum(1 for r in handled if r["outcome"] == "hidden"),
             "marked": sum(1 for r in handled if r["outcome"] == "done"),
             "median_hours": median}
+
+
+LOCAL_TZ = "America/Detroit"
+
+
+def month_utc_bounds(key):
+    """'YYYY-MM' (local time) -> (start, end) as naive UTC ISO strings, end exclusive."""
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(LOCAL_TZ)
+    y, m = int(key[:4]), int(key[5:7])
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    conv = lambda d: _iso(d.replace(tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None))
+    return conv(datetime(y, m, 1)), conv(datetime(ny, nm, 1))
+
+
+def month_handled(month, practice_id=None, plist=None):
+    """What the team handled in a month (local time): replies, likes, hidden, marked done, by source,
+    typical response time, and how many of that month's new reviews / comments were answered."""
+    owners = account_practice(db.practices())
+    start, end = month_utc_bounds(month)
+    with db.conn() as c:
+        done = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='done' AND handled_at>=? AND handled_at<? "
+                                           "AND outcome!='outside'", (start, end))]
+        new = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE created>=? AND created<?", (start, end))]
+    if practice_id:
+        mine = lambda r: owners.get((r["source"], r["account_id"])) == practice_id
+        done, new = [r for r in done if mine(r)], [r for r in new if mine(r)]
+    replied = sorted(hours_since(r["created"], _dt(r["handled_at"])) for r in done
+                     if r["outcome"] == "replied" and r["handled_at"])
+    answered = [r for r in new if r["status"] == "done" and r["outcome"] in ("replied", "liked", "hidden", "done", "outside")]
+    return {"month": month, "handled": len(done),
+            "replies": sum(1 for r in done if r["outcome"] == "replied"),
+            "likes": sum(1 for r in done if r["outcome"] == "liked"),
+            "hidden": sum(1 for r in done if r["outcome"] == "hidden"),
+            "marked": sum(1 for r in done if r["outcome"] == "done"),
+            "removed": sum(1 for r in done if r["outcome"] == "removed"),
+            "by_source": {k: sum(1 for r in done if r["source"] == k) for k, _ in SOURCES},
+            "median_hours": replied[len(replied) // 2] if replied else None,
+            "received": len(new), "answered": len(answered),
+            "rate": len(answered) / len(new) if new else None}
 
 
 def duration(hours):
