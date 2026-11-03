@@ -188,9 +188,23 @@ def test_location_never_from_a_phone_far_away(env, monkeypatch):
     fr = env["fr"]
     monkeypatch.setattr(env["field"], "geocode_one", lambda a: (44.76, -85.62) if "Front" in a else None)
     base = {"office_lat": None, "office_lng": None, "place_id": None, "npi_key": None, "our_office_id": None}
-    logged_later = {**base, "office_address": "876 E Front St, Traverse City, MI", "on_site": 0, "phone_lat": 42.3, "phone_lng": -83.0, "phone_acc": 2500}
+    logged_later = {**base, "office_address": "876 E Front St, Traverse City, MI", "on_site": 0, "phone_lat": 42.3, "phone_lng": -83.0, "phone_acc": 25000}
     assert fr.point(logged_later) == (44.76, -85.62)                                          # the address, not the phone
-    no_address = {**base, "office_address": "", "on_site": 0, "phone_lat": 42.3, "phone_lng": -83.0, "phone_acc": 2500}
+    no_address = {**base, "office_address": "", "on_site": 0, "phone_lat": 42.3, "phone_lng": -83.0, "phone_acc": 25000}
     assert fr.point(no_address) is None                                                       # a vague phone spot isn't used
     there = {**base, "office_address": "", "on_site": 1, "phone_lat": 44.7, "phone_lng": -85.6, "phone_acc": 30}
     assert fr.point(there) == (44.7, -85.6)
+
+
+def test_stops_placed_like_the_field_map(env, monkeypatch):
+    fr = env["fr"]
+    # the address lookup puts a no-city address in Nebraska; the phone check-ins that day were in Traverse City
+    monkeypatch.setattr(env["field"], "geocode_one", lambda a: (41.0, -98.0))
+    base = {"office_lat": None, "office_lng": None, "place_id": None, "npi_key": None, "our_office_id": None, "phone_acc": 40}
+    day = [{**base, "phone_lat": 44.72, "phone_lng": -85.60, "office_address": "", "on_site": 1},
+           {**base, "phone_lat": None, "phone_lng": None, "office_address": "3699 W. South Airport rd.", "on_site": None},
+           {**base, "phone_lat": 44.73, "phone_lng": -85.62, "office_address": "", "on_site": 0}]
+    fr.place_day(day)
+    assert day[0]["pt"] == (44.72, -85.60) and day[1]["pt"] is None and day[2]["pt"] == (44.73, -85.62)
+    pts, labels = fr._split([((1.0, 2.0), "1"), ((3.0, 4.0), "3")])
+    assert labels == ["1", "3"]                                                            # map numbers follow the table

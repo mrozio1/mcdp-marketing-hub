@@ -141,22 +141,40 @@ def _geocoded(address):
 
 
 def point(v):
-    """Where the office is, for the map and miles. In order: the phone's spot when it checked in at the office;
-    the office's own location (the map pin, or its NPI record); its address, looked up; and only then a phone
-    location that was precise. A phone location from logging the visit later (at home, or a laptop whose
-    location is a guess from its internet connection) is never used: that's what made far-off jumps."""
-    if v.get("on_site") == 1 and v.get("phone_lat") is not None:
+    """Where a visit was, the same way the Field page's map places it: the phone's location when it was shared,
+    otherwise the office's own location (map pin or NPI record), otherwise its address looked up.
+    Second-hand locations (not the phone) are checked against the day's other stops in place_day()."""
+    if _phone_ok(v):
         return float(v["phone_lat"]), float(v["phone_lng"])
     o = field._with_coords({"lat": v.get("office_lat"), "lng": v.get("office_lng"), "place_id": v.get("place_id"),
                             "npi_key": v.get("npi_key"), "our_office_id": v.get("our_office_id")})
     if o.get("here_lat") is not None:
         return float(o["here_lat"]), float(o["here_lng"])
-    got = _geocoded(v.get("office_address"))
-    if got:
-        return got
-    if v.get("phone_lat") is not None and (v.get("phone_acc") or 1e9) <= 150:
-        return float(v["phone_lat"]), float(v["phone_lng"])
-    return None
+    return _geocoded(v.get("office_address"))
+
+
+def _phone_ok(v):
+    """A phone location precise enough to place a stop (a laptop's guess from its connection is miles out)."""
+    return v.get("phone_lat") is not None and v.get("phone_lng") is not None and (v.get("phone_acc") or 0) <= 2000
+
+
+NEAR_MILES = 40      # a looked-up office this far from the day's phone check-ins is a bad lookup, not a real stop
+
+
+def place_day(visits):
+    """Sets v['pt'] for a day's visits. A location that didn't come from the phone (an address lookup can land
+    in the wrong state when the address has no city) is dropped if it's far from where the phone was that day."""
+    for v in visits:
+        v["pt"] = point(v)
+        v["from_phone"] = _phone_ok(v)
+    anchors = [v["pt"] for v in visits if v["from_phone"]]
+    if not anchors:
+        return
+    lat = sorted(p[0] for p in anchors)[len(anchors) // 2]
+    lng = sorted(p[1] for p in anchors)[len(anchors) // 2]
+    for v in visits:
+        if v["pt"] and not v["from_phone"] and places.miles_between(lat, lng, v["pt"][0], v["pt"][1]) > NEAR_MILES:
+            v["pt"] = None
 
 
 JUMP_MILES = 150     # a same-day hop longer than this can't be right; it's left out of the miles
@@ -327,19 +345,23 @@ def gather(month, agent_id=None, practice_id=None, opts=None):
                     left = prev["at"] + timedelta(minutes=prev["minutes"] or 0)
                     v["gap"] = max(0, (v["at"] - left).total_seconds() / 60)
                 v["interval"] = interval(v["visited_at"], v.get("followup"))
-                v["pt"] = point(v)
+            place_day(vs)
             d["spend"] = round(sum(v["cost"] or 0 for v in vs), 2)
             d["in_office"] = sum(v["minutes"] or 0 for v in vs)
             d["between"] = sum(v["gap"] or 0 for v in vs)
             d["miles"], d["legs"], d["estimated"] = None, [], False
             pts = [v["pt"] for v in vs if v["pt"]]
             d["jumps"] = []
+            for v in vs:
+                v["leg"], v["leg_from"] = None, None
             if opts.get("miles") and len(pts) > 1:
                 d["legs"], d["estimated"] = drive_miles(pts)
                 with_pt = [v for v in vs if v["pt"]]
                 for i, leg in enumerate(d["legs"]):
-                    if leg > JUMP_MILES:      # left out of the totals and named, so the office can be fixed
+                    if leg > JUMP_MILES:      # can't be a real hop; left out of the totals
                         d["jumps"].append((with_pt[i]["office_name"], with_pt[i + 1]["office_name"], leg))
+                    else:
+                        with_pt[i + 1]["leg"], with_pt[i + 1]["leg_from"] = leg, with_pt[i]["n"]
                 d["miles"] = round(sum(l for l in d["legs"] if l <= JUMP_MILES), 1)
                 any_estimate = any_estimate or d["estimated"]
             elif opts.get("miles"):
@@ -374,17 +396,19 @@ def _map_cache_dir():
 
 
 def static_map(points, color):
-    """A Google Static Maps PNG of numbered stops joined in order, or None (key missing or API off)."""
+    """A Google Static Maps PNG of stops joined in order, or None (key missing or API off).
+    points: [((lat, lng), label)] or [(lat, lng)] (then numbered 1, 2, 3…)."""
     key = report_key()
     if not key or not points:
         return None
+    points, labels = _split(points)
     hexc = color.lstrip("#")
     params = [("size", "640x190"), ("scale", "2"), ("maptype", "roadmap"), ("key", key),
               ("style", "feature:poi|visibility:off"), ("style", "feature:transit|visibility:off")]
     if len(points) > 1:
         params.append(("path", f"color:0x{hexc}cc|weight:4|" + "|".join("%.5f,%.5f" % p for p in points)))
-    for i, p in enumerate(points, 1):
-        params.append(("markers", f"color:0x{hexc}|label:{label(i)}|%.5f,%.5f" % p))
+    for p, lab in zip(points, labels):
+        params.append(("markers", f"color:0x{hexc}|label:{lab}|%.5f,%.5f" % p))
     url = STATIC_URL + "?" + urllib.parse.urlencode(params)
     cache = os.path.join(_map_cache_dir(), hashlib.sha256(url.replace(key, "").encode()).hexdigest()[:32] + ".png")
     if os.path.exists(cache):
@@ -562,7 +586,7 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
             block = [Paragraph(E(head[0]) + "<font color='#5B5852' size='8.6'>  ·  " + E("  ·  ".join(head[1:])) + "</font>", h2),
                      Spacer(1, 4)]
             if opts.get("map"):
-                pts = [v["pt"] for v in d["visits"] if v["pt"]]
+                pts = [(v["pt"], label(v["n"])) for v in d["visits"] if v["pt"]]     # numbers match the table
                 png = static_map(pts, primary) if pts else None
                 mw = W - 2 * margin
                 if png:
@@ -574,11 +598,9 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                 spoke = "<br/>".join(E(p["name"] or p["email"]) + (f" <font color='#5B5852'>({E(p['role'])})</font>" if p["role"] else "")
                                      for p in v["people"]) or "<font color='#5B5852'>—</font>"
                 office = f"<b>{E(v['office_name'])}</b>" + (f"<br/><font size='7.4' color='#5B5852'>{E(v['office_address'])}</font>" if v.get("office_address") else "")
-                if opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]) and d["legs"][i - 1] > JUMP_MILES:
-                    pass
-                elif opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]):
-                    office += (f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{d['legs'][i - 1]:.1f} mi "
-                               + (f"from stop {label(i)}" if numbered else "from the last stop") + "</font>")
+                if opts.get("miles") and v.get("leg") is not None:
+                    office += (f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{v['leg']:.1f} mi "
+                               + (f"from stop {label(v['leg_from'])}" if numbered else "from the last stop") + "</font>")
                 row = ([Paragraph(label(v["n"]) or str(v["n"]), num_style)] if numbered else []) + \
                       ([Paragraph(v["at"].strftime("%-I:%M %p"), body)] if timed else []) + [
                        Paragraph(office, body), Paragraph(spoke, body), Paragraph(E(v["dropped"]) or "—", body),
@@ -608,8 +630,15 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
     return buf.getvalue()
 
 
+def _split(points):
+    if points and isinstance(points[0][0], tuple):
+        return [p for p, _ in points], [l for _, l in points]
+    return list(points), [label(i) for i in range(1, len(points) + 1)]
+
+
 def _sketch(pts, w, h, color, rl, Drawing, Rect, Line, Circle, String):
     """A plain numbered sketch of the stops (no streets), when Google's map image isn't available."""
+    pts, labels = _split(pts)
     d = Drawing(w, h)
     d.add(Rect(0, 0, w, h, fillColor=rl.HexColor("#F4F2EC"), strokeColor=rl.HexColor("#E3DED3")))
     lats, lngs = [p[0] for p in pts], [p[1] for p in pts]
@@ -623,6 +652,6 @@ def _sketch(pts, w, h, color, rl, Drawing, Rect, Line, Circle, String):
         d.add(Line(a[0], a[1], b[0], b[1], strokeColor=color, strokeWidth=2))
     for i, (x, y) in enumerate(xy, 1):
         d.add(Circle(x, y, 8, fillColor=color, strokeColor=rl.white, strokeWidth=1.5))
-        d.add(String(x, y - 3, label(i), fontName="Helvetica-Bold", fontSize=8, fillColor=rl.white, textAnchor="middle"))
+        d.add(String(x, y - 3, labels[i - 1], fontName="Helvetica-Bold", fontSize=8, fillColor=rl.white, textAnchor="middle"))
 
     return d
