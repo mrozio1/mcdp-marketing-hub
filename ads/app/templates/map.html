@@ -207,7 +207,7 @@
     <p>In <strong>Google Cloud</strong>, project <strong>mcdp-ads</strong>: <strong>APIs &amp; Services → Library</strong>, enable <strong>Places API (New)</strong> and <strong>Maps JavaScript API</strong>. Google Maps needs a <strong>billing account</strong> linked to the project, even though this stays within the monthly free allowance.</p>
     <p><strong>Credentials → Create credentials → API key</strong>, twice:</p>
     <p><strong>Browser key</strong>: Application restrictions → Websites → <code>https://ads.mcdp.com/*</code>. API restrictions → Maps JavaScript API and Places API (New).</p>
-    <p><strong>Server key</strong>: API restrictions → Places API (New), plus <strong>Maps Static API</strong> and <strong>Routes API</strong> for the maps and mileage in Field visit PDF reports (enable those two in the Library too). One server key does all three; there's no need for a separate key.</p>
+    <p><strong>Server key</strong>: API restrictions → Places API (New) only.</p>
     <p>Optional: <strong>Google Maps Platform → Map management → Create Map ID</strong> (JavaScript, Vector) and paste it here. Without one, Google's demo map style is used.</p>
     <p>Set a <strong>budget alert</strong> (Billing → Budgets &amp; alerts, e.g. $5) so you'd hear about any charge.</p>
   </details>
