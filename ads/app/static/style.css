@@ -1215,3 +1215,46 @@ details.tool > summary { cursor: pointer; }
 .rv-hm select { width: auto; padding: 0.15rem 1.6rem 0.15rem 0.45rem; font-size: 0.9rem; }
 .rv-month-card { grid-column: span 2; }
 @media (max-width: 640px) { .rv-month-card { grid-column: auto; } }
+/* ---- Search & Maps ---- */
+.sx-pick { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.sx-pick label { min-width: 12rem; }
+.sx-status { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: -0.5rem 0 1.1rem; }
+.sx-errors ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+.sx-glance { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); margin-bottom: 0.4rem; }
+.sx-glance p { margin: 0.2rem 0 0; }
+.sx-vs { margin: 0 0 1.5rem; }
+.sx-ch { font-weight: 600; font-size: 0.82rem; white-space: nowrap; }
+.sx-ch.good { color: var(--teal-deep); }
+.sx-ch.bad { color: #A3401C; }
+.sx-ch.flat { color: var(--ink-soft); font-weight: 500; }
+.sx-ch.new { color: #8A5A00; background: #FBF0D9; padding: 0 0.4rem; border-radius: 999px; }
+.sx-k-clicks { background: var(--teal); }
+.sx-k-actions { background: #D9A441; }
+.sx-chart-box { overflow-x: auto; }
+.sx-chart { display: grid; grid-template-columns: repeat(12, minmax(2.4rem, 1fr)); gap: 0.5rem; min-width: 34rem; }
+.sx-col { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; padding: 0.2rem 0; border-radius: 6px; }
+.sx-col.on { background: #F1F5F4; }
+.sx-plot { position: relative; width: 100%; height: 170px; display: flex; align-items: flex-end; justify-content: center; gap: 3px; }
+.sx-bar { width: 38%; border-radius: 3px 3px 0 0; min-height: 1px; }
+.sx-bar.clicks { background: var(--teal); }
+.sx-bar.actions { background: #D9A441; }
+.sx-nums { font-size: 0.72rem; line-height: 1.25; text-align: center; color: var(--ink); }
+.sx-pos { font-size: 0.75rem; font-weight: 600; color: var(--teal-deep); border-top: 1px solid var(--line); width: 100%; text-align: center; padding-top: 0.25rem; }
+.sx-table-wrap { overflow-x: auto; }
+.sx-table th.sx-group { text-align: center; border-bottom: 1px solid var(--line); }
+.sx-table td.num { text-align: right; white-space: nowrap; }
+.sx-top { max-width: 16rem; }
+.sx-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 0 1.25rem; }
+.sx-two td.num, .sx-two th.num { text-align: right; }
+.sx-steps { padding-left: 1.2rem; display: grid; gap: 0.9rem; }
+.sx-steps li.done::marker { content: "✓  "; color: var(--teal-deep); }
+.sx-sites { margin-top: 0.6rem; }
+.sx-sites select { width: auto; max-width: 100%; }
+.sx-sites .btn { margin-top: 0.6rem; }
+@media (max-width: 640px) { .sx-pick label { min-width: 0; flex: 1 1 100%; } }
+@media (max-width: 640px) {
+  .sx-glance { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.1rem; }
+  .sx-glance dd { font-size: 1.8rem; }
+  #q-h + .seg { flex-wrap: wrap; border-radius: 12px; }
+  #q-h + .seg a { padding: 5px 10px; font-size: 0.85rem; }
+}

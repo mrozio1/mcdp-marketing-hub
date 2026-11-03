@@ -500,3 +500,16 @@ Admins pick it on **Team → Seasonal look**: Automatic (by date), one theme, or
 ## Schools on the Map
 
 The Map has **Private schools** and **Charter schools** toggles: every school within the Map radius of our offices, from the U.S. Department of Education's NCES data (Private School Universe Survey; Common Core of Data, charter flag), fetched by the hub itself and refreshed monthly. Closed and online-only schools are left out. Click a pin for the address, grades, students and distance; add it to a route; download the list as Excel from under the map. **Refresh schools** under the map fetches them straight away (first time, after adding offices).
+
+## Search & Maps (Google rank by practice)
+
+The **Search** tab shows, per practice and per month, how the website does in Google search (Search Console:
+average position, clicks, appearances, the searches it ranks for and which moved up or slipped) and how the
+Google Business Profile does (Business Profile Performance: views on Search and Maps, calls, direction
+requests, website clicks, and the searches that showed the profile). It refreshes daily; the first run fills
+the last 12 months. Everything is free from Google.
+
+Setup (once): in the Google Cloud project used for Reviews, enable the *Google Search Console API* and the
+*Business Profile Performance API*; then on Search → Setup click **Sign in with Google** again (the sign-in now
+also asks for read-only Search Console access) with the account that sees the practice websites in Search
+Console. Check which website belongs to which practice in the same Setup panel.

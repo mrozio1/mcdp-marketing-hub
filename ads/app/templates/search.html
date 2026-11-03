@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Search & Maps{% endblock %}
+{% macro chg(c, pos=False) -%}
+  {%- if c -%}
+  <span class="sx-ch {{ 'good' if c.good else ('bad' if c.good is sameas false else 'flat') }}">
+    {%- if c.good is none -%}same as {{ d.prev_label }}
+    {%- elif pos -%}{{ '▲' if c.good else '▼' }} {{ c.diff|abs }} {{ 'higher' if c.good else 'lower' }}
+    {%- elif c.pct is not none -%}{{ '▲' if c.diff > 0 else '▼' }} {{ (c.pct * 100)|abs|round|int }}%
+    {%- else -%}{{ '+' if c.diff > 0 }}{{ c.diff|int }}{%- endif -%}
+  </span>
+  {%- endif -%}
+{%- endmacro %}
+{% macro n(v) %}{{ '—' if v is none else '{:,}'.format(v) }}{% endmacro %}
+{% block content %}
+<div class="title-row rv-head">
+  <div>
+    <h1>{{ practice.name if practice else 'Search & Maps' }}</h1>
+    <p class="lede rv-lede">How {{ 'this practice shows' if practice else 'the practices show' }} up on Google: the website in search results, and the Google profile on Search and Maps.</p>
+  </div>
+  <form method="get" action="/search" class="sx-pick">
+    {% if pid and view != 'top' %}<input type="hidden" name="view" value="{{ view }}">{% endif %}
+    <label>Showing
+      <select name="practice" onchange="this.form.submit()">
+        <option value="">All practices</option>
+        {% for p in plist %}<option value="{{ p.id }}" {% if pid == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Month
+      <select name="m" onchange="this.form.submit()">
+        {% for k, l in month_opts %}<option value="{{ k }}" {% if k == month %}selected{% endif %}>{{ l }}{% if loop.first %} (this month){% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
+  </form>
+</div>
+
+<div class="small muted sx-status">
+  {% if running %}Pulling the latest numbers from Google…{% elif status.at %}Updated {{ status.at.replace('T', ' ')[:16] }} · refreshes every day{% else %}Not pulled yet{% endif %}
+  {% if connected and can_edit and not running %}<form method="post" action="/search/refresh" class="inline-form" data-busy="Starting…"><input type="hidden" name="back" value="{{ back_url }}"><button class="linklike small" type="submit">Refresh now</button></form>{% endif %}
+  · <a href="/search.xlsx?m={{ month }}">Download Excel</a>
+  {% if d.is_current %}· {{ d.label }} is the month so far; Google's numbers run 2–3 days behind{% endif %}
+</div>
+{% if status.errors %}<div class="flash flash-error sx-errors"><strong>Some numbers couldn't be pulled:</strong><ul>{% for e in status.errors[:6] %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+
+{% if not any_data %}
+<section class="panel sx-empty">
+  <h2>Nothing pulled from Google yet</h2>
+  <p>Once it's set up below, this page fills in by itself every day, with the last 12 months on the first run.</p>
+  <p><a class="btn" href="#setup">See setup</a></p>
+</section>
+{% endif %}
+
+{% set t = d if pid else d.totals %}
+<dl class="glance sx-glance">
+  <div><dt>Average position</dt><dd>{{ t.web.position if t.web and t.web.position else '—' }}</dd>
+    <p class="small">{{ chg(t.pos_ch, pos=True) }}</p><p class="small muted">Where {{ 'the website appears' if pid else 'the websites appear' }} in Google search; 1 is the top</p></div>
+  <div><dt>Website clicks from Google</dt><dd>{{ n(t.web.clicks if t.web else none) }}</dd>
+    <p class="small">{{ chg(t.clicks_ch) }}</p><p class="small muted">{{ n(t.web.impressions if t.web else none) }} appearances in search{% if t.web and t.web.ctr %} · {{ '%.1f'|format(t.web.ctr * 100) }}% clicked{% endif %}</p></div>
+  <div><dt>Google profile views</dt><dd>{{ n(t.prof.views if t.prof else none) }}</dd>
+    <p class="small">{{ chg(t.views_ch) }}</p><p class="small muted">{% if t.prof %}{{ n(t.prof.search) }} on Search · {{ n(t.prof.maps) }} on Maps{% else %}On Search and Maps{% endif %}</p></div>
+  <div><dt>Calls from Google</dt><dd>{{ n(t.prof.calls if t.prof else none) }}</dd>
+    <p class="small">{{ chg(t.calls_ch) }}</p><p class="small muted">Taps on Call on the profile</p></div>
+  <div><dt>Direction requests</dt><dd>{{ n(t.prof.directions if t.prof else none) }}</dd>
+    <p class="small">{{ chg(t.dir_ch) }}</p><p class="small muted">{{ n(t.prof.website if t.prof else none) }} website visits from the profile {{ chg(t.site_ch) }}</p></div>
+</dl>
+<p class="small muted sx-vs">Arrows compare with {{ d.prev_label }}{% if d.is_current %} (a full month against a partial one, so expect them to look low until the month ends){% endif %}.</p>
+
+<section class="rv-section" aria-labelledby="trend-h">
+  <div class="section-head">
+    <h2 id="trend-h">Month by month</h2>
+    <p class="rv-legend small"><span><i class="rv-key sx-k-clicks"></i>Website clicks from Google</span><span><i class="rv-key sx-k-actions"></i>Profile calls, directions and website visits</span></p>
+  </div>
+  <div class="panel sx-chart-box">
+    <div class="sx-chart" role="img" aria-label="Website clicks and Google profile actions per month, {{ d.trend[0].label }} to {{ d.trend[-1].label }}.">
+      {% for b in d.trend %}
+      <div class="sx-col{% if b.month == month %} on{% endif %}">
+        <div class="sx-plot">
+          {% if b.clicks is not none %}<div class="sx-bar clicks" style="height: {{ b.ch }}%" title="{{ b.clicks }} clicks"></div>{% endif %}
+          {% if b.actions is not none %}<div class="sx-bar actions" style="height: {{ b.ah }}%" title="{{ b.actions }} profile actions"></div>{% endif %}
+        </div>
+        <span class="sx-nums">{{ b.clicks if b.clicks is not none else '–' }}<br>{{ b.actions if b.actions is not none else '–' }}</span>
+        <span class="rv-month">{{ b.label }}</span>
+        <span class="sx-pos" title="Average position">{{ b.position or '–' }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="small muted">The bottom row is the average position in Google search that month (lower is better).{% if not pid %} Click a practice below to see its searches.{% endif %}</p>
+  </div>
+</section>
+
+{% if not pid %}
+{# ================================================================ ALL PRACTICES #}
+<section class="rv-section" aria-labelledby="bp-h">
+  <div class="section-head"><h2 id="bp-h">By practice · {{ d.label }}</h2></div>
+  <div class="panel sx-table-wrap">
+  <table class="data sx-table">
+    <thead>
+      <tr><th rowspan="2">Practice</th><th colspan="3" class="sx-group">Website in Google search</th><th colspan="3" class="sx-group">Google profile</th></tr>
+      <tr><th class="num">Position</th><th class="num">Clicks</th><th>Top search</th><th class="num">Views</th><th class="num">Calls</th><th class="num">Directions</th></tr>
+    </thead>
+    <tbody>
+    {% for r in d.rows %}
+      <tr>
+        <th scope="row"><a href="/search?practice={{ r.p.id }}&m={{ month }}">{{ r.p.name }}</a></th>
+        {% if r.has_site %}
+        <td class="num"><strong>{{ r.web.position if r.web and r.web.position else '—' }}</strong><br>{{ chg(r.pos_ch, pos=True) }}</td>
+        <td class="num"><strong>{{ n(r.web.clicks if r.web else none) }}</strong><br>{{ chg(r.clicks_ch) }}</td>
+        <td class="sx-top">{% if r.top %}{{ r.top.query }}<br><span class="small muted">position {{ r.top.position }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        {% else %}
+        <td colspan="3" class="muted small">No website linked{% if can_edit %} · <a href="#setup">link one</a>{% endif %}</td>
+        {% endif %}
+        {% if r.has_loc %}
+        <td class="num"><strong>{{ n(r.prof.views if r.prof else none) }}</strong><br>{{ chg(r.views_ch) }}</td>
+        <td class="num"><strong>{{ n(r.prof.calls if r.prof else none) }}</strong><br>{{ chg(r.calls_ch) }}</td>
+        <td class="num"><strong>{{ n(r.prof.directions if r.prof else none) }}</strong><br>{{ chg(r.dir_ch) }}</td>
+        {% else %}
+        <td colspan="3" class="muted small">No Google profile linked · <a href="/reviews#google-setup">link one</a></td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% else %}
+{# ================================================================ ONE PRACTICE #}
+<section class="rv-section" aria-labelledby="q-h">
+  <div class="section-head">
+    <h2 id="q-h">Searches the website shows up for</h2>
+    <nav class="seg" aria-label="Which searches">
+      {% for k, l in [('top', 'Top searches'), ('up', 'Moving up'), ('down', 'Slipping'), ('new', 'New this month')] %}
+      <a href="/search?practice={{ pid }}&m={{ month }}&view={{ k }}#q-h" {% if view == k %}aria-current="page"{% endif %}>{{ l }}{% if k != 'top' %} <span class="rv-count">{{ d[k]|length }}</span>{% endif %}</a>
+      {% endfor %}
+    </nav>
+  </div>
+  {% set qrows = d.queries[:40] if view == 'top' else d[view] %}
+  <div class="panel sx-table-wrap">
+  {% if not d.sites %}
+    <p class="muted">No website is linked to this practice yet.{% if can_edit %} <a href="#setup">Link its Search Console site</a>.{% endif %}</p>
+  {% elif not qrows %}
+    <p class="muted">{{ {'top': 'No searches recorded for ' ~ d.label ~ ' yet.', 'up': 'No searches moved up a full position since ' ~ d.prev_label ~ '.', 'down': 'Nothing slipped a full position since ' ~ d.prev_label ~ '.', 'new': 'No new searches with 10 or more appearances.'}[view] }}</p>
+  {% else %}
+  <table class="data sx-table">
+    <thead><tr><th>Search</th><th class="num">Position</th><th class="num">vs {{ d.prev_label }}</th><th class="num">Clicks</th><th class="num">Appearances</th></tr></thead>
+    <tbody>
+    {% for q in qrows %}
+      <tr><td>{{ q.query }}</td><td class="num"><strong>{{ q.position }}</strong></td>
+        <td class="num">{% if q.new %}<span class="sx-ch new">new</span>{% elif q.moved %}<span class="sx-ch {{ 'good' if q.moved > 0 else 'bad' }}">{{ '▲' if q.moved > 0 else '▼' }} {{ q.moved|abs }}</span> <span class="small muted">from {{ q.prev_position }}</span>{% else %}<span class="sx-ch flat">same</span>{% endif %}</td>
+        <td class="num">{{ '{:,}'.format(q.clicks) }}</td><td class="num">{{ '{:,}'.format(q.impressions) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="small muted">{{ d.sites|join(', ') }} · {{ d.queries|length }} searches in {{ d.label }}. ▲ means the website moved up in Google's results. Position is an average across everyone who saw it.</p>
+  {% endif %}
+  </div>
+</section>
+
+<div class="sx-two">
+<section class="rv-section" aria-labelledby="k-h">
+  <h2 id="k-h">Searches that showed the Google profile</h2>
+  <div class="panel">
+  {% if not d.locs %}
+    <p class="muted">No Google profile is linked to this practice yet. <a href="/reviews#google-setup">Link it on Reviews</a>.</p>
+  {% elif not d.keywords %}
+    <p class="muted">{% if d.is_current %}Google publishes these after a month ends, so {{ d.label }} shows up early next month. Pick {{ d.prev_label }} to see the last full month.{% else %}No searches recorded for {{ d.label }}.{% endif %}</p>
+  {% else %}
+  <table class="data">
+    <thead><tr><th>Search</th><th class="num">Views</th><th class="num">vs {{ d.prev_label }}</th></tr></thead>
+    <tbody>
+    {% for k in d.keywords %}
+      <tr><td>{{ k.keyword }}</td><td class="num">{% if k.views is not none %}<strong>{{ '{:,}'.format(k.views) }}</strong>{% else %}<span class="muted">under {{ k.under }}</span>{% endif %}</td><td class="num">{{ chg(k.change) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="small muted">Google rounds small numbers down to “under 15” for privacy.</p>
+  {% endif %}
+  </div>
+</section>
+
+{% if d.locations %}
+<section class="rv-section" aria-labelledby="l-h">
+  <h2 id="l-h">Each location</h2>
+  <div class="panel">
+  <table class="data">
+    <thead><tr><th>Location</th><th class="num">Views</th><th class="num">Calls</th><th class="num">Directions</th></tr></thead>
+    <tbody>
+    {% for l in d.locations %}
+      <tr><td>{{ l.loc.title }}<br><span class="small muted">{{ l.loc.address }}</span></td>
+        <td class="num"><strong>{{ n(l.now.views if l.now else none) }}</strong><br>{{ chg(l.ch) }}</td>
+        <td class="num">{{ n(l.now.calls if l.now else none) }}</td><td class="num">{{ n(l.now.directions if l.now else none) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+</div>
+{% endif %}
+
+<details class="drawer" id="setup" {% if not any_data %}open{% endif %}>
+  <summary><span class="drawer-title">Setup</span><span class="drawer-hint">Google connection, and which website belongs to which practice</span></summary>
+  <div class="drawer-body">
+    <ol class="sx-steps">
+      <li class="{{ 'done' if connected else '' }}"><strong>Google sign-in.</strong>
+        {% if connected %}Connected.{% else %}Not connected yet.{% endif %}
+        It's the same sign-in Reviews uses, but it now also asks for read-only Search Console access, so sign in once more{% if not gbp_client %} after saving the Google OAuth client on <a href="/reviews#google-setup">Reviews</a>{% endif %}.
+        {% if gbp_client and can_edit %}<a class="btn btn-quiet btn-small" href="/google/business/connect?back=/search">Sign in with Google</a>{% endif %}
+        Use the Google account that can see the practice websites in Search Console and manages the Business Profiles.</li>
+      <li><strong>Two Google APIs.</strong> In the same Google Cloud project, open APIs & Services → Library and turn on <em>Google Search Console API</em> and <em>Business Profile Performance API</em>. Both are free.</li>
+      <li class="{{ 'done' if locations|selectattr('practice_id')|list else '' }}"><strong>Google profiles → practices.</strong> Matched on <a href="/reviews#google-setup">Reviews → Google setup</a>; {{ locations|selectattr('practice_id')|list|length }} of {{ locations|length }} linked.</li>
+      <li class="{{ 'done' if sites|selectattr('practice_id')|list else '' }}"><strong>Websites → practices.</strong> {% if sites %}Every website in Search Console is listed here; the hub guessed by name. A domain property (all of a site's addresses) is better than a single web address.{% else %}The websites show up here after the first refresh. A website that's missing needs adding in Search Console first (search.google.com/search-console), by someone who manages it.{% endif %}
+        {% if sites %}
+        <form method="post" action="/search/sites" class="sx-sites">
+          <table class="data">
+            <thead><tr><th>Search Console site</th><th>Practice</th></tr></thead>
+            <tbody>
+            {% for s in sites %}
+              <tr><td>{{ domain(s.site) }} <span class="small muted">{{ 'domain' if s.site.startswith('sc-domain:') else s.site }}</span></td>
+                <td><select name="site:{{ s.site }}" {% if not can_edit %}disabled{% endif %}><option value="">Not a practice</option>
+                  {% for p in all_practices %}<option value="{{ p.id }}" {% if s.practice_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% if can_edit %}<button class="btn btn-small" type="submit">Save</button>{% endif %}
+        </form>
+        {% endif %}</li>
+    </ol>
+  </div>
+</details>
+{% endblock %}

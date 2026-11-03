@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users
+from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -164,11 +164,13 @@ def _startup():
     except Exception:
         pass
     reviews.init()
+    visibility.init()
     brand.init()
     images.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         sync.start_scheduler()
         reviews.start_scheduler()
+        visibility.start_scheduler()
         places.start_scheduler()
         referrals.start_scheduler()
         schools.start_scheduler()
@@ -2939,6 +2941,8 @@ def gbp_connect(request: Request):
         return RedirectResponse("/reviews#google-setup", status_code=303)
     state = os.urandom(16).hex()
     request.session["gbp_state"] = state
+    back = request.query_params.get("back", "")
+    request.session["gbp_back"] = back if back.startswith("/") and not back.startswith("//") else ""
     return RedirectResponse(cx.gbp_auth_url(_gbp_redirect(request), state), status_code=303)
 
 
@@ -2955,10 +2959,13 @@ async def gbp_callback(request: Request, code: str = "", state: str = "", error:
         try:
             db.set_setting("gbp_refresh_token", await asyncio.to_thread(cx.gbp_exchange_code, code, _gbp_redirect(request)))
             n = await asyncio.to_thread(reviews.refresh_locations)
-            flash(request, f"Google reviews connected. {n} location{'s' if n != 1 else ''} found; check which practice each belongs to.")
+            flash(request, f"Google connected. {n} location{'s' if n != 1 else ''} found; check which practice each belongs to. "
+                           "Search & Maps numbers are being pulled now.")
+            visibility.refresh_in_background()
         except cx.ConnectorError as e:
             flash(request, f"Google sign-in worked, but listing locations failed: {e}", "error")
-    return RedirectResponse("/reviews#google-setup", status_code=303)
+    back = request.session.pop("gbp_back", "") or "/reviews#google-setup"
+    return RedirectResponse(back, status_code=303)
 
 
 @app.post("/google/business/disconnect")
@@ -2968,6 +2975,66 @@ def gbp_disconnect(request: Request):
     db.set_setting("gbp_refresh_token", None)
     flash(request, "Google reviews disconnected. Reviews and counts already pulled are kept.")
     return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+# ---------- Search & Maps (Search Console + Business Profile performance) ----------
+@app.get("/search", response_class=HTMLResponse)
+def search_page(request: Request):
+    if (r := guard(request)):
+        return r
+    q = request.query_params
+    plist = reviews.practices()
+    pid = _num(q.get("practice"))
+    if pid not in {p["id"] for p in plist}:
+        pid = None
+    opts = visibility.months_back(13)[::-1]
+    month = q.get("m") if q.get("m") in opts else opts[0]
+    view = q.get("view") if q.get("view") in ("up", "down", "new") else "top"
+    data = visibility.detail(pid, month) if pid else visibility.overview(month, plist)
+    return page(request, "search.html", plist=plist, pid=pid, practice=next((p for p in plist if p["id"] == pid), None),
+                month=month, month_opts=[(k, reviews.month_label(k)) for k in opts], d=data, view=view,
+                connected=visibility.connected(), gbp_client=all(cx.gbp_client()), status=visibility.status(),
+                running=visibility.running(), sites=visibility.sites(), domain=visibility.domain,
+                locations=reviews.locations(), any_data=visibility.any_data(), all_practices=plist,
+                back_url="/search?" + urllib.parse.urlencode({"practice": pid or "", "m": month}))
+
+
+@app.post("/search/refresh")
+def search_refresh(request: Request, back: str = Form("/search")):
+    if (r := guard(request)):
+        return r
+    if not visibility.connected():
+        flash(request, "Connect Google first (Reviews → Google setup).", "error")
+    elif visibility.refresh_in_background():
+        flash(request, "Pulling the latest Search Console and Google profile numbers. The first run takes a few minutes; refresh this page in a bit.")
+    else:
+        flash(request, "A refresh is already running.")
+    return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/search", status_code=303)
+
+
+@app.post("/search/sites")
+async def search_sites(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    known = {s["site"] for s in visibility.sites()}
+    valid = {str(p["id"]) for p in reviews.practices()}
+    n = 0
+    for k, v in form.items():
+        if k.startswith("site:") and k[5:] in known:
+            visibility.set_site_practice(k[5:], int(v) if v in valid else None)
+            n += 1
+    flash(request, "Saved which website belongs to which practice." if n else "Nothing to save.")
+    return RedirectResponse("/search#setup", status_code=303)
+
+
+@app.get("/search.xlsx")
+def search_xlsx(request: Request, m: str = ""):
+    if (r := guard(request)):
+        return r
+    month = reviews.valid_month(m) or date.today().isoformat()[:7]
+    return Response(visibility.export_xlsx(month), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="search-and-maps-{month}.xlsx"'})
 
 
 # ---------- Calendar (Outlook invites through Microsoft 365) ----------

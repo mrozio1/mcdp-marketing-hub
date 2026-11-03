@@ -638,7 +638,13 @@ def comment_action(network, comment_id, action, tokens, message=""):
 # Reviews and owner replies. Needs Google's approval for the Business Profile APIs and a person's
 # sign-in (service accounts can't manage Business Profiles): an OAuth client in the Cloud project,
 # signed in once by someone who manages the practices' profiles.
-GBP_SCOPE = "https://www.googleapis.com/auth/business.manage"
+# business.manage: reviews, locations and profile performance; webmasters.readonly: Search Console (website rank).
+GBP_SCOPE = "https://www.googleapis.com/auth/business.manage https://www.googleapis.com/auth/webmasters.readonly"
+SC_BASE = os.environ.get("SEARCH_CONSOLE_BASE", "https://searchconsole.googleapis.com").rstrip("/")
+PERF_BASE = os.environ.get("GBP_PERF_BASE", "https://businessprofileperformance.googleapis.com").rstrip("/")
+PERF_METRICS = ["BUSINESS_IMPRESSIONS_DESKTOP_SEARCH", "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
+                "BUSINESS_IMPRESSIONS_DESKTOP_MAPS", "BUSINESS_IMPRESSIONS_MOBILE_MAPS",
+                "CALL_CLICKS", "WEBSITE_CLICKS", "BUSINESS_DIRECTION_REQUESTS"]
 GBP_ACCOUNTS = os.environ.get("GBP_ACCOUNTS_BASE", "https://mybusinessaccountmanagement.googleapis.com").rstrip("/")
 GBP_INFO = os.environ.get("GBP_INFO_BASE", "https://mybusinessbusinessinformation.googleapis.com").rstrip("/")
 GBP_V4 = os.environ.get("GBP_V4_BASE", "https://mybusiness.googleapis.com").rstrip("/")
@@ -687,6 +693,15 @@ class GBPClient:
     @staticmethod
     def _hint(msg):
         low = msg.lower()
+        if "insufficient" in low and "scope" in low:
+            return ("The Google sign-in doesn't include this permission yet. On Reviews → Google setup, click "
+                    "“Sign in with Google” again and allow everything it asks for. (" + msg + ")")
+        if ("has not been used" in low or "is disabled" in low or "service_disabled" in low) and "searchconsole" in low:
+            return ("Turn on the “Google Search Console API” in the same Google Cloud project as the Business Profile "
+                    "APIs (APIs & Services → Library), wait a few minutes, then refresh. (" + msg + ")")
+        if ("has not been used" in low or "is disabled" in low or "service_disabled" in low) and "performance" in low:
+            return ("Turn on the “Business Profile Performance API” in the same Google Cloud project (APIs & Services "
+                    "→ Library), wait a few minutes, then refresh. (" + msg + ")")
         if "has not been used" in low or "is disabled" in low or "service_disabled" in low:
             return ("Google hasn't switched on the Business Profile APIs for this Cloud project yet. Apply for "
                     "access (Google's Business Profile API access form), then enable the 'My Business Account "
@@ -736,6 +751,69 @@ class GBPClient:
             if not token:
                 break
         return out, avg, total
+
+    # ---- Search Console: how the practice websites rank in Google search
+    def sc_sites(self):
+        """[{'site': 'sc-domain:example.com' or 'https://www.example.com/', 'permission': ...}] (verified ones only)."""
+        j = self._get(f"{SC_BASE}/webmasters/v3/sites")
+        return [{"site": e["siteUrl"], "permission": e.get("permissionLevel", "")} for e in j.get("siteEntry", [])
+                if e.get("permissionLevel") != "siteUnverifiedUser"]
+
+    def sc_query(self, site, start, end, dimensions=None, row_limit=1000):
+        """Search Analytics rows: [{'keys': [...], 'clicks', 'impressions', 'ctr', 'position'}]."""
+        body = {"startDate": start.isoformat(), "endDate": end.isoformat(), "rowLimit": row_limit, "dataState": "all"}
+        if dimensions:
+            body["dimensions"] = dimensions
+        url = f"{SC_BASE}/webmasters/v3/sites/{urllib.parse.quote(site, safe='')}/searchAnalytics/query"
+        try:
+            j = _http(url, data=body, method="POST", headers={"Authorization": f"Bearer {self.token}",
+                                                               "Content-Type": "application/json"})
+        except ConnectorError as e:
+            raise ConnectorError(self._hint(str(e))) from None
+        return j.get("rows", [])
+
+    # ---- Business Profile Performance: views on Search / Maps and what people did
+    @staticmethod
+    def _perf_loc(location):
+        return "locations/" + location.rsplit("/", 1)[-1]
+
+    def perf_daily(self, location, start, end, metrics=None):
+        """{metric: {date: value}} for one location."""
+        params = [("dailyMetrics", m) for m in (metrics or PERF_METRICS)]
+        for k, d in (("dailyRange.startDate", start), ("dailyRange.endDate", end)):
+            params += [(f"{k}.year", d.year), (f"{k}.month", d.month), (f"{k}.day", d.day)]
+        url = f"{PERF_BASE}/v1/{self._perf_loc(location)}:fetchMultiDailyMetricsTimeSeries?" + urllib.parse.urlencode(params)
+        try:
+            j = _http(url, headers={"Authorization": f"Bearer {self.token}"})
+        except ConnectorError as e:
+            raise ConnectorError(self._hint(str(e))) from None
+        out = {}
+        for block in j.get("multiDailyMetricTimeSeries", []):
+            for s in block.get("dailyMetricTimeSeries", []):
+                vals = out.setdefault(s.get("dailyMetric", ""), {})
+                for dv in (s.get("timeSeries") or {}).get("datedValues", []):
+                    d = dv.get("date") or {}
+                    if d.get("year"):
+                        vals[date(d["year"], d["month"], d["day"])] = int(dv.get("value") or 0)
+        return out
+
+    def perf_keywords(self, location, year, month):
+        """[(keyword, views or None, threshold or None)] for searches that showed the profile in one month."""
+        out, token = [], None
+        for _ in range(20):
+            params = {"monthlyRange.startMonth.year": year, "monthlyRange.startMonth.month": month,
+                      "monthlyRange.endMonth.year": year, "monthlyRange.endMonth.month": month, "pageSize": 100}
+            if token:
+                params["pageToken"] = token
+            j = self._get(f"{PERF_BASE}/v1/{self._perf_loc(location)}/searchkeywords/impressions/monthly", params)
+            for k in j.get("searchKeywordsCounts", []):
+                v = k.get("insightsValue") or {}
+                out.append((k.get("searchKeyword", ""), int(v["value"]) if v.get("value") is not None else None,
+                            int(v["threshold"]) if v.get("threshold") is not None else None))
+            token = j.get("nextPageToken")
+            if not token:
+                break
+        return out
 
     def reply(self, review_name, comment):
         try:
