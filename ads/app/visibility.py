@@ -161,11 +161,22 @@ def set_site_practice(site, pid):
 
 
 # ------------------------------------------------------------------ refresh
-def _months_to_fetch(kind, today):
-    """The current and previous month, plus the last 12 on the first run for that source."""
+def _backfilled(kind):
+    try:
+        return set(json.loads(db.get_setting(f"visibility_filled_{kind}") or "[]"))
+    except ValueError:
+        return set()
+
+
+def _mark_filled(kind, key):
+    done = _backfilled(kind) | {key}
+    db.set_setting(f"visibility_filled_{kind}", json.dumps(sorted(done)))
+
+
+def _months_to_fetch(kind, today, key):
+    """The current and previous month; the last 12 as well the first time a site or location is read."""
     cur = today.isoformat()[:7]
-    done = (db.get_setting(f"visibility_backfilled_{kind}") or "")
-    if done:
+    if key in _backfilled(kind):
         return [prev_month(cur), cur]
     return months_back(BACKFILL_MONTHS + 1, cur)
 
@@ -173,10 +184,10 @@ def _months_to_fetch(kind, today):
 def refresh_search_console(cl, today=None):
     """Monthly totals and top searches for every site linked to a practice."""
     today = today or date.today()
-    months = _months_to_fetch("sc", today)
-    start, end = bounds(months[0], today)[0], bounds(months[-1], today)[1]
     errors, n = [], 0
     for s in [s for s in sites() if s["practice_id"]]:
+        months = _months_to_fetch("sc", today, s["site"])
+        start, end = bounds(months[0], today)[0], bounds(months[-1], today)[1]
         try:
             daily = cl.sc_query(s["site"], start, end, ["date"], row_limit=1000)
             agg = {}
@@ -201,23 +212,21 @@ def refresh_search_console(cl, today=None):
                                   "VALUES (?,?,?,?,?,?)",
                                   [(s["site"], m, r["keys"][0], int(r.get("clicks") or 0), int(r.get("impressions") or 0),
                                     round(float(r.get("position") or 0), 2)) for r in per_month[m] if r.get("keys")])
+            _mark_filled("sc", s["site"])
             n += 1
         except cx.ConnectorError as e:
             errors.append(f"{domain(s['site'])}: {e}")
-    if n and not errors:
-        db.set_setting("visibility_backfilled_sc", today.isoformat())
     return n, errors
 
 
 def refresh_profiles(cl, today=None):
     """Monthly views, calls, directions and website clicks, plus searches that found each linked location."""
     today = today or date.today()
-    months = _months_to_fetch("gbp", today)
-    # Google's numbers run a few days behind; the API refuses end dates in the future
-    start, end = bounds(months[0], today)[0], bounds(months[-1], today)[1]
     errors, n = [], 0
     locs = [l for l in reviews.locations() if l["practice_id"]]
     for loc in locs:
+        months = _months_to_fetch("gbp", today, loc["name"])
+        start, end = bounds(months[0], today)[0], bounds(months[-1], today)[1]
         try:
             series = cl.perf_daily(loc["name"], start, end)
             agg = {}
@@ -244,7 +253,8 @@ def refresh_profiles(cl, today=None):
             with db.conn() as c:
                 for m in months:
                     a = agg.get(m)
-                    if a:
+                    # Google sends zeros for days it hasn't counted yet; an all-zero month isn't in yet
+                    if a and (a["search"] or a["maps"] or a["calls"] or a["dir"] or a["web"]):
                         c.execute("INSERT OR REPLACE INTO gbp_perf(location, month, search_views, maps_views, calls, "
                                   "directions, website, days, fetched_at) VALUES (?,?,?,?,?,?,?,?,?)",
                                   (loc["name"], m, a["search"], a["maps"], a["calls"], a["dir"], a["web"], len(a["days"]), db.now()))
@@ -252,11 +262,15 @@ def refresh_profiles(cl, today=None):
                         c.execute("DELETE FROM gbp_keywords WHERE location=? AND month=?", (loc["name"], m))
                         c.executemany("INSERT OR REPLACE INTO gbp_keywords(location, month, keyword, views, under) VALUES (?,?,?,?,?)",
                                       [(loc["name"], m, k, v, t) for k, v, t in kw[m] if k])
+            _mark_filled("gbp", loc["name"])
             n += 1
         except cx.ConnectorError as e:
-            errors.append(f"{loc['title']}: {e}")
-    if n and not errors:
-        db.set_setting("visibility_backfilled_gbp", today.isoformat())
+            msg = str(e)
+            if "permission" in msg.lower() or "HTTP 403" in msg:
+                msg = ("Google won't share this profile's numbers with the signed-in account. Usually that account is "
+                       "only a Site manager there, or the profile isn't verified: make it a Manager or Owner in the "
+                       "Business Profile's People and access, then refresh.")
+            errors.append(f"{loc['title']}: {msg}")
     return n, errors
 
 

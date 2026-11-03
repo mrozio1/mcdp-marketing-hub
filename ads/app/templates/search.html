@@ -1,5 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Search & Maps{% endblock %}
+{% block title %}Search & Maps<script>
+  // "how to add it" / #sites: open Setup, then scroll to the websites step
+  (() => {
+    const go = () => { if (location.hash === "#sites" || location.hash === "#setup") { const d = document.getElementById("setup"); d.open = true;
+      document.getElementById(location.hash.slice(1)).scrollIntoView({ behavior: "smooth", block: "start" }); } };
+    window.addEventListener("hashchange", go); go();
+  })();
+</script>
+{% endblock %}
 {% macro chg(c, pos=False) -%}
   {%- if c -%}
   <span class="sx-ch {{ 'good' if c.good else ('bad' if c.good is sameas false else 'flat') }}">
@@ -107,7 +115,7 @@
         <td class="num"><strong>{{ n(r.web.clicks if r.web else none) }}</strong><br>{{ chg(r.clicks_ch) }}</td>
         <td class="sx-top">{% if r.top %}{{ r.top.query }}<br><span class="small muted">position {{ r.top.position }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         {% else %}
-        <td colspan="3" class="muted small">No website linked{% if can_edit %} · <a href="#setup">link one</a>{% endif %}</td>
+        <td colspan="3" class="muted small">No website in Search Console yet · <a href="#sites" class="sx-open-setup">how to add it</a></td>
         {% endif %}
         {% if r.has_loc %}
         <td class="num"><strong>{{ n(r.prof.views if r.prof else none) }}</strong><br>{{ chg(r.views_ch) }}</td>
@@ -208,7 +216,21 @@
         Use the Google account that can see the practice websites in Search Console and manages the Business Profiles.</li>
       <li><strong>Two Google APIs.</strong> In the same Google Cloud project, open APIs & Services → Library and turn on <em>Google Search Console API</em> and <em>Business Profile Performance API</em>. Both are free.</li>
       <li class="{{ 'done' if locations|selectattr('practice_id')|list else '' }}"><strong>Google profiles → practices.</strong> Matched on <a href="/reviews#google-setup">Reviews → Google setup</a>; {{ locations|selectattr('practice_id')|list|length }} of {{ locations|length }} linked.</li>
-      <li class="{{ 'done' if sites|selectattr('practice_id')|list else '' }}"><strong>Websites → practices.</strong> {% if sites %}Every website in Search Console is listed here; the hub guessed by name. A domain property (all of a site's addresses) is better than a single web address.{% else %}The websites show up here after the first refresh. A website that's missing needs adding in Search Console first (search.google.com/search-console), by someone who manages it.{% endif %}
+      <li id="sites" class="{{ 'done' if sites|selectattr('practice_id')|list else '' }}"><strong>Websites → practices.</strong>
+        {% set linked_pids = sites|selectattr('practice_id')|map(attribute='practice_id')|list %}
+        {% set missing = all_practices|rejectattr('id', 'in', linked_pids)|list %}
+        {% if sites %}Google shows the hub <strong>{{ sites|length }} website{{ '' if sites|length == 1 else 's' }}</strong> in Search Console for the account you signed in with. Each one is listed below, matched to a practice by name; change any that are wrong.{% else %}No websites yet: either the first refresh hasn't run, or the signed-in Google account can't see any sites in Search Console.{% endif %}
+        {% if missing %}
+        <div class="sx-howto">
+          <p><strong>{{ missing|length }} practice{{ '' if missing|length == 1 else 's' }} without a website here.</strong> A website only shows up once it's in Search Console <em>and</em> the Google account you signed in with can see it. For each one:</p>
+          <ul>
+            <li><strong>Already in Search Console under another account</strong> (an agency, the web developer, the office): the owner opens Search Console → the site → Settings → Users and permissions → <em>Add user</em>, enters the hub's Google account, and picks <em>Restricted</em> (read-only is enough).</li>
+            <li><strong>Not in Search Console at all:</strong> go to <a href="https://search.google.com/search-console" target="_blank" rel="noopener">search.google.com/search-console</a> with the hub's Google account → <em>Add property</em> → <em>URL prefix</em> with the site's address → verify with <em>HTML tag</em> (I can add the tag to the WordPress sites for you). Once it's verified, Google shows its past 16 months too.</li>
+          </ul>
+          <p>Then click <strong>Refresh now</strong> at the top: new websites appear here and are matched to a practice automatically.</p>
+          <details class="sx-missing"><summary class="small">Show the {{ missing|length }} practices</summary><p class="small muted">{{ missing|map(attribute='name')|join(' · ') }}</p></details>
+        </div>
+        {% endif %}
         {% if sites %}
         <form method="post" action="/search/sites" class="sx-sites">
           <table class="data">
@@ -227,4 +249,12 @@
     </ol>
   </div>
 </details>
+<script>
+  // "how to add it" / #sites: open Setup, then scroll to the websites step
+  (() => {
+    const go = () => { if (location.hash === "#sites" || location.hash === "#setup") { const d = document.getElementById("setup"); d.open = true;
+      document.getElementById(location.hash.slice(1)).scrollIntoView({ behavior: "smooth", block: "start" }); } };
+    window.addEventListener("hashchange", go); go();
+  })();
+</script>
 {% endblock %}

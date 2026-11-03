@@ -113,6 +113,15 @@ def test_refresh_backfills_then_keeps_two_months(env, monkeypatch):
     FakeGoogle.calls = []
     vis.refresh(today=TODAY)
     assert len([c for c in FakeGoogle.calls if c[4] == ("query",) and c[1] == "sc-domain:heightsortho.com"]) == 2
+    # a website linked later gets its own 12 months the next time
+    vis.set_site_practice("https://www.randomblog.net/", env["havens"])
+    FakeGoogle.calls = []
+    vis.refresh(today=TODAY)
+    assert len([c for c in FakeGoogle.calls if c[4] == ("query",) and c[1] == "https://www.randomblog.net/"]) == 13
+    vis.set_site_practice("https://www.randomblog.net/", None)
+    with db.conn() as c:
+        c.execute("DELETE FROM sc_month WHERE site='https://www.randomblog.net/'")
+        c.execute("DELETE FROM sc_queries WHERE site='https://www.randomblog.net/'")
 
 
 def test_monthly_numbers_and_changes(env):
@@ -145,6 +154,8 @@ def test_search_page_overview_practice_and_export(env, monkeypatch):
     assert "Heights – Utica" in one and "under 15" in one
     cur = v.get(f"/search?practice={h}").text
     assert "Google publishes these after a month ends" in cur
+    setup = v.get("/search?m=2026-10").text
+    assert "Google shows the hub <strong>4 websites</strong>" in setup and "without a website here" not in setup
     assert "Sign in with Google" in a.get("/search").text
     # viewers can't remap; editors can
     sid = "https://www.heightsortho.com/"
