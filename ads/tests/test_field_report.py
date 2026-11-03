@@ -111,9 +111,9 @@ def test_toggles_leave_things_out(env):
     a = env["admin"]
     full = text(a.get(f"/field/report.pdf?m=2026-10&practice={env['heights']}&spend=1&time=1&miles=1&map=1").content)
     bare = text(a.get(f"/field/report.pdf?m=2026-10&practice={env['heights']}").content)
-    assert "Spend" in full and "$42.50" in full and "mi from stop" in full and "There · between" in full and "Sketch of the stops" in full
+    assert "Spend" in full and "$42.50" in full and "mi from stop" in full and "There · between" in full
     assert "Spend" not in bare and "$42.50" not in bare and "Miles" not in bare and "There · between" not in bare
-    assert "Sketch of the stops" not in bare and "Pam Beesly" in bare and "In 2 weeks (Oct 19)" in bare
+    assert "Pam Beesly" in bare and "In 2 weeks (Oct 19)" in bare
     assert "Time" not in bare.replace("Time in", "") and "9:30 AM" not in bare and " # " not in bare      # no clock times, no numbers
     assert "9:30 AM" in full and "Monday, October 5" in bare                                            # the date always shows
     nomap = text(a.get(f"/field/report.pdf?m=2026-10&practice={env['heights']}&miles=1").content)
@@ -167,7 +167,7 @@ def test_two_people_with_one_name_and_a_misplaced_office(env, monkeypatch):
     assert d["people"] == 3                                                                  # three offices, three Tammys
     assert len(d["jumps"]) == 1 and d["jumps"][0][3] == "Cherry Bay Dental" and d["miles"] < 10
     t = text(env["abe"].get(f"/field/report.pdf?m=2026-09&practice={env['havens']}&miles=1").content)
-    assert "Left out of the miles" in t and "Cherry Bay Dental" in t
+    assert "Left out of the miles" not in t and "Cherry Bay Dental" in t and "wrong" not in t   # nothing about errors in the PDF
 
 
 def test_google_refusals_are_shown(env, monkeypatch):
@@ -175,5 +175,22 @@ def test_google_refusals_are_shown(env, monkeypatch):
     fr._google_note("map", "Maps Static API (HTTP 403): This API key is not authorized to use this service or API.")
     page = env["admin"].get("/field/report").text
     assert "Google refused the last report" in page and "not authorized" in page and "API restrictions" in page
-    fr._google_note("map", "")
-    assert "Google refused" not in env["admin"].get("/field/report").text
+    assert "not authorized" not in env["abe"].get("/field/report").text                    # admins only
+    env["admin"].post("/field/report/key", data={"key": "AIza" + "x" * 35})
+    assert fr.report_key() == "AIza" + "x" * 35 and "Google refused" not in env["admin"].get("/field/report").text
+    env["abe"].post("/field/report/key", data={"clear": "1"})
+    assert fr.report_key() == "AIza" + "x" * 35
+    env["admin"].post("/field/report/key", data={"clear": "1"})
+    assert env["db"].get_setting("maps_report_key") is None
+
+
+def test_location_never_from_a_phone_far_away(env, monkeypatch):
+    fr = env["fr"]
+    monkeypatch.setattr(env["field"], "geocode_one", lambda a: (44.76, -85.62) if "Front" in a else None)
+    base = {"office_lat": None, "office_lng": None, "place_id": None, "npi_key": None, "our_office_id": None}
+    logged_later = {**base, "office_address": "876 E Front St, Traverse City, MI", "on_site": 0, "phone_lat": 42.3, "phone_lng": -83.0, "phone_acc": 2500}
+    assert fr.point(logged_later) == (44.76, -85.62)                                          # the address, not the phone
+    no_address = {**base, "office_address": "", "on_site": 0, "phone_lat": 42.3, "phone_lng": -83.0, "phone_acc": 2500}
+    assert fr.point(no_address) is None                                                       # a vague phone spot isn't used
+    there = {**base, "office_address": "", "on_site": 1, "phone_lat": 44.7, "phone_lng": -85.6, "phone_acc": 30}
+    assert fr.point(there) == (44.7, -85.6)

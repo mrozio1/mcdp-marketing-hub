@@ -2431,7 +2431,26 @@ def field_report_form(request: Request):
                 month_opts=[(k, date.fromisoformat(k + "-01").strftime("%B %Y")) for k in opts],
                 month=request.query_params.get("m") if request.query_params.get("m") in opts else opts[0],
                 options=field_report.OPTIONS, me_id=u["id"],
-                maps_key=bool(places.server_key()), google=field_report.google_status())
+                maps_key=bool(field_report.report_key()), google=field_report.google_status(),
+                report_key_own=bool(db.get_setting("maps_report_key")))
+
+
+@app.post("/field/report/key")
+def field_report_key(request: Request, key: str = Form(""), clear: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if (me(request) or {}).get("role") != "admin":
+        flash(request, "That needs admin access. Ask an admin.", "error")
+    elif clear:
+        db.set_setting("maps_report_key", None)
+        flash(request, "Reports now use the Map's server key.")
+    elif re.fullmatch(r"AIza[\w-]{30,}", key.strip()):
+        db.set_setting("maps_report_key", key.strip())
+        db.set_setting("field_report_google", None)
+        flash(request, "Saved. The next report uses this key for maps and miles.")
+    else:
+        flash(request, "That doesn't look like a Google API key (they start with AIza).", "error")
+    return RedirectResponse("/field/report#report-google", status_code=303)
 
 
 @app.get("/field/report.pdf")

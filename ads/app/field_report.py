@@ -117,18 +117,49 @@ def month_bounds(month):
     return start, start + timedelta(days=calendar.monthrange(y, m)[1])
 
 
+def report_key():
+    """The Google key for report maps and driving miles: its own key if one was saved, else the Map's server key."""
+    from . import connectors as cx
+    return cx.setting("MAPS_REPORT_KEY") or places.server_key()
+
+
+def _geocoded(address):
+    """An office address → (lat, lng) with the free Census geocoder, kept so each address is looked up once."""
+    a = " ".join((address or "").split())
+    if len(a) < 8:
+        return None
+    with db.conn() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS field_geo (address TEXT PRIMARY KEY, lat REAL, lng REAL, at TEXT)")
+        r = c.execute("SELECT lat, lng FROM field_geo WHERE address=?", (a.lower(),)).fetchone()
+    if r:
+        return (r["lat"], r["lng"]) if r["lat"] is not None else None
+    got = field.geocode_one(a)
+    with db.conn() as c:
+        c.execute("INSERT OR REPLACE INTO field_geo(address, lat, lng, at) VALUES (?,?,?,?)",
+                  (a.lower(), got[0] if got else None, got[1] if got else None, db.now()))
+    return got
+
+
 def point(v):
-    """Where a visit was: the phone's spot when it checked in at the office (the most reliable), else the
-    office's saved location, else wherever the phone was."""
-    order = (("phone_lat", "phone_lng"), ("office_lat", "office_lng")) if v.get("on_site") == 1 else \
-        (("office_lat", "office_lng"), ("phone_lat", "phone_lng"))
-    for la, ln in order:
-        if v.get(la) is not None and v.get(ln) is not None:
-            return float(v[la]), float(v[ln])
+    """Where the office is, for the map and miles. In order: the phone's spot when it checked in at the office;
+    the office's own location (the map pin, or its NPI record); its address, looked up; and only then a phone
+    location that was precise. A phone location from logging the visit later (at home, or a laptop whose
+    location is a guess from its internet connection) is never used: that's what made far-off jumps."""
+    if v.get("on_site") == 1 and v.get("phone_lat") is not None:
+        return float(v["phone_lat"]), float(v["phone_lng"])
+    o = field._with_coords({"lat": v.get("office_lat"), "lng": v.get("office_lng"), "place_id": v.get("place_id"),
+                            "npi_key": v.get("npi_key"), "our_office_id": v.get("our_office_id")})
+    if o.get("here_lat") is not None:
+        return float(o["here_lat"]), float(o["here_lng"])
+    got = _geocoded(v.get("office_address"))
+    if got:
+        return got
+    if v.get("phone_lat") is not None and (v.get("phone_acc") or 1e9) <= 150:
+        return float(v["phone_lat"]), float(v["phone_lng"])
     return None
 
 
-JUMP_MILES = 120     # a same-day hop longer than this is almost always an office saved in the wrong place
+JUMP_MILES = 150     # a same-day hop longer than this can't be right; it's left out of the miles
 
 
 # ---- what Google said the last time it was asked (shown on the report page, so a refusal isn't silent)
@@ -246,7 +277,7 @@ ROUTES_URL = os.environ.get("ROUTES_URL", "https://routes.googleapis.com/directi
 
 
 def _routes(stops):
-    key = places.server_key()
+    key = report_key()
     if not key or len(stops) < 2 or len(stops) > 27:
         return None
     wp = lambda p: {"location": {"latLng": {"latitude": p[0], "longitude": p[1]}}}
@@ -344,7 +375,7 @@ def _map_cache_dir():
 
 def static_map(points, color):
     """A Google Static Maps PNG of numbered stops joined in order, or None (key missing or API off)."""
-    key = places.server_key()
+    key = report_key()
     if not key or not points:
         return None
     hexc = color.lstrip("#")
@@ -486,14 +517,10 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
     notes = []
     if opts.get("miles"):
         notes.append("Miles are driving distance between each day's stops, in order (not to the first stop or home)"
-                     + (". Where Google couldn't give a route, straight-line distance × 1.25 is used, marked ≈." if data["estimated"] else "."))
+                     + (". Marked ≈ where they're estimated from the distance between offices." if data["estimated"] else "."))
     if opts.get("time"):
         notes.append("Time in an office is what was logged with the visit; time between runs from leaving one office "
                      "(arrival + time there) to arriving at the next.")
-    for nm, dy, a_off, b_off, leg in data["jumps"]:
-        notes.append(f"<font color='#A3401C'>Left out of the miles: {leg:,.0f} mi from {E(a_off)} to {E(b_off)} on "
-                     f"{date.fromisoformat(dy):%b %-d} ({E(nm)}). One of those offices is probably saved in the wrong place; "
-                     f"check its address on the Map.</font>")
     for n in notes:
         out += [Spacer(1, 3), Paragraph(n, small)]
     if not data["visits"]:
@@ -548,7 +575,7 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                                      for p in v["people"]) or "<font color='#5B5852'>—</font>"
                 office = f"<b>{E(v['office_name'])}</b>" + (f"<br/><font size='7.4' color='#5B5852'>{E(v['office_address'])}</font>" if v.get("office_address") else "")
                 if opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]) and d["legs"][i - 1] > JUMP_MILES:
-                    office += "<br/><font size='7.4' color='#A3401C'>location looks wrong (left out of the miles)</font>"
+                    pass
                 elif opts.get("miles") and i and d["legs"] and i - 1 < len(d["legs"]):
                     office += (f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{d['legs'][i - 1]:.1f} mi "
                                + (f"from stop {label(i)}" if numbered else "from the last stop") + "</font>")
@@ -597,7 +624,5 @@ def _sketch(pts, w, h, color, rl, Drawing, Rect, Line, Circle, String):
     for i, (x, y) in enumerate(xy, 1):
         d.add(Circle(x, y, 8, fillColor=color, strokeColor=rl.white, strokeWidth=1.5))
         d.add(String(x, y - 3, label(i), fontName="Helvetica-Bold", fontSize=8, fillColor=rl.white, textAnchor="middle"))
-    why = (google_status().get("map") or {}).get("error") or "no Google Maps server key"
-    d.add(String(6, 5, ("Sketch of the stops. Google didn't send a street map: " + why)[:190], fontName="Helvetica",
-                 fontSize=6.5, fillColor=rl.HexColor("#5B5852")))
+
     return d
