@@ -37,6 +37,7 @@ fi
 
 . ./profiles.sh
 . ./ai-fallback.sh
+. ./agent-check.sh
 set_ai_fallback
 echo "Building and starting the Ads page (first time takes a few minutes)..."
 # shellcheck disable=SC2086
@@ -52,6 +53,7 @@ for _ in $(seq 1 40); do
     if [ -z "$(getvar LITELLM_MASTER_KEY)" ]; then
       echo "Note: AI write-ups need AI turned on first: sh enable-ai.sh YOUR_KEY (then re-run this script)."
     fi
+    agent_check || true
     exit 0
   fi
   printf "."; sleep 3

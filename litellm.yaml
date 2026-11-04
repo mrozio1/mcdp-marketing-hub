@@ -14,7 +14,15 @@ model_list:
       model: os.environ/AI_TEXT_MODEL
       api_key: os.environ/AI_PROVIDER_KEY
       api_base: os.environ/AI_API_BASE
+  # The Postiz Agent (social.mcdp.com/agents) asks for gpt-5.2. It can run on its own, stronger model
+  # (AGENT_MODEL / AGENT_KEY, set by enable-agent.sh); otherwise it uses the main text model.
+  # agent_hook.py adds the selected practices' brand kits to every Agent request.
   - model_name: gpt-5.2
+    litellm_params:
+      model: os.environ/AGENT_MODEL
+      api_key: os.environ/AGENT_KEY
+  # If the Agent's model fails, it falls back to the main text model, then the light backup.
+  - model_name: agent-backup
     litellm_params: *text
   - model_name: gpt-4o-2024-08-06
     litellm_params: *text
@@ -36,10 +44,11 @@ model_list:
 litellm_settings:
   drop_params: true        # silently drop OpenAI-only options other providers reject
   request_timeout: 120
-  num_retries: 2           # brief overloads usually clear within seconds
+  num_retries: 3           # brief overloads and per-minute limits usually clear within seconds
+  callbacks: agent_hook.handler
   fallbacks:
     - gpt-4.1: [text-backup]
-    - gpt-5.2: [text-backup]
+    - gpt-5.2: [agent-backup, text-backup]
     - gpt-4o-2024-08-06: [text-backup]
 
 general_settings:

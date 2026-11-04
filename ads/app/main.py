@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -36,7 +36,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # ---------- who may do what ----------
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
-PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/")
+PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
@@ -565,6 +565,17 @@ def team_remove(request: Request, uid: int):
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/internal/agent-context")
+def agent_context(request: Request, ids: str = ""):
+    """For the AI translator only (key = the translator's master key): brand kits for the
+    channels picked in the Postiz Agent."""
+    key = os.environ.get("AI_API_KEY", "")
+    sent = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not key or not hmac.compare_digest(sent.encode(), key.encode()):
+        return JSONResponse({"error": "not allowed"}, status_code=403)
+    return agent.context([i for i in ids.split(",") if i.strip()])
 
 
 # ---------- welcome ----------

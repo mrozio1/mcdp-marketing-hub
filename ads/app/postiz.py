@@ -32,6 +32,32 @@ def channels():
     return from_rows(rows)
 
 
+def integrations_by_id(ids):
+    """Postiz channels by their Postiz id: [{'id', 'provider', 'internal_id', 'name', 'customer'}]."""
+    url = os.environ.get("POSTIZ_DATABASE_URL", "")
+    if not url or not ids:
+        return []
+    try:
+        import psycopg
+    except ImportError:
+        return []
+    queries = (
+        'SELECT i."id", i."providerIdentifier", i."internalId", COALESCE(i."customName", i."name"), c."name" '
+        'FROM "Integration" i LEFT JOIN "Customer" c ON c."id" = i."customerId" WHERE i."id" = ANY(%s)',
+        'SELECT "id", "providerIdentifier", "internalId", COALESCE("customName", "name"), NULL '
+        'FROM "Integration" WHERE "id" = ANY(%s)',
+    )
+    for q in queries:                          # older Postiz versions have no customers (groups)
+        try:
+            with psycopg.connect(url, connect_timeout=5) as c:
+                rows = c.execute(q, (list(ids),)).fetchall()
+            return [{"id": str(r[0]), "provider": r[1] or "", "internal_id": str(r[2] or ""),
+                     "name": r[3] or "", "customer": r[4] or ""} for r in rows]
+        except Exception:
+            continue
+    return []
+
+
 def from_rows(rows):
     """Integration rows -> channels. Instagram comes in two kinds:
     'instagram' (connected through a Facebook Page; token "pageToken___userToken", the Page token reads it)
