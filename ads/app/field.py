@@ -94,6 +94,8 @@ def init():
             c.execute("ALTER TABLE visits ADD COLUMN practice_location TEXT DEFAULT ''")
         if "minutes" not in have:              # how long they were in the office (optional)
             c.execute("ALTER TABLE visits ADD COLUMN minutes INTEGER")
+        if "virtual" not in have:              # a phone, video or Teams meeting: no location, no miles
+            c.execute("ALTER TABLE visits ADD COLUMN virtual INTEGER NOT NULL DEFAULT 0")
     os.makedirs(receipt_dir(), exist_ok=True)
 
 
@@ -190,6 +192,10 @@ def _date_or_blank(s):
 
 
 MINUTE_CHOICES = (5, 10, 15, 20, 30, 45, 60, 90, 120)
+
+
+def is_virtual(form):
+    return 1 if str(form.get("virtual") or "").strip().lower() in ("1", "on", "true", "yes") else 0
 
 
 def minutes_in(v):
@@ -414,7 +420,8 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
         raise FieldError("Pick how warm the relationship is.")
     practice_id, practice_location = _practice_in(form)
     cost = money_in(form.get("cost"))
-    plat, plng, pacc = _f(form.get("phone_lat")), _f(form.get("phone_lng")), _f(form.get("phone_acc"))
+    virtual = is_virtual(form)
+    plat, plng, pacc = (None, None, None) if virtual else (_f(form.get("phone_lat")), _f(form.get("phone_lng")), _f(form.get("phone_acc")))
     dist = on_site = None
     if plat is not None and plng is not None and o.get("here_lat") is not None:
         dist = round(places.miles_between(plat, plng, o["here_lat"], o["here_lng"]), 2)
@@ -434,12 +441,12 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
         cur = c.execute(
             "INSERT INTO visits(office_id, user_id, user_name, visited_at, met_name, met_role, rating, dropped, cost, "
             "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id, practice_location, "
-            "minutes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "minutes, virtual) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (o["id"], user.get("id") or None, user.get("name", ""), _when(form.get("visited_at")),
              met_name, met_role, rating,
              _clean(form.get("dropped"), 300), cost, receipt, _date_or_blank(form.get("followup")),
              str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id, practice_location,
-             minutes_in(form.get("minutes"))))
+             minutes_in(form.get("minutes")), virtual))
         vid = cur.lastrowid
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
@@ -467,10 +474,13 @@ def update_visit(vid, form, receipt_bytes=None, receipt_type="", by=""):
     when = _when(form.get("visited_at")) if form.get("visited_at") else v["visited_at"]
     with db.conn() as c:
         c.execute("UPDATE visits SET visited_at=?, met_name=?, met_role=?, rating=?, dropped=?, cost=?, receipt=?, followup=?, "
-                  "notes=?, practice_id=?, practice_location=?, minutes=? WHERE id=?",
+                  "notes=?, practice_id=?, practice_location=?, minutes=?, virtual=? WHERE id=?",
                   (when, met_name, met_role, rating, _clean(form.get("dropped"), 300), money_in(form.get("cost")), receipt,
                    _date_or_blank(form.get("followup")), str(form.get("notes") or "").strip()[:4000],
-                   practice_id, practice_location, minutes_in(form.get("minutes")), vid))
+                   practice_id, practice_location, minutes_in(form.get("minutes")), is_virtual(form), vid))
+        if is_virtual(form):   # a meeting from wherever they were: no check-in location, so no miles
+            c.execute("UPDATE visits SET phone_lat=NULL, phone_lng=NULL, phone_acc=NULL, distance_mi=NULL, on_site=NULL "
+                      "WHERE id=?", (vid,))
         c.execute("DELETE FROM visit_people WHERE visit_id=?", (vid,))
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
@@ -652,6 +662,8 @@ def summary(rows):
     return {"visits": len(rows), "offices": len({r["office_id"] for r in rows}),
             "spend": round(sum(r["cost"] or 0 for r in rows), 2),
             "on_site": sum(1 for r in rows if r["on_site"] == 1),
+            "virtual": sum(1 for r in rows if r.get("virtual")),
+            "in_person": sum(1 for r in rows if not r.get("virtual")),
             "checked": sum(1 for r in rows if r["on_site"] is not None),
             "agents": len({r["user_name"] for r in rows})}
 
@@ -850,7 +862,7 @@ def export_xlsx(rows, title):
     ws = wb.active
     ws.title = "Visits"
     head = ["Date", "Time", "Agent", "Office", "Address", "Met", "Role", "Email", "Relationship", "Dropped off", "Cost",
-            "On site", "Miles from office", "Follow-up", "Notes", "Receipt"]
+            "On site", "Miles from office", "Follow-up", "Notes", "Receipt", "Visit type"]
     ws.append([title])
     ws["A1"].font = Font(bold=True, size=13)
     ws.append(head)
@@ -864,12 +876,12 @@ def export_xlsx(rows, title):
                    "; ".join(p["email"] or "–" for p in ppl) if any(p["email"] for p in ppl) else "",
                    RATING_LABELS.get(r["rating"], ""), r["dropped"], r["cost"] or 0,
                    {1: "Yes", 0: "No"}.get(r["on_site"], "Not shared"), r["distance_mi"], r["followup"], r["notes"],
-                   "Yes" if r["receipt"] else ""])
+                   "Yes" if r["receipt"] else "", "Virtual" if r.get("virtual") else "In person"])
         ws.cell(ws.max_row, 11).number_format = '"$"#,##0.00'
     total_row = ws.max_row + 1
     ws.cell(total_row, 10, "Total").font = Font(bold=True)
     ws.cell(total_row, 11, f"=SUM(K3:K{total_row - 1})").number_format = '"$"#,##0.00'
-    for col, w in zip("ABCDEFGHIJKLMNOP", (11, 7, 16, 30, 34, 22, 18, 28, 12, 22, 10, 9, 10, 11, 40, 8)):
+    for col, w in zip("ABCDEFGHIJKLMNOPQ", (11, 7, 16, 30, 34, 22, 18, 28, 12, 22, 10, 9, 10, 11, 40, 8, 11)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A3"
     buf = io.BytesIO()

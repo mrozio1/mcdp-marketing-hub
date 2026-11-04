@@ -1278,3 +1278,6 @@ details.tool > summary { cursor: pointer; }
 .brand-colors input[type=color] { width: 2.4rem; height: 2rem; padding: 0.1rem; }
 .dot-peds { background: #8E6CC9; }
 .pin.pin-peds { background: #8E6CC9; }
+.virtual-pick { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.7rem 0.85rem; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.virtual-pick input { width: auto; margin-top: 0.2rem; }
+.tag-virtual { background: #EEE8F7; color: #5B3F8C; }

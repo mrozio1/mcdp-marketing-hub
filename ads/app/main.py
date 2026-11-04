@@ -2548,7 +2548,7 @@ async def field_log(request: Request):
         return r
     form = await request.form()
     data = {k: form.get(k) for k in ("office_id", "place_id", "npi_key", "name", "address", "office_lat", "office_lng", "visited_at",
-                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes", "minutes",
+                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes", "minutes", "virtual",
                                      "practice_id", "practice_required",
                                      "phone_lat", "phone_lng", "phone_acc")}
     names = form.getlist("person_name")
@@ -2569,7 +2569,7 @@ async def field_log(request: Request):
         cal.set_status(int(form.get("event_id")), visit_id=vid)
     v = field.visit(vid)
     where = " (on site)" if v["on_site"] == 1 else f" ({v['distance_mi']:g} mi from the office)" if v["on_site"] == 0 else ""
-    flash(request, f"Visit to {v['office_name']} logged{where}.")
+    flash(request, f"Virtual visit with {v['office_name']} logged." if v.get("virtual") else f"Visit to {v['office_name']} logged{where}.")
     back = form.get("back") or ""
     return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/field?period=day",
                             status_code=303)
@@ -2610,7 +2610,7 @@ async def field_edit(request: Request, vid: int):
         flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
         return RedirectResponse("/field", status_code=303)
     form = await request.form()
-    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "notes", "minutes", "practice_id",
+    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "notes", "minutes", "virtual", "practice_id",
                                      "practice_required", "remove_receipt")}
     names = form.getlist("person_name")
     emails, roles = form.getlist("person_email"), form.getlist("person_role")

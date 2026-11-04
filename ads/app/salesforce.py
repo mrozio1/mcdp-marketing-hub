@@ -334,6 +334,8 @@ def description(v, hub_url=""):
         lines.append(f"Relationship: {RATING_LABELS.get(v['rating'], v['rating'])}")
     if v.get("dropped") or v.get("cost"):
         lines.append("Dropped off: " + (v.get("dropped") or "—") + (f" (${v['cost']:,.2f})" if v.get("cost") else ""))
+    if v.get("virtual"):
+        lines.append("Virtual visit (phone, video or Teams), not in person.")
     if v.get("on_site") is not None:
         lines.append("On site: yes" if v["on_site"] == 1 else f"On site: no ({v['distance_mi']:g} mi from the office)")
     if v.get("followup"):
@@ -358,12 +360,12 @@ def send_visit(vid, hub_url=""):
     who = contacts[0] if contacts else None
     task = v.get("sf_task_id") or ""
     if task:      # edited after it was sent: bring the Task up to date
-        update("Task", task, {"Subject": _subject("Field visit", v), "ActivityDate": v["visited_at"][:10],
+        update("Task", task, {"Subject": _subject("Virtual visit" if v.get("virtual") else "Field visit", v), "ActivityDate": v["visited_at"][:10],
                               "WhatId": acc, "WhoId": who, "Description": description(v, hub_url)})
         if v.get("sf_followup_id") and v.get("followup"):
             update("Task", v["sf_followup_id"], {"ActivityDate": v["followup"]})
     if not task:
-        task = create("Task", {"Subject": _subject("Field visit", v), "ActivityDate": v["visited_at"][:10],
+        task = create("Task", {"Subject": _subject("Virtual visit" if v.get("virtual") else "Field visit", v), "ActivityDate": v["visited_at"][:10],
                                "Status": "Completed", "Priority": "Normal", "WhatId": acc, "WhoId": who, "OwnerId": owner,
                                "Description": description(v, hub_url)})
         _set(vid, sf_task_id=task)

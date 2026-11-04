@@ -40,7 +40,7 @@
 </form>
 
 <dl class="glance field-glance">
-  <div><dt>Visits</dt><dd>{{ sums.visits }}</dd></div>
+  <div><dt>Visits</dt><dd>{{ sums.visits }}</dd>{% if sums.virtual %}<p class="small muted">{{ sums.in_person }} in person · {{ sums.virtual }} virtual</p>{% endif %}</div>
   <div><dt>Offices reached</dt><dd>{{ sums.offices }}</dd></div>
   <div><dt>Spend</dt><dd>{{ sums.spend|money }}</dd></div>
   <div><dt>Checked in on site</dt><dd>{% if sums.checked %}{{ sums.on_site }}<span class="of"> of {{ sums.checked }}</span>{% else %}—{% endif %}</dd></div>
@@ -65,7 +65,7 @@
       <div class="visit-body">
         <p class="visit-title"><strong>{{ v.office_name }}</strong>
           {% if v.rating %}<span class="rating-chip r-{{ v.rating }}">{{ ratings[v.rating] }}</span>{% endif %}
-          {% if v.on_site == 1 %}<span class="tag tag-ok" title="Checked in within 0.2 mi">on site</span>{% elif v.on_site == 0 %}<span class="tag tag-far" title="Phone was {{ v.distance_mi }} mi away">{{ v.distance_mi }} mi away</span>{% endif %}
+          {% if v.virtual %}<span class="tag tag-virtual" title="Phone, video or Teams call">virtual</span>{% elif v.on_site == 1 %}<span class="tag tag-ok" title="Checked in within 0.2 mi">on site</span>{% elif v.on_site == 0 %}<span class="tag tag-far" title="Phone was {{ v.distance_mi }} mi away">{{ v.distance_mi }} mi away</span>{% endif %}
           {% if sf_on %}{% if v.sf_status == 'sent' %}<a class="tag tag-ok" href="{{ sf_base }}/{{ v.sf_task_id }}" target="_blank" rel="noopener" title="Open the Task in Salesforce">in Salesforce</a>{% elif v.sf_status == 'error' %}<span class="tag tag-far" title="{{ v.sf_error }}">Salesforce: not sent</span>{% else %}<span class="tag" title="Sent within 15 minutes">to Salesforce…</span>{% endif %}{% endif %}
         </p>
         {% set vp = practices|selectattr('id', 'equalto', v.practice_id)|first if v.practice_id else none %}
@@ -192,6 +192,7 @@
     const info = new InfoWindow(), bounds = new google.maps.LatLngBounds();
     const groups = {};
     for (const v of visits.slice().sort((a, b) => a.visited_at.localeCompare(b.visited_at))) {
+      if (v.virtual) continue;            // virtual visits aren't places on the map
       const lat = v.phone_lat ?? v.office_lat, lng = v.phone_lng ?? v.office_lng;
       if (lat == null) continue;
       const key = v.user_name + "|" + v.visited_at.slice(0, 10);

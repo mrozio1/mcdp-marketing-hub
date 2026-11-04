@@ -208,3 +208,36 @@ def test_stops_placed_like_the_field_map(env, monkeypatch):
     assert day[0]["pt"] == (44.72, -85.60) and day[1]["pt"] is None and day[2]["pt"] == (44.73, -85.62)
     pts, labels = fr._split([((1.0, 2.0), "1"), ((3.0, 4.0), "3")])
     assert labels == ["1", "3"]                                                            # map numbers follow the table
+
+
+def test_virtual_visits(env, monkeypatch):
+    f, fr, abe, h = env["field"], env["fr"], env["ids"]["abe@example.com"], env["heights"]
+    o = f.ensure_office(name="Zoom Dental", address="9 Far Rd, Sterling Heights, MI", lat=42.9, lng=-83.5)
+    r = env["abe"].post("/field/visits", data={"office_id": o["id"], "name": "Zoom Dental", "practice_id": str(h),
+                                               "virtual": "1", "phone_lat": "42.0", "phone_lng": "-84.0", "phone_acc": "10",
+                                               "visited_at": "2026-10-05T09:50", "rating": "hot", "followup": "2026-10-19",
+                                               "notes": "Teams call with the doctor.", "person_name": ["Dr. Ray"],
+                                               "person_email": [""], "person_role": ["Doctor"]}, follow_redirects=True)
+    assert "Virtual visit with Zoom Dental logged" in r.text
+    with env["db"].conn() as c:
+        vid = c.execute("SELECT MAX(id) FROM visits").fetchone()[0]
+    v = f.visit(vid)
+    assert v["virtual"] == 1 and v["phone_lat"] is None and v["on_site"] is None          # no location kept
+    page = env["abe"].get("/field?period=day&d=2026-10-05").text
+    assert ">virtual</span>" in page and "in person · 1 virtual" in page
+    assert 'name="virtual" value="1"' in env["abe"].get(f"/field/visits/{vid}/edit").text and "checked" in env["abe"].get(f"/field/visits/{vid}/edit").text
+    d = fr.gather("2026-10", abe["id"], h, {"miles": True})
+    day = next(x for x in d["agents"][0]["days"] if x["day"] == "2026-10-05")
+    zoom = next(x for x in day["visits"] if x["office_name"] == "Zoom Dental")
+    assert zoom["pt"] is None and d["virtual"] == 1 and d["compare"]["virtual"]["warm"] == 1
+    t = text(env["abe"].get(f"/field/report.pdf?m=2026-10&practice={h}&miles=1&spend=1").content)
+    assert "In person vs virtual" in t and "Virtual visit" in t and "1 virtual" in t and "Hot or Referring" in t
+    from app import salesforce
+    assert "Virtual visit (phone, video or Teams)" in salesforce.description(v)
+    assert salesforce._subject("Virtual visit", v).startswith("Virtual visit for")
+    # editing it back to in person keeps it off the map until a new check-in
+    env["abe"].post(f"/field/visits/{vid}", data={"practice_id": str(h), "visited_at": "2026-10-05T09:50", "notes": "x",
+                                                  "person_name": ["Dr. Ray"], "person_email": [""], "person_role": ["Doctor"]})
+    assert f.visit(vid)["virtual"] == 0
+    with env["db"].conn() as c:
+        c.execute("DELETE FROM visits WHERE id=?", (vid,))

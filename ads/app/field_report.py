@@ -165,8 +165,8 @@ def place_day(visits):
     """Sets v['pt'] for a day's visits. A location that didn't come from the phone (an address lookup can land
     in the wrong state when the address has no city) is dropped if it's far from where the phone was that day."""
     for v in visits:
-        v["pt"] = point(v)
-        v["from_phone"] = _phone_ok(v)
+        v["pt"] = None if v.get("virtual") else point(v)      # virtual visits aren't places: no pin, no miles
+        v["from_phone"] = _phone_ok(v) and not v.get("virtual")
     anchors = [v["pt"] for v in visits if v["from_phone"]]
     if not anchors:
         return
@@ -370,6 +370,7 @@ def gather(month, agent_id=None, practice_id=None, opts=None):
         a["spend"] = round(sum(d["spend"] for d in a["days"]), 2)
         a["miles"] = round(sum(d["miles"] or 0 for d in a["days"]), 1)
         a["in_office"] = sum(d["in_office"] for d in a["days"])
+        a["virtual"] = sum(1 for d in a["days"] for v in d["visits"] if v.get("virtual"))
     # the same name at different offices is a different person (two Tammys); an email ties them together
     people = {(p["email"].lower(),) if p["email"] else (r["office_id"], p["name"].strip().lower())
               for r in rows for p in r["people"] if p["name"] or p["email"]}
@@ -377,7 +378,28 @@ def gather(month, agent_id=None, practice_id=None, opts=None):
             "spend": round(sum(r["cost"] or 0 for r in rows), 2), "miles": round(sum(a["miles"] for a in agents), 1),
             "in_office": sum(a["in_office"] for a in agents), "timed": sum(1 for r in rows if r.get("minutes")),
             "estimated": any_estimate, "days": sum(len(a["days"]) for a in agents),
-            "jumps": [(a["name"], d["day"], *j) for a in agents for d in a["days"] for j in d.get("jumps", [])]}
+            "jumps": [(a["name"], d["day"], *j) for a in agents for d in a["days"] for j in d.get("jumps", [])],
+            "virtual": sum(1 for r in rows if r.get("virtual")),
+            "compare": {"in_person": compare([r for r in rows if not r.get("virtual")]),
+                        "virtual": compare([r for r in rows if r.get("virtual")])}}
+
+
+WARM = ("hot", "referring")
+
+
+def compare(rows):
+    """How a set of visits went, so in-person and virtual can be set side by side."""
+    n = len(rows)
+    people = {(p["email"].lower(),) if p["email"] else (r["office_id"], p["name"].strip().lower())
+              for r in rows for p in r["people"] if p["name"] or p["email"]}
+    rated = [r for r in rows if r.get("rating")]
+    timed = [r["minutes"] for r in rows if r.get("minutes")]
+    spend = round(sum(r["cost"] or 0 for r in rows), 2)
+    return {"visits": n, "offices": len({r["office_id"] for r in rows}), "people": len(people),
+            "warm": sum(1 for r in rated if r["rating"] in WARM), "rated": len(rated),
+            "followups": sum(1 for r in rows if r.get("followup")), "spend": spend,
+            "per_visit": round(spend / n, 2) if n else None,
+            "avg_minutes": round(sum(timed) / len(timed)) if timed else None}
 
 
 # ------------------------------------------------------------------ maps
@@ -513,7 +535,8 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
     out = []
 
     # ---- summary
-    kpis = [("Visits", str(data["visits"])), ("Offices visited", str(data["offices"])), ("People spoken to", str(data["people"])),
+    kpis = [("Visits" + (f" ({data['visits'] - data['virtual']} in person · {data['virtual']} virtual)" if data["virtual"] else ""),
+             str(data["visits"])), ("Offices visited", str(data["offices"])), ("People spoken to", str(data["people"])),
             ("Days in the field", str(data["days"]))]
     if opts.get("spend"):
         kpis.append(("Spend", f"${data['spend']:,.2f}"))
@@ -528,16 +551,38 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                             ("BOTTOMPADDING", (0, -1), (-1, -1), 8), ("LINEAFTER", (0, 0), (-2, -1), 0.5, rl.white)]))
     out += [kt, Spacer(1, 6)]
     if len(data["agents"]) > 1:
-        rows = [["Field agent", "Visits", "Days"] + (["Spend"] if opts.get("spend") else []) +
+        vcol = bool(data["virtual"])
+        rows = [["Field agent", "Visits", "Days"] + (["Virtual"] if vcol else []) + (["Spend"] if opts.get("spend") else []) +
                 (["Miles"] if opts.get("miles") else []) + (["Time in offices"] if opts.get("time") else [])]
         for a in data["agents"]:
-            rows.append([a["name"], str(a["visits"]), str(len(a["days"]))] + ([f"${a['spend']:,.2f}"] if opts.get("spend") else []) +
+            rows.append([a["name"], str(a["visits"]), str(len(a["days"]))] + ([str(a["virtual"])] if vcol else []) +
+                        ([f"${a['spend']:,.2f}"] if opts.get("spend") else []) +
                         ([f"{a['miles']:,.1f}"] if opts.get("miles") else []) + ([duration(a["in_office"]) if a["in_office"] else "—"] if opts.get("time") else []))
         t = Table([[Paragraph(E(c), cell_h if i == 0 else body) for c in r] for i, r in enumerate(rows)],
                   colWidths=[2.6 * inch] + [1.1 * inch] * (len(rows[0]) - 1), hAlign="LEFT")
         t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), P), ("LINEBELOW", (0, 1), (-1, -1), 0.4, hair),
                                ("VALIGN", (0, 0), (-1, -1), "TOP")]))
         out += [Spacer(1, 6), Paragraph("By field agent", h2), Spacer(1, 3), t]
+    if data["virtual"]:
+        ip, vi = data["compare"]["in_person"], data["compare"]["virtual"]
+        pct = lambda a, b: f"{round(100 * a / b)}%" if b else "—"
+        crow = [["", "In person", "Virtual"],
+                ["Visits", str(ip["visits"]), str(vi["visits"])],
+                ["Offices reached", str(ip["offices"]), str(vi["offices"])],
+                ["People spoken to", str(ip["people"]), str(vi["people"])],
+                ["Relationship Hot or Referring", f"{pct(ip['warm'], ip['rated'])} of {ip['rated']} rated",
+                 f"{pct(vi['warm'], vi['rated'])} of {vi['rated']} rated"],
+                ["Follow-up set", pct(ip["followups"], ip["visits"]), pct(vi["followups"], vi["visits"])]]
+        if opts.get("time"):
+            crow.append(["Average time", duration(ip["avg_minutes"]), duration(vi["avg_minutes"])])
+        if opts.get("spend"):
+            crow.append(["Spend per visit", f"${ip['per_visit']:,.2f}" if ip["per_visit"] is not None else "—",
+                         f"${vi['per_visit']:,.2f}" if vi["per_visit"] is not None else "—"])
+        ct = Table([[Paragraph(E(c), cell_h if i == 0 else (bold if j == 0 else body)) for j, c in enumerate(r)]
+                    for i, r in enumerate(crow)], colWidths=[2.6 * inch, 1.6 * inch, 1.6 * inch], hAlign="LEFT")
+        ct.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), P), ("LINEBELOW", (0, 1), (-1, -1), 0.4, hair),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        out += [Spacer(1, 8), Paragraph("In person vs virtual", h2), Spacer(1, 3), ct]
     notes = []
     if opts.get("miles"):
         notes.append("Miles are driving distance between each day's stops, in order (not to the first stop or home)"
@@ -598,6 +643,8 @@ def build(month, agent_id=None, practice_id=None, opts=None, brand_pid=None, pra
                 spoke = "<br/>".join(E(p["name"] or p["email"]) + (f" <font color='#5B5852'>({E(p['role'])})</font>" if p["role"] else "")
                                      for p in v["people"]) or "<font color='#5B5852'>—</font>"
                 office = f"<b>{E(v['office_name'])}</b>" + (f"<br/><font size='7.4' color='#5B5852'>{E(v['office_address'])}</font>" if v.get("office_address") else "")
+                if v.get("virtual"):
+                    office += "<br/><font size='7.4' color='#5B3F8C'><b>Virtual visit</b></font>"
                 if opts.get("miles") and v.get("leg") is not None:
                     office += (f"<br/><font size='7.4' color='#5B5852'>{'≈ ' if d['estimated'] else ''}{v['leg']:.1f} mi "
                                + (f"from stop {label(v['leg_from'])}" if numbered else "from the last stop") + "</font>")

@@ -49,6 +49,8 @@
   </label>
   {% endif %}
 
+  <label class="virtual-pick"><input type="checkbox" name="virtual" value="1" id="f-virtual" {% if ev and ev.virtual %}checked{% endif %}>
+    <span><strong>Virtual visit</strong> <span class="muted small">phone, video or Teams call. Your location isn't recorded and it adds no miles.</span></span></label>
   {% if not ev %}<p class="geo-status small" id="geo-status" aria-live="polite">Checking where you are…</p>{% endif %}
 
   <div class="visit-when-row">
@@ -139,10 +141,29 @@
   const miles = (a, b) => { const r = 3958.8, t = x => x * Math.PI / 180;
     const h = Math.sin(t(b.lat - a.lat) / 2) ** 2 + Math.cos(t(a.lat)) * Math.cos(t(b.lat)) * Math.sin(t(b.lng - a.lng) / 2) ** 2;
     return 2 * r * Math.asin(Math.sqrt(h)); };
+  // Virtual visits record no location: clear it, and say so.
+  const virt = $("f-virtual");
+  let geoText = null;
+  const syncVirtual = () => {
+    if (virt.checked) {
+      ["phone-lat", "phone-lng", "phone-acc"].forEach(id => $(id).value = "");
+      if (geo.textContent !== undefined) { geoText = geoText ?? geo.textContent; geo.textContent = "Virtual visit: no location is recorded."; geo.className = "geo-status small"; }
+    } else if (geoText !== null) { geo.textContent = geoText; geoText = null; }
+  };
+  virt.addEventListener("change", () => { syncVirtual(); if (!virt.checked && !EDIT) locate(); });
+  syncVirtual();
+  function locate() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(p => {
+      if (virt.checked) return;
+      $("phone-lat").value = p.coords.latitude; $("phone-lng").value = p.coords.longitude; $("phone-acc").value = Math.round(p.coords.accuracy);
+    }, () => {}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  }
   if (EDIT) { /* the check-in location stays as logged */ }
   else if (!navigator.geolocation) geo.textContent = "This browser can't share your location; the visit is saved without it.";
   else navigator.geolocation.getCurrentPosition(p => {
     const here = { lat: p.coords.latitude, lng: p.coords.longitude };
+    if ($("f-virtual").checked) { geoText = "📍 Location found."; return; }
     $("phone-lat").value = here.lat; $("phone-lng").value = here.lng; $("phone-acc").value = Math.round(p.coords.accuracy);
     if (OFFICE.lat != null) {
       const d = miles(here, OFFICE);
