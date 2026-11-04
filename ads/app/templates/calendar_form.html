@@ -109,6 +109,7 @@
       <textarea name="details" id="f-details" maxlength="4000" rows="4">{{ ev.details }}</textarea></label>
     {% if not ev.ms_id %}<label style="margin-top: .8rem">Attachment <span class="calf-hint">optional · shot list, flyer, agenda · up to {{ max_attach_mb }} MB</span><input type="file" name="attachment"></label>{% endif %}
     <div class="calf-toggles">
+      {% if ev.from_visit %}<input type="hidden" name="from_visit" value="{{ ev.from_visit }}">{% endif %}
       <label class="cal-check"><input type="checkbox" name="log_reminder" value="1" {% if ev.log_reminder %}checked{% endif %}> Remind me to log the visit afterwards (it goes to Salesforce)</label>
       <label class="cal-check"><input type="checkbox" name="private" value="1" {% if ev.private %}checked{% endif %}> Private (others in the hub just see “Busy”)</label>
     </div>

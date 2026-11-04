@@ -16,6 +16,16 @@
 
 {% if error %}<p class="flash flash-error" role="alert">{{ error }}</p>{% endif %}
 
+{% if cal_choices and not ev %}
+<label class="from-cal">From a calendar event <span class="muted small">(fills in the office, people, time and what was brought)</span>
+  <select id="from-cal" onchange="if (this.value) location.href = this.value">
+    <option value="">Pick a meeting from the last week…</option>
+    {% for e in cal_choices %}<option value="/field/log?event={{ e.id }}&back={{ (back or '/field')|urlencode }}">{{ e.starts[5:10].replace('-', '/') }}{% if not e.all_day %} {{ e.starts[11:16]|hm }}{% endif %} · {{ e.subject }}{% if e.teams %} (Teams){% endif %}</option>{% endfor %}
+  </select>
+</label>
+{% elif pre and pre.subject %}<p class="small from-cal-note">From the calendar: <strong>{{ pre.subject }}</strong>{% if pre.virtual %} · Teams meeting, so it's marked virtual{% endif %}</p>
+{% endif %}
+
 <form method="post" action="{{ '/field/visits/' ~ ev.id if ev else '/field/visits' }}" enctype="multipart/form-data" class="stack visit-form" id="visit-form" data-busy="Saving…">
   <input type="hidden" name="office_id" value="{{ o.id or '' }}">
   <input type="hidden" name="place_id" value="{{ o.place_id or '' }}">
@@ -49,12 +59,12 @@
   </label>
   {% endif %}
 
-  <label class="virtual-pick"><input type="checkbox" name="virtual" value="1" id="f-virtual" {% if ev and ev.virtual %}checked{% endif %}>
+  <label class="virtual-pick"><input type="checkbox" name="virtual" value="1" id="f-virtual" {% if (ev and ev.virtual) or (pre and pre.virtual) %}checked{% endif %}>
     <span><strong>Virtual visit</strong> <span class="muted small">phone, video or Teams call. Your location isn't recorded and it adds no miles.</span></span></label>
   {% if not ev %}<p class="geo-status small" id="geo-status" aria-live="polite">Checking where you are…</p>{% endif %}
 
   <div class="visit-when-row">
-    <label>When<input type="datetime-local" name="visited_at" id="visited-at"{% if ev %} value="{{ ev.visited_at[:16] }}"{% endif %}></label>
+    <label>When<input type="datetime-local" name="visited_at" id="visited-at"{% if ev %} value="{{ ev.visited_at[:16] }}"{% elif pre and pre.visited_at %} value="{{ pre.visited_at }}" data-keep="1"{% endif %}></label>
     <label>Time there <span class="muted small">(optional)</span>
       <select name="minutes"><option value="">—</option>{% for m in minute_choices %}<option value="{{ m }}" {% if ev and ev.minutes == m %}selected{% endif %}>{{ m if m < 60 else (m // 60) ~ (' h' if m % 60 == 0 else ' h ' ~ (m % 60)) }}{{ ' min' if m < 60 else (' min' if m % 60 else '') }}</option>{% endfor %}</select>
     </label>
@@ -133,7 +143,7 @@
   const pad = n => String(n).padStart(2, "0");
   const EDIT = {{ 'true' if ev else 'false' }};
   const now = new Date();
-  if (!EDIT) $("visited-at").value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  if (!EDIT && !$("visited-at").dataset.keep) $("visited-at").value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const OFFICE = {{ {"lat": o.here_lat, "lng": o.here_lng}|tojson }};
 
   // Where the phone is, once, when the visit is logged (not tracked in between).

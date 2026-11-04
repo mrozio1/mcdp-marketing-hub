@@ -2397,7 +2397,14 @@ def field_page(request: Request):
     budgets = field.budgets(m_start, month_rows)
     if not see_all:
         budgets = {"practices": [], "agents": [b for b in budgets["agents"] if b["id"] == u["id"]], "unlinked": 0}
-    return page(request, "field.html", period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
+    offer = request.session.pop("fu_offer", None)
+    offer_v = field.visit(offer) if offer else None
+    vids = [r["id"] for r in rows] + ([offer] if offer else [])
+    fu_events = cal.followups_for(vids)
+    if offer_v and (offer in fu_events or offer_v["user_id"] != u["id"]):
+        offer_v = None
+    return page(request, "field.html", unlogged=cal.unlogged(u) if u.get("field") else [], fu_offer=offer_v,
+                fu_events=fu_events, visit_events=cal.events_for_visits([r["id"] for r in rows]), period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
                 today=date.today(), start=start, end=end, rows=rows, days=field.by_day(rows), sums=field.summary(rows),
                 budgets=budgets, see_all=see_all, month_label=m_start.strftime("%B %Y"),
                 who=who, practice=prac, team=team, practices=db.practices(), ratings=field.RATING_LABELS,
@@ -2508,11 +2515,18 @@ def brand_colors(request: Request, pid: int, primary: str = Form(""), accent: st
 def field_log_form(request: Request, place: str = "", npi: str = "", office: str = "", error: str = ""):
     if (r := guard(request)):
         return r
+    ev_id = request.query_params.get("event", "")
+    from_ev = cal.get(int(ev_id)) if ev_id.isdigit() else None
+    if from_ev and not (office or place or npi):      # picked from the calendar: the event says which office
+        office = str(from_ev["office_id"] or "")
+        npi, place = from_ev["npi_key"] or "", from_ev["place_id"] or ""
     try:
         o = (field.office(int(office)) if office.isdigit() else None) or field.office_draft(place or None, npi or None)
     except field.FieldError as e:
         flash(request, str(e), "error")
         return RedirectResponse("/map", status_code=303)
+    if from_ev and not o.get("name"):
+        o = {**o, "name": from_ev["place_label"] or "", "address": from_ev["place_address"] or o.get("address", "")}
     history = []
     if o.get("id"):
         with db.conn() as c:
@@ -2526,11 +2540,12 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
     choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
     chosen = request.query_params.get("practice", "")
     pre = None
-    ev_id = request.query_params.get("event", "")
-    if ev_id.isdigit() and (ev := cal.get(int(ev_id))):
+    if (ev := from_ev):
         team = {(x.get("email") or "").lower() for x in users.all_users()}
         team.add(microsoft.mailbox().lower())
         pre = {"event_id": ev["id"], "dropped": ev["extra"] if ev["category"] in ("referral", "office") else "",
+               "visited_at": ev["starts"][:16] if not ev["all_day"] else "",
+               "virtual": bool(ev["teams"] or ev["where_kind"] == "online"), "subject": ev["subject"],
                "cost": ev["cost"], "people": [{"name": p["name"], "email": p["email"], "role": ""} for p in ev["people"]
                                               if p["email"] not in team and p.get("source") != "team"]}
         chosen = chosen or str(ev["practice_id"] or "")
@@ -2539,7 +2554,8 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
     return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
-                practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre)
+                practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre,
+                cal_choices=cal.visit_candidates(me(request)) if not pre else [])
 
 
 @app.post("/field/visits")
@@ -2570,6 +2586,8 @@ async def field_log(request: Request):
     v = field.visit(vid)
     where = " (on site)" if v["on_site"] == 1 else f" ({v['distance_mi']:g} mi from the office)" if v["on_site"] == 0 else ""
     flash(request, f"Virtual visit with {v['office_name']} logged." if v.get("virtual") else f"Visit to {v['office_name']} logged{where}.")
+    if v.get("followup") and v["followup"] >= date.today().isoformat():
+        request.session["fu_offer"] = vid
     back = form.get("back") or ""
     return RedirectResponse(back if back.startswith("/") and not back.startswith("//") else "/field?period=day",
                             status_code=303)
@@ -3286,7 +3304,44 @@ def _cal_form(request, ev=None, error="", form=None):
 def calendar_new(request: Request):
     if (r := guard(request)):
         return r
+    vid = request.query_params.get("from_visit", "")
+    v = field.visit(int(vid)) if vid.isdigit() else None
+    u = me(request)
+    if v and (v["user_id"] == u["id"] or users.sees_all_field(u)):
+        return _cal_form(request, followup_event(v, u))
     return _cal_form(request)
+
+
+def followup_event(v, u):
+    """A new calendar event for a visit's follow-up: same practice and office, the people met, on the follow-up date
+    (a Teams meeting if the visit was virtual)."""
+    d = v.get("followup") or date.today().isoformat()
+    virtual = bool(v.get("virtual"))
+    people = [{"name": u["name"], "email": u["email"].lower(), "required": 1, "source": "team"}] if u.get("email") else []
+    people += [{"name": p["name"], "email": p["email"].lower(), "required": 1, "source": "contact"}
+               for p in v["people"] if p.get("email") and p["email"].lower() not in {x["email"] for x in people}]
+    met = ", ".join((p["name"] or p["email"]) + (f" ({p['role']})" if p["role"] else "") for p in v["people"])
+    return {"id": None, "practice_id": v.get("practice_id"), "category": "referral", "kind": "followup", "subject": "",
+            "subject_custom": 0, "where_kind": "online" if virtual else "referral",
+            "place_label": "" if virtual else v["office_name"], "place_address": "" if virtual else (v.get("office_address") or ""),
+            "office_id": None if virtual else v["office_id"], "npi_key": "" if virtual else (v.get("npi_key") or ""),
+            "place_id": "" if virtual else (v.get("place_id") or ""), "starts": f"{d}T10:00", "ends": f"{d}T10:30",
+            "all_day": 0, "repeat": "", "repeat_until": "", "reminder": 60, "show_as": "busy", "teams": int(virtual), "extra": "",
+            "cost": None, "private": 0, "log_reminder": 1, "people": people, "status": "new", "ms_id": "",
+            "from_visit": v["id"],
+            "details": (f"Follow-up from the {v['visited_at'][:10]} visit to {v['office_name']}"
+                        + (f" (met {met})" if met else "") + "." + (f"\n\nNotes from that visit: {v['notes']}" if v.get("notes") else ""))[:4000]}
+
+
+@app.post("/calendar/{eid}/nolog")
+def calendar_nolog(request: Request, eid: int):
+    if (r := guard(request)):
+        return r
+    ev = cal.get(eid)
+    if ev and cal.can_change(ev, me(request)) or (ev and any(p["email"] == (me(request) or {}).get("email", "").lower() for p in ev["people"])):
+        cal.no_log(eid)
+        flash(request, "Okay, it won't be listed as a visit to log.")
+    return RedirectResponse("/field", status_code=303)
 
 
 @app.get("/calendar/{eid}/edit", response_class=HTMLResponse)

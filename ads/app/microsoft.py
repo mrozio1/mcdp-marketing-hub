@@ -275,7 +275,7 @@ def invite_html(ev):
 
 
 def create_event(ev, people, attachment=None):
-    """Create in the send-from calendar; Outlook sends the invites. Returns (id, webLink).
+    """Create in the send-from calendar; Outlook sends the invites. Returns (id, webLink, Teams join link).
     transactionId makes a retry after a timeout return the same event instead of a duplicate."""
     b = base()
     body = event_body(ev, people, with_attendees=not attachment)
@@ -287,12 +287,13 @@ def create_event(ev, people, attachment=None):
               {"@odata.type": "#microsoft.graph.fileAttachment", "name": name, "contentType": ctype or "application/octet-stream",
                "contentBytes": base64.b64encode(data).decode()})
         graph("PATCH", f"{b}/events/{got['id']}", {"attendees": event_body(ev, people)["attendees"]})
-    return got["id"], got.get("webLink", "")
+    return got["id"], got.get("webLink", ""), (got.get("onlineMeeting") or {}).get("joinUrl", "")
 
 
 def update_event(ms_id, ev, people):
-    got = graph("PATCH", f"{base()}/events/{ms_id}", event_body(ev, people))
-    return got.get("webLink", "")
+    """Returns (webLink, Teams join link)."""
+    got = graph("PATCH", f"{base()}/events/{ms_id}", event_body(ev, people)) or {}
+    return got.get("webLink", ""), (got.get("onlineMeeting") or {}).get("joinUrl", "")
 
 
 def cancel_event(ms_id, comment=""):

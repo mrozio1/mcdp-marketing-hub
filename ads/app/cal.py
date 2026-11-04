@@ -109,6 +109,11 @@ CREATE TABLE IF NOT EXISTS cal_people (
   response TEXT DEFAULT '',
   PRIMARY KEY (event_id, pos)
 );""")
+        have = {r["name"] for r in c.execute("PRAGMA table_info(cal_events)")}
+        for col, decl in (("ms_join", "TEXT DEFAULT ''"),       # the Teams join link, when it's a Teams meeting
+                          ("from_visit", "INTEGER")):           # the field visit this follow-up was scheduled from
+            if col not in have:
+                c.execute(f"ALTER TABLE cal_events ADD COLUMN {col} {decl}")
 
 
 # ------------------------------------------------------------------ helpers
@@ -237,7 +242,8 @@ def parse(form, practices):
           "teams": int(where == "online" or g("teams") in ("1", "on")),
           "extra": g("extra")[:500], "cost": _money(g("cost")) if CAT[cat]["cost"] else None,
           "details": g("details")[:4000], "private": int(g("private") in ("1", "on")),
-          "log_reminder": int(g("log_reminder") in ("1", "on"))}
+          "log_reminder": int(g("log_reminder") in ("1", "on")),
+          "from_visit": int(g("from_visit")) if g("from_visit").isdigit() else None}
     return ev, _people(form)
 
 
@@ -257,6 +263,7 @@ def draft(form, old=None):
                "reminder": int(g("reminder")) if g("reminder").lstrip("-").isdigit() else 60, "show_as": g("show_as") or "busy",
                "teams": int(g("teams") in ("1", "on")), "extra": g("extra"), "cost": g("cost") or None, "details": g("details"),
                "private": int(g("private") in ("1", "on")), "log_reminder": int(g("log_reminder") in ("1", "on")),
+               "from_visit": int(g("from_visit")) if g("from_visit").isdigit() else None,
                "status": (old or {}).get("status", "new"), "ms_id": (old or {}).get("ms_id", "")})
     ev["people"] = [{"name": names[i] if i < len(names) else "", "email": e, "required": 0 if i < len(req) and req[i] == "0" else 1,
                      "source": src[i] if i < len(src) else ""} for i, e in enumerate(emails) if e]
@@ -266,7 +273,7 @@ def draft(form, old=None):
 # ------------------------------------------------------------------ storage
 COLS = ("practice_id", "category", "kind", "subject", "subject_custom", "where_kind", "place_label", "place_address",
         "office_id", "npi_key", "place_id", "starts", "ends", "all_day", "repeat", "repeat_until", "reminder", "show_as",
-        "teams", "extra", "cost", "details", "private", "log_reminder")
+        "teams", "extra", "cost", "details", "private", "log_reminder", "from_visit")
 
 
 def save(ev, people, user, eid=None):
@@ -335,6 +342,60 @@ def repeat_text(ev):
     return r + (f" until {date.fromisoformat(ev['repeat_until']):%b %-d, %Y}" if ev.get("repeat_until") else "")
 
 
+# ------------------------------------------------------------------ the calendar and field visits
+VISIT_CATS = ("referral", "office", "media", "event")
+
+
+def _mine_sql(user):
+    """SQL (and args) for events this person made or is invited to."""
+    email = ((user or {}).get("email") or "").lower()
+    return ("(e.created_by=? OR EXISTS (SELECT 1 FROM cal_people p WHERE p.event_id=e.id AND lower(p.email)=?))",
+            [(user or {}).get("id"), email])
+
+
+def visit_candidates(user, days_back=7, hours_ahead=12, now=None):
+    """Events to log a visit from: theirs, from the last week to later today, not logged yet."""
+    now = now or datetime.now()
+    where, args = _mine_sql(user)
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute(
+            f"SELECT e.* FROM cal_events e WHERE {where} AND e.visit_id IS NULL AND e.status != 'cancelled' "
+            f"AND e.category IN ({','.join('?' * len(VISIT_CATS))}) AND e.starts >= ? AND e.starts <= ? ORDER BY e.starts DESC",
+            args + list(VISIT_CATS) + [(now - timedelta(days=days_back)).isoformat(timespec="minutes"),
+                                       (now + timedelta(hours=hours_ahead)).isoformat(timespec="minutes")])]
+    return [decorate(r) for r in rows]
+
+
+def unlogged(user, days_back=14, now=None):
+    """Their visit-type events that have ended with no visit logged (and 'remind me to log' left on)."""
+    now = now or datetime.now()
+    return [e for e in visit_candidates(user, days_back, 0, now) if e["log_reminder"] and e["ends"] <= now.isoformat(timespec="minutes")]
+
+
+def no_log(eid):
+    set_status(eid, log_reminder=0)
+
+
+def followups_for(visit_ids):
+    """{visit id: the follow-up event scheduled from it}."""
+    ids = [int(v) for v in visit_ids if v]
+    if not ids:
+        return {}
+    with db.conn() as c:
+        return {r["from_visit"]: decorate(dict(r)) for r in c.execute(
+            f"SELECT * FROM cal_events WHERE status != 'cancelled' AND from_visit IN ({','.join('?' * len(ids))})", ids)}
+
+
+def events_for_visits(visit_ids):
+    """{visit id: the event it was logged from} (for its Outlook and Teams links)."""
+    ids = [int(v) for v in visit_ids if v]
+    if not ids:
+        return {}
+    with db.conn() as c:
+        return {r["visit_id"]: dict(r) for r in c.execute(
+            f"SELECT id, visit_id, subject, teams, ms_link, ms_join, starts FROM cal_events WHERE visit_id IN ({','.join('?' * len(ids))})", ids)}
+
+
 def set_status(eid, **cols):
     with db.conn() as c:
         c.execute(f"UPDATE cal_events SET {', '.join(k + '=?' for k in cols)} WHERE id=?", list(cols.values()) + [eid])
@@ -373,19 +434,20 @@ def send(eid, attachment=None):
         set_status(eid, status="saved")
     try:
         if ev["ms_id"]:
-            link = ms.update_event(ev["ms_id"], ev, ev["people"]) or ev["ms_link"]
-            set_status(eid, status="sent", ms_link=link, ms_error="", ms_at=db.now())
+            link, join = ms.update_event(ev["ms_id"], ev, ev["people"])
+            set_status(eid, status="sent", ms_link=link or ev["ms_link"], ms_join=join or ev.get("ms_join") or "",
+                       ms_error="", ms_at=db.now())
         else:
             try:
-                ms_id, link = ms.create_event(ev, ev["people"], attachment)
+                ms_id, link, join = ms.create_event(ev, ev["people"], attachment)
             except ms.MSError as e:
                 if ev["teams"] and "online" in str(e).lower():   # the mailbox can't host Teams meetings: send without it
                     ev["teams"] = 0
-                    ms_id, link = ms.create_event(ev, ev["people"], attachment)
+                    ms_id, link, join = ms.create_event(ev, ev["people"], attachment)
                     set_status(eid, teams=0)
                 else:
                     raise
-            set_status(eid, status="sent", ms_id=ms_id, ms_link=link, ms_error="", ms_at=db.now(),
+            set_status(eid, status="sent", ms_id=ms_id, ms_link=link, ms_join=join or "", ms_error="", ms_at=db.now(),
                        attachment_name=attachment[0] if attachment else "")
         with db.conn() as c:
             c.execute("UPDATE cal_people SET response='organizer' WHERE event_id=? AND email=?", (eid, ms.mailbox().lower()))

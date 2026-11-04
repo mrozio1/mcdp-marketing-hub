@@ -39,6 +39,23 @@
   <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
 </form>
 
+{% if fu_offer %}
+<section class="panel fu-offer" aria-label="Schedule the follow-up">
+  <p><strong>Follow up with {{ fu_offer.office_name }} on {{ fu_offer.followup }}?</strong>
+    <span class="muted small">Send an Outlook invite{% if fu_offer.people|selectattr('email')|list %} to {{ fu_offer.people|selectattr('email')|map(attribute='name')|join(', ') or 'the people you met' }}{% endif %}{% if fu_offer.virtual %} as a Teams meeting{% endif %}.</span></p>
+  <p><a class="btn btn-small" href="/calendar/new?from_visit={{ fu_offer.id }}">Schedule the follow-up</a> <span class="muted small">or set it up later from the visit below</span></p>
+</section>
+{% endif %}
+{% if unlogged %}
+<section class="panel unlogged" aria-labelledby="unl-h">
+  <h2 id="unl-h" class="small-h">Meetings without a visit logged <span class="muted small">({{ unlogged|length }})</span></h2>
+  <ul class="unlogged-list">
+    {% for e in unlogged %}<li><span>{{ e.starts[:10] }} · <strong>{{ e.subject }}</strong>{% if e.teams %} <span class="tag tag-virtual">Teams</span>{% endif %}</span>
+      <span class="unl-btns"><a class="btn btn-small" href="/field/log?event={{ e.id }}&back=/field">Log this visit</a>
+      <form method="post" action="/calendar/{{ e.id }}/nolog" class="inline-form"><button class="linklike small" type="submit">Not a visit</button></form></span></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
 <dl class="glance field-glance">
   <div><dt>Visits</dt><dd>{{ sums.visits }}</dd>{% if sums.virtual %}<p class="small muted">{{ sums.in_person }} in person · {{ sums.virtual }} virtual</p>{% endif %}</div>
   <div><dt>Offices reached</dt><dd>{{ sums.offices }}</dd></div>
@@ -72,7 +89,10 @@
         <p class="small muted">{{ v.user_name }}{% if vp %} · for <strong>{{ vp.name }}</strong>{% if v.practice_location %} <span class="small">({{ v.practice_location }})</span>{% endif %}{% endif %}{% if v.people %} · met {% for p in v.people %}{{ p.name or p.email }}{% if p.role %} ({{ p.role }}){% endif %}{% if p.email and p.name %} <a href="mailto:{{ p.email }}" class="muted">{{ p.email }}</a>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
         {% if v.dropped or v.cost %}<p class="small">{{ v.dropped }}{% if v.cost %} · <strong>{{ v.cost|money }}</strong>{% endif %}{% if v.receipt %} · <a href="/field/receipts/{{ v.receipt }}" target="_blank" rel="noopener">receipt</a>{% endif %}</p>{% endif %}
         {% if v.notes %}<p class="small visit-notes">{{ v.notes }}</p>{% endif %}
-        {% if v.followup %}<p class="small">Follow up {{ v.followup }}</p>{% endif %}
+        {% if v.followup %}<p class="small">Follow up {{ v.followup }}
+          {% set fe = fu_events.get(v.id) %}{% if fe %} · <a href="/calendar?event={{ fe.id }}&d={{ fe.starts[:10] }}">invite scheduled{% if fe.status == 'sent' %} ✓{% endif %}</a>
+          {% elif v.user_id == my_id or see_all %} · <a href="/calendar/new?from_visit={{ v.id }}">Schedule the follow-up</a>{% endif %}</p>{% endif %}
+        {% set ve = visit_events.get(v.id) %}{% if ve %}<p class="small">From the calendar: <a href="/calendar?event={{ ve.id }}&d={{ ve.starts[:10] }}">{{ ve.subject }}</a>{% if ve.ms_join %} · <a href="{{ ve.ms_join }}" target="_blank" rel="noopener">Teams meeting link</a>{% endif %}</p>{% endif %}
         <p class="small visit-actions">
           {% if can_log %}<a href="/field/log?{{ {'office': v.office_id, 'back': '/field?' ~ (qs|urlencode)}|urlencode }}">Log another visit here</a>{% endif %}
           {% if can_edit or (v.user_id == my_id and can_log) %}

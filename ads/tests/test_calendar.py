@@ -280,3 +280,64 @@ def test_microsoft_connection_settings(env, monkeypatch):
     assert ms.base() == "/users/marketing-events%40mcdentalpartners.com"
     for k in ("ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_mailbox", "ms_user", "ms_timezone"):
         db.set_setting(k, None)
+
+
+def test_calendar_and_visits_feed_each_other(env, monkeypatch):
+    ag, cal, ms, db, h, oid = env["agent"], env["cal"], env["ms"], env["db"], env["heights"], env["oid"]
+    g = FakeGraph()
+    real = g.__call__
+
+    def graph(method, path, body=None, params=None, headers=None):
+        got = real(method, path, body, params, headers)
+        if method == "POST" and path.endswith("/events") and body and body.get("isOnlineMeeting"):
+            got = {**got, "onlineMeeting": {"joinUrl": "https://teams.microsoft.com/l/meetup-join/abc"}}
+        return got
+    monkeypatch.setattr(ms, "graph", graph)
+    db.set_setting("ms_refresh_token", "rt")
+    db.set_setting("ms_mailbox", MAILBOX)
+    yday = (date.today() - timedelta(days=1)).isoformat()
+    # a Teams call yesterday with Pam, sent from the hub: the join link is kept
+    ag.post("/calendar/events", data={**form(h, office_id=str(oid), date=yday, where_kind="online", kind="followup"),
+                                      "person_name": ["Abe Agent", "Pam Beesly"], "person_email": ["abe@example.com", "pam@maple.com"],
+                                      "person_required": ["1", "1"], "person_source": ["team", "contact"]})
+    with db.conn() as c:
+        eid = c.execute("SELECT MAX(id) FROM cal_events").fetchone()[0]
+    ev = cal.get(eid)
+    assert ev["teams"] and ev["ms_join"] == "https://teams.microsoft.com/l/meetup-join/abc"
+    # 4. it shows on the Field page as a meeting with no visit logged yet
+    field_page = ag.get("/field").text
+    assert "Meetings without a visit logged" in field_page and f"/field/log?event={eid}" in field_page
+    # 1. Log a visit lists it; picking it fills the form (no office in the link) and ticks Virtual
+    log_page = ag.get("/field/log?back=/field").text
+    assert "From a calendar event" in log_page and f"/field/log?event={eid}" in log_page
+    picked = ag.get(f"/field/log?event={eid}").text
+    assert 'name="virtual" value="1" id="f-virtual" checked' in picked and f'value="{yday}T10:00"' in picked
+    assert 'value="pam@maple.com"' in picked and f'name="event_id" value="{eid}"' in picked
+    # log it with a follow-up: 2. the hub offers to send the follow-up invite
+    ag.post("/field/visits", data={"office_id": str(oid), "name": "Maple Street Family Dental", "practice_id": str(h),
+                                   "practice_required": "1", "visited_at": f"{yday}T10:00", "virtual": "1", "event_id": str(eid),
+                                   "followup": (date.today() + timedelta(days=14)).isoformat(), "notes": "Wants a lunch and learn.",
+                                   "person_name": ["Pam Beesly"], "person_email": ["pam@maple.com"], "person_role": ["Office manager"]})
+    vid = cal.get(eid)["visit_id"]
+    after = ag.get("/field").text
+    assert "Schedule the follow-up" in after and f"/calendar/new?from_visit={vid}" in after
+    assert f"/field/log?event={eid}" not in after                                       # logged now
+    assert "Teams meeting link" in ag.get(f"/field?period=day&d={yday}").text            # 3. the Teams link on the visit
+    from app import salesforce
+    assert "teams.microsoft.com/l/meetup-join/abc" in salesforce.description(env["field"].visit(vid))
+    # the follow-up form is filled in: same practice, Pam invited, Teams (the visit was virtual), notes carried over
+    fu = ag.get(f"/calendar/new?from_visit={vid}").text
+    assert f'name="from_visit" value="{vid}"' in fu and "pam@maple.com" in fu and "Wants a lunch and learn." in fu
+    ag.post("/calendar/events", data={**form(h, date=(date.today() + timedelta(days=14)).isoformat(), where_kind="online",
+                                              kind="followup", from_visit=str(vid), action="save"),
+                                      "person_name": ["Pam Beesly"], "person_email": ["pam@maple.com"],
+                                      "person_required": ["1"], "person_source": ["contact"]})
+    assert cal.followups_for([vid])[vid]["from_visit"] == vid
+    assert "invite scheduled" in ag.get(f"/field?period=day&d={yday}").text
+    # "Not a visit" takes a meeting off the list
+    ag.post("/calendar/events", data={**form(h, office_id=str(oid), date=yday, kind="lunch", action="save")})
+    with db.conn() as c:
+        other = c.execute("SELECT MAX(id) FROM cal_events").fetchone()[0]
+    assert f"/field/log?event={other}" in ag.get("/field").text
+    ag.post(f"/calendar/{other}/nolog")
+    assert f"/field/log?event={other}" not in ag.get("/field").text

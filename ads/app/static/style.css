@@ -1281,3 +1281,11 @@ details.tool > summary { cursor: pointer; }
 .virtual-pick { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.7rem 0.85rem; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .virtual-pick input { width: auto; margin-top: 0.2rem; }
 .tag-virtual { background: #EEE8F7; color: #5B3F8C; }
+.from-cal { display: block; margin-bottom: 1rem; }
+.from-cal-note { background: #F1F5F4; padding: 0.55rem 0.8rem; border-radius: 6px; }
+.fu-offer { border-left: 4px solid var(--teal); }
+.fu-offer p { margin: 0.2rem 0; }
+.unlogged .small-h { font-size: 1rem; margin: 0 0 0.5rem; }
+.unlogged-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+.unlogged-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; padding-bottom: 0.45rem; border-bottom: 1px solid var(--line); }
+.unl-btns { display: flex; align-items: center; gap: 0.6rem; }

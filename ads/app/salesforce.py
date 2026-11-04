@@ -336,6 +336,13 @@ def description(v, hub_url=""):
         lines.append("Dropped off: " + (v.get("dropped") or "—") + (f" (${v['cost']:,.2f})" if v.get("cost") else ""))
     if v.get("virtual"):
         lines.append("Virtual visit (phone, video or Teams), not in person.")
+    try:
+        from . import cal
+        ev = cal.events_for_visits([v["id"]]).get(v["id"]) if v.get("id") else None
+    except Exception:
+        ev = None
+    if ev:
+        lines.append(f"From the calendar: {ev['subject']}" + (f" · Teams meeting: {ev['ms_join']}" if ev.get("ms_join") else ""))
     if v.get("on_site") is not None:
         lines.append("On site: yes" if v["on_site"] == 1 else f"On site: no ({v['distance_mi']:g} mi from the office)")
     if v.get("followup"):
