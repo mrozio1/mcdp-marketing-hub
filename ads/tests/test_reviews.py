@@ -194,6 +194,49 @@ def test_google_reply_goes_through_business_profile(env, monkeypatch):
         rv.act(next(r["id"] for r in rv.inbox()[0] if r["external_id"].endswith("/r1")), "hide", "Ann")
 
 
+def test_google_reply_to_a_review_google_no_longer_has(env, monkeypatch):
+    rv, cx, db = env["reviews"], env["cx"], env["db"]
+    now = rv._iso(rv.utcnow())
+    with db.conn() as c:
+        for n, author in (("gone1", "Steve Assi"), ("moved1", "Dana R")):
+            c.execute("INSERT INTO inbox(key, source, account_id, external_id, author, stars, text, created, status, first_seen) "
+                      "VALUES (?, 'google', 'accounts/1/locations/11', ?, ?, 5, 'Great!', ?, 'open', ?)",
+                      (f"g-{n}", f"accounts/1/locations/11/reviews/{n}", author, now, now))
+    sent = []
+
+    class FakeGBP:
+        def __init__(self, token):
+            pass
+
+        def reply(self, name, text):
+            if "/accounts/1/" in "/" + name:          # the location now lives under account 7
+                raise cx.ConnectorError("Requested entity was not found. (HTTP 404)")
+            sent.append(name)
+
+        def reviews(self, loc, all_pages=False):
+            if loc.startswith("accounts/1/"):
+                raise cx.ConnectorError("Requested entity was not found. (HTTP 404)")
+            return [{"id": "accounts/7/locations/11/reviews/moved1", "author": "Dana R", "stars": 5, "text": "Great!",
+                     "created": now, "updated": now, "reply": "", "reply_at": ""}], 4.8, 1
+
+        def locations(self):
+            return [{"name": "accounts/7/locations/11", "title": "Heights Orthodontics", "address": "Defiance, OH", "account": "Group"}]
+    monkeypatch.setattr(cx, "GBPClient", FakeGBP)
+    moved = next(r["id"] for r in rv.inbox()[0] if r["external_id"].endswith("/moved1"))
+    rv.act(moved, "reply", "Ann Admin", "Thanks, Dana!")
+    assert sent == ["accounts/7/locations/11/reviews/moved1"] and rv.item(moved)["outcome"] == "replied"
+    assert rv.item(moved)["account_id"] == "accounts/7/locations/11"
+    gone = next(r["id"] for r in rv.inbox()[0] if r["external_id"].endswith("/gone1"))
+    with pytest.raises(rv.ReviewsError, match="no longer shows this review"):
+        rv.act(gone, "reply", "Ann Admin", "Thanks, Steve!")
+    assert rv.item(gone)["status"] == "done" and rv.item(gone)["outcome"] == "removed"
+    with db.conn() as c:                                     # put things back for the other tests
+        c.execute("DELETE FROM inbox WHERE key IN ('g-gone1', 'g-moved1')")
+        c.execute("UPDATE inbox SET account_id='accounts/1/locations/11' WHERE account_id='accounts/7/locations/11'")
+        c.execute("UPDATE gbp_reviews SET location='accounts/1/locations/11' WHERE location='accounts/7/locations/11'")
+        c.execute("DELETE FROM gbp_locations WHERE name='accounts/7/locations/11'")
+
+
 def test_draft_endpoint_uses_ai_and_privacy_rules(env, monkeypatch):
     rv, ai = env["reviews"], env["ai"]
     seen = {}

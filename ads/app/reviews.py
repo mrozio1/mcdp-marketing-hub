@@ -710,9 +710,24 @@ def _platform(it, action, message):
     if it["source"] == "google":
         if action != "reply":
             raise ReviewsError("Google reviews can only be replied to.")
-        cx.GBPClient(db.get_setting("gbp_refresh_token")).reply(it["external_id"], message)
+        client = cx.GBPClient(db.get_setting("gbp_refresh_token"))
+        name = it["external_id"]
+        try:
+            client.reply(name, message)
+        except cx.ConnectorError as e:
+            if not _not_found(e):
+                raise
+            # Google answers "not found" when the review was deleted (by the reviewer, or Google's spam filter often
+            # takes new reviews down within hours) or when the location now sits under a different account.
+            name = _find_google_review(client, it)
+            if not name:
+                _gone_from_google(it)
+                raise ReviewsError("Google no longer shows this review, so there's nothing to reply to. The reviewer "
+                                   "may have deleted it, or Google's spam filter took it down (that often happens to "
+                                   "new reviews within hours). It's been moved to Done.") from None
+            client.reply(name, message)
         with db.conn() as c:
-            c.execute("UPDATE gbp_reviews SET reply=?, reply_at=? WHERE id=?", (message, _iso(utcnow()), it["external_id"]))
+            c.execute("UPDATE gbp_reviews SET reply=?, reply_at=? WHERE id=?", (message, _iso(utcnow()), name))
         return
     tokens = _meta_tokens()[it["source"]].get(it["account_id"]) or []
     if not tokens:
@@ -729,6 +744,61 @@ def _platform(it, action, message):
         if not fresh or fresh == tokens:
             raise
         cx.comment_action(it["source"], it["external_id"], action, fresh, message)
+
+
+def _not_found(e):
+    m = str(e).lower()
+    return "http 404" in m or "not found" in m
+
+
+def _loc_id(name):
+    m = re.search(r"locations/([^/]+)", name or "")
+    return m.group(1) if m else ""
+
+
+def _find_google_review(client, it):
+    """The review's current name on Google, or None if it's gone. Re-reads the location (listing the
+    locations again if Google moved it to another account) and matches the review by name, else by
+    reviewer and time. Updates the hub's records to the new names."""
+    loc = it["account_id"]
+    try:
+        revs, *_ = client.reviews(loc, all_pages=True)
+    except cx.ConnectorError as e:
+        if not _not_found(e):
+            raise
+        try:
+            refresh_locations()
+        except cx.ConnectorError:
+            return None
+        moved = next((l["name"] for l in locations() if _loc_id(l["name"]) == _loc_id(loc) and l["name"] != loc), None)
+        if not moved:
+            return None
+        with db.conn() as c:
+            old = c.execute("SELECT practice_id FROM gbp_locations WHERE name=?", (loc,)).fetchone()
+            if old and old["practice_id"]:
+                c.execute("UPDATE gbp_locations SET practice_id=? WHERE name=?", (old["practice_id"], moved))
+            c.execute("UPDATE inbox SET account_id=? WHERE source='google' AND account_id=?", (moved, loc))
+            c.execute("UPDATE gbp_reviews SET location=? WHERE location=?", (moved, loc))
+        loc = moved
+        revs, *_ = client.reviews(loc, all_pages=True)
+    rid = it["external_id"].rsplit("/", 1)[-1]
+    hit = next((r for r in revs if r["id"] == it["external_id"] or r["id"].rsplit("/", 1)[-1] == rid), None) or \
+        next((r for r in revs if r["author"] == it.get("author") and _utc(r["created"])[:16] == (it.get("created") or "")[:16]), None)
+    if not hit:
+        return None
+    if hit["id"] != it["external_id"]:
+        with db.conn() as c:
+            c.execute("UPDATE inbox SET external_id=? WHERE id=?", (hit["id"], it["id"]))
+            c.execute("UPDATE gbp_reviews SET id=? WHERE id=?", (hit["id"], it["external_id"]))
+    return hit["id"]
+
+
+def _gone_from_google(it):
+    now = _iso(utcnow())
+    with db.conn() as c:
+        c.execute("UPDATE inbox SET status='done', outcome='removed', removed_at=?, handled_by='Removed from Google', "
+                  "handled_at=? WHERE id=?", (now, now, it["id"]))
+        c.execute("DELETE FROM gbp_reviews WHERE id=?", (it["external_id"],))
 
 
 def act(iid, action, user_name, message=""):
