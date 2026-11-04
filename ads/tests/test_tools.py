@@ -230,3 +230,17 @@ def test_writeups_run_in_the_background(ready, monkeypatch):
             break
         time.sleep(0.1)
     assert "free AI is busy" in first + c.get(f"/p/{pid}").text
+
+
+def test_score_survives_an_answer_cut_off_by_thinking(ready, monkeypatch):
+    """Thinking models spend part of the budget before answering: a cut-off JSON answer is asked again with more room."""
+    c, db, pid, ai = ready
+    budgets = []
+    answers = iter(['{"scores": {"hook": {"score": 8, "reason": "Names the', '{"scores": {"hook": {"score": 8, "reason": "x"},'
+                    ' "care": {"score": 10, "reason": "y"},}, "fixes": [], "verdict": "Fine."}'])
+    monkeypatch.setattr(ai, "_chat", lambda messages, **kw: budgets.append(kw["max_tokens"]) or next(answers))
+    from app import tools
+    got = tools.score({"id": pid, "name": "Heights"}, {"kind": "draft_ad", "platform": "google",
+                                                       "payload": {"headlines": ["A"], "descriptions": ["B"]}})
+    assert got["overall"] > 0 and len(budgets) == 2 and budgets[0] >= 4500 and budgets[1] == budgets[0] * 2
+    assert ai.parse_json("```json\n{\"a\": 1,}\n```") == {"a": 1} and ai.parse_json("no json") is None

@@ -566,17 +566,15 @@ def read_receipt(data):
         raise FieldError("The AI can read JPEG, PNG or WebP photos; type the amount for this one.")
     mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[kind]
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-    text = ai._chat([
+    msgs = [
         {"role": "system", "content": "You read store and restaurant receipts. Reply with one JSON object only."},
         {"role": "user", "content": [
             {"type": "text", "text": 'Read this receipt. Reply as {"total": <the final amount paid including tax and tip, '
                                      'as a number, or null if you cannot read it>, "merchant": "<store name or empty>"}'},
-            {"type": "image_url", "image_url": {"url": url}}]},
-    ], temperature=0, max_tokens=200, json_mode=True)
+            {"type": "image_url", "image_url": {"url": url}}]}]
     try:
-        raw = text[text.find("{"):text.rfind("}") + 1]
-        got = json.loads(raw)
-    except ValueError:
+        got = ai.json_chat(msgs, temperature=0, max_tokens=2000)
+    except ai.AIError:
         raise FieldError("The AI couldn't read that receipt; type the amount instead.")
     total = _f(got.get("total"))
     return {"total": round(total, 2) if total is not None and 0 <= total < 100000 else None,

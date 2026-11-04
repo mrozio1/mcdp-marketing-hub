@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 import urllib.error
@@ -182,6 +183,36 @@ def _chat(messages, temperature=0.4, max_tokens=3000, json_mode=False):
     return _post(body)
 
 
+def parse_json(text):
+    """The JSON object in a model's answer (code fences, chatter and trailing commas tolerated), or None."""
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    chunk = raw[start:end + 1]
+    for attempt in (chunk, re.sub(r",\s*([}\]])", r"\1", chunk)):
+        try:
+            got = json.loads(attempt)
+            return got if isinstance(got, dict) else None
+        except ValueError:
+            continue
+    return None
+
+
+def json_chat(messages, temperature=0.3, max_tokens=4000):
+    """A JSON answer. Models that think before answering spend part of max_tokens on that hidden thinking, so
+    a tight budget cuts the JSON off half-way: ask with room to spare, and once more with double if it's cut."""
+    budget = max(max_tokens, 4000)
+    for attempt in range(2):
+        got = parse_json(_chat(messages, temperature=temperature, max_tokens=budget, json_mode=True))
+        if got is not None:
+            return got
+        budget, temperature = budget * 2, min(temperature, 0.3)
+    raise AIError("The AI's answer wasn't in the expected format. Try again.")
+
+
 def generate_json(kind, context):
     """Ad text (or brand-kit suggestions) as structured data."""
     if kind not in JSON_TASKS:
@@ -195,19 +226,10 @@ def generate_json(kind, context):
         system = ("You write ad copy for a group of dental and orthodontic practices. "
                   "Reply with a single JSON object and nothing else.\n\n" + GUIDE)
         task, temp, tokens = JSON_TASKS[kind], 0.7, (3000 if kind == "google_campaign" else 1500)
-    text = _chat([
+    return json_chat([
         {"role": "system", "content": system},
         {"role": "user", "content": task + "\n\n--- CONTEXT ---\n" + context},
-    ], temperature=temp, max_tokens=tokens, json_mode=True)
-    raw = text.strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        raw = raw[raw.find("{"):]
-    try:
-        start, end = raw.find("{"), raw.rfind("}")
-        return json.loads(raw[start:end + 1])
-    except ValueError:
-        raise AIError("The AI's answer wasn't in the expected format. Try again.")
+    ], temperature=temp, max_tokens=tokens * 2)
 
 
 def generate(kind, context):
