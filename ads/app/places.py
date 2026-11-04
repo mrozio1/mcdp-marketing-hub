@@ -616,10 +616,11 @@ def map_data():
             "offices": [{"id": o["id"], "label": o["label"], "place_id": o["place_id"], "lat": o["lat"],
                          "lng": o["lng"], "peds": bool(PEDS_NAME.search(o["label"] or ""))} for o in offs if o["lat"] is not None],
             "places": [{"id": p["place_id"], "layer": p["layer"], "ortho": bool(p["offers_ortho"]), "peds": bool(p["peds"]),
+                        "ranked": p.get("ranked", 1) != 0,
                         "office": p["office_id"], "mi": round(p["miles"], 1), "lat": p["lat"], "lng": p["lng"],
                         "new": _is_new(p, by_id, prev), "gone": (p["gone_at"] or "")[:10] or None,
                         "since": (p["first_seen"] or "")[:10]}
-                       for p in places() if visible(p, miles)]}
+                       for p in places() if visible(p, miles) or (p.get("peds") and visible({**p, "ranked": 1}, miles))]}
 
 
 # ------------------------------------------------------------------ refresh

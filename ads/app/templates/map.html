@@ -33,7 +33,7 @@
       <label><input type="checkbox" data-layer="ours" checked><span class="dot dot-ours"></span> {{ layers.ours }} <span class="muted" data-count="ours"></span></label>
       <label><input type="checkbox" data-layer="referrer" checked><span class="dot dot-referrer"></span> {{ layers.referrer }} <span class="muted" data-count="referrer"></span></label>
       <label class="sub"><input type="checkbox" data-only-ortho><span class="dot dot-referrer dot-ortho"></span> Only those that also come up for “orthodontist” <span class="muted" data-count="ortho"></span></label>
-      <label><input type="checkbox" data-only-peds><span class="dot dot-peds"></span> Pediatrics <span class="muted small">(Pediatric, Children's or Peds in the name)</span> <span class="muted" data-count="peds"></span></label>
+      <label><input type="checkbox" data-only-peds><span class="dot dot-peds"></span> Pediatric practices <span class="muted small">(Pediatric, Children's or Peds in the name)</span> <span class="muted" data-count="peds"></span></label>
       <label><input type="checkbox" data-layer="competitor" checked><span class="dot dot-competitor"></span> {{ layers.competitor }} <span class="muted" data-count="competitor"></span></label>
       <label><input type="checkbox" data-layer="school_private"><span class="dot dot-school_private"></span> Private schools <span class="muted" data-count="school_private"></span></label>
       <label><input type="checkbox" data-layer="school_charter"><span class="dot dot-school_charter"></span> Charter schools <span class="muted" data-count="school_charter"></span></label>
@@ -369,7 +369,7 @@
                   (p.ortho ? " · also comes up when people search “orthodontist”" : "") +
                   (p.gone ? ` · no longer listed on Google since ${p.gone}` : p.new ? " · new since the last refresh" : ` · on the map since ${p.since}`);
     m.addListener("gmp-click", () => { details(p.id, p.layer, extra, p); info.open({ map, anchor: m }); });
-    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, peds: !!p.peds, isNew: p.new, gone: !!p.gone,
+    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, peds: !!p.peds, ranked: p.ranked !== false, isNew: p.new, gone: !!p.gone,
                    visited: !!v, due: !!(v && v.due && v.due <= TODAY) });
   }
   // Private and charter schools (NCES data; everything on the card is ours, not Google's).
@@ -428,16 +428,21 @@
     const bounds = new google.maps.LatLngBounds();
     for (const x of markers) {
       const inOffice = off === null || x.office === off || (x.extra && off !== null);
-      const show = inOffice && (x.gone ? ui.gone.checked : on.has(x.layer))
+      // Pediatrics is its own layer: it adds pediatric practices whatever the other layers are set to,
+      // and never hides anything another layer is showing.
+      const byPeds = ui.onlyPeds.checked && x.peds && x.layer !== "ours" && !x.gone;
+      const byLayer = (x.gone ? ui.gone.checked : on.has(x.layer)) && x.ranked !== false
+        && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho);
+      const show = inOffice && (byLayer || byPeds)
         && !(ui.onlyVisited.checked && !x.visited && x.layer !== "ours" && !x.school)
         && !(ui.onlyDue.checked && !x.due && x.layer !== "ours" && !x.school)
-        && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho)
-        && !(ui.onlyPeds.checked && !x.peds)
         && !(ui.onlyNew.checked && !x.isNew && x.layer !== "ours" && !x.school || ui.onlyNew.checked && x.gone);
       x.m.map = show ? map : null;
+      if (x.m.content && x.m.content.classList) x.m.content.classList.toggle("pin-peds", byPeds);
       if (inOffice) {
         if (x.gone) counts.gone++;
-        else { if (!x.extra) counts[x.layer]++; if (x.ortho) counts.ortho++; if (x.isNew) counts.new++; if (x.peds) counts.peds++; }
+        else { if (!x.extra && x.ranked !== false) counts[x.layer]++; if (x.ortho && x.ranked !== false) counts.ortho++;
+               if (x.isNew && x.ranked !== false) counts.new++; if (x.peds && x.layer !== "ours") counts.peds++; }
         if (x.visited) counts.visited++; if (x.due) counts.due++;
       }
       if (show) bounds.extend(x.m.position);
