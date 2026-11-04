@@ -6,7 +6,6 @@
 #   sh enable-agent.sh sk-ant-...            # Claude (Anthropic API key)
 #   sh enable-agent.sh sk-...                # OpenAI API key
 #   sh enable-agent.sh AIza...               # a (paid) Google AI Studio key: newest Gemini Pro
-#   sh enable-agent.sh gemini-pro            # the same, with the Gemini key already saved here
 #   sh enable-agent.sh KEY provider/model    # any LiteLLM provider/model
 #   sh enable-agent.sh off                   # back to the main AI model
 #   sh enable-agent.sh check                 # just test it
@@ -30,7 +29,6 @@ case "${1:-}" in
   off) delvar AGENT_MODEL; delvar AGENT_KEY ;;
   *)
     key="$1"; model="${2:-}"
-    if [ "$key" = gemini-pro ]; then key="$(getvar AI_PROVIDER_KEY)"; fi
     if [ -z "$model" ]; then
       case "$key" in
         sk-ant-*) model="anthropic/claude-sonnet-5-5" ;;
