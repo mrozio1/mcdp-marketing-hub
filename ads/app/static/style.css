@@ -1276,3 +1276,4 @@ details.tool > summary { cursor: pointer; }
 .brand-colors { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 0.6rem; }
 .brand-colors label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
 .brand-colors input[type=color] { width: 2.4rem; height: 2rem; padding: 0.1rem; }
+.dot-peds { background: #8E6CC9; }

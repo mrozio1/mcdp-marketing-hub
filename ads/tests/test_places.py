@@ -478,3 +478,30 @@ def test_stuck_running_status_clears_after_a_restart(env):
     finally:
         db.set_setting("map_status", None)
         db.set_setting("ref_status", None)
+
+
+def test_pediatrics_flag(env):
+    db, places = env
+    # already on the map before this feature: its name is checked once, by a pediatric search pass
+    PLACES["ChIJ_dent_kids_peds001"] = P("ChIJ_dent_kids_peds001", "Defiance Children's Dentistry", 41.29, -84.37,
+                                          q=("dentist", "pediatric dentist"))
+    PLACES["ChIJ_dent_general_0001"] = P("ChIJ_dent_general_0001", "Family Dental Care", 41.285, -84.35,
+                                          q=("dentist", "pediatric dentist"))     # comes up, but no such word in its name
+    with db.conn() as c:
+        for pid, la, ln in (("ChIJ_dent_kids_peds001", 41.29, -84.37), ("ChIJ_dent_general_0001", 41.285, -84.35)):
+            c.execute("INSERT OR REPLACE INTO map_places(place_id, layer, offers_ortho, office_id, miles, lat, lng, coords_at, "
+                      "first_seen, last_seen, ranked) VALUES (?, 'referrer', 0, ?, 1.0, ?, ?, ?, ?, ?, 1)",
+                      (pid, places.offices()[0]["id"], la, ln, db.now(), db.now(), db.now()))
+    LOG.clear()
+    assert places.find_pediatric() == 2
+    assert {pid for *_, pid in calls("details", places.PEDS_NAME_FIELDS)} == {"ChIJ_dent_kids_peds001", "ChIJ_dent_general_0001"}
+    got = {p["place_id"]: p for p in places.places()}
+    assert got["ChIJ_dent_kids_peds001"]["peds"] == 1 and got["ChIJ_dent_general_0001"]["peds"] == 0
+    LOG.clear()
+    assert places.find_pediatric() == 0 and not calls("details")               # each name is only paid for once
+    data = places.map_data()
+    flags = {p["id"]: p["peds"] for p in data["places"]}
+    assert flags["ChIJ_dent_kids_peds001"] is True and flags["ChIJ_dent_general_0001"] is False
+    assert "Children" not in json.dumps(data)                                  # still no names kept or sent
+    assert places.PEDS_NAME.search("Pediatric Dentistry of Brighton") and places.PEDS_NAME.search("Peds Dental Group")
+    assert places.PEDS_NAME.search("Paediatric Smiles") and not places.PEDS_NAME.search("Speedway Dental")

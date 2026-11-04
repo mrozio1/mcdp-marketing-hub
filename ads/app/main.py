@@ -2108,6 +2108,7 @@ def market_map(request: Request):
                 radius=places.radius(), brands=db.get_setting("map_brand_terms") or "",
                 max_requests=places.max_requests(), per_office=places.per_office(), layers=places.LAYERS,
                 last=db.get_setting("map_last_refresh"), prev=db.get_setting("map_prev_refresh"),
+                peds_at=db.get_setting("map_peds_at"),
                 preview=_import_preview(), school_status=schools.status(), school_kinds=schools.KINDS)
 
 

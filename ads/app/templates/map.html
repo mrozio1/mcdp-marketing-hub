@@ -33,6 +33,7 @@
       <label><input type="checkbox" data-layer="ours" checked><span class="dot dot-ours"></span> {{ layers.ours }} <span class="muted" data-count="ours"></span></label>
       <label><input type="checkbox" data-layer="referrer" checked><span class="dot dot-referrer"></span> {{ layers.referrer }} <span class="muted" data-count="referrer"></span></label>
       <label class="sub"><input type="checkbox" data-only-ortho><span class="dot dot-referrer dot-ortho"></span> Only those that also come up for “orthodontist” <span class="muted" data-count="ortho"></span></label>
+      <label><input type="checkbox" data-only-peds><span class="dot dot-peds"></span> Pediatrics <span class="muted small">(Pediatric, Children's or Peds in the name)</span> <span class="muted" data-count="peds"></span></label>
       <label><input type="checkbox" data-layer="competitor" checked><span class="dot dot-competitor"></span> {{ layers.competitor }} <span class="muted" data-count="competitor"></span></label>
       <label><input type="checkbox" data-layer="school_private"><span class="dot dot-school_private"></span> Private schools <span class="muted" data-count="school_private"></span></label>
       <label><input type="checkbox" data-layer="school_charter"><span class="dot dot-school_charter"></span> Charter schools <span class="muted" data-count="school_charter"></span></label>
@@ -56,6 +57,7 @@
     {% if can_edit %}<form method="post" action="/map/schools/refresh" style="display:inline" data-busy="Starting…"><button class="linklike small" type="submit">{{ 'Fetch schools' if not school_status.at else 'Refresh schools' }}</button></form>{% endif %}
     {% if school_status.at %} · <a href="/map/schools.xlsx">Download the school list</a>{% endif %}</p>
   <p class="small muted map-foot">{% if not offices and not can_edit %}No offices yet.{% elif not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
+  {% if last and not peds_at %} Pediatric practices are being checked now; refresh this page in a few minutes to use the Pediatrics filter.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>
 </section>
 
@@ -357,7 +359,7 @@
   for (const o of data.offices) {
     const m = new AdvancedMarkerElement({ map, position: o, content: dot("ours"), title: o.label, zIndex: 1000 });
     m.addListener("gmp-click", () => { details(o.place_id, "ours"); info.open({ map, anchor: m }); });
-    markers.push({ m, layer: "ours", office: o.id, ortho: false });
+    markers.push({ m, layer: "ours", office: o.id, ortho: false, peds: !!o.peds });
   }
   for (const p of data.places) {
     const v = p.layer === "referrer" ? data.visits[p.id] : null;
@@ -367,7 +369,7 @@
                   (p.ortho ? " · also comes up when people search “orthodontist”" : "") +
                   (p.gone ? ` · no longer listed on Google since ${p.gone}` : p.new ? " · new since the last refresh" : ` · on the map since ${p.since}`);
     m.addListener("gmp-click", () => { details(p.id, p.layer, extra, p); info.open({ map, anchor: m }); });
-    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, isNew: p.new, gone: !!p.gone,
+    markers.push({ m, layer: p.layer, office: p.office, ortho: p.ortho, peds: !!p.peds, isNew: p.new, gone: !!p.gone,
                    visited: !!v, due: !!(v && v.due && v.due <= TODAY) });
   }
   // Private and charter schools (NCES data; everything on the card is ours, not Google's).
@@ -402,6 +404,7 @@
       info.setContent(wrap); info.open({ map, anchor: m });
     });
     markers.push({ m, layer: "referrer", office: null, ortho: false, isNew: false, gone: false, visited: true,
+                   peds: /p(a)?ediatric|children|\bpeds\b/i.test(x.name || ""),
                    due: !!(x.due && x.due <= TODAY), extra: true });
   }
   const circles = data.offices.map(o => new Circle({ center: o, radius: data.radius * 1609.34, strokeColor: "#0F7471",
@@ -410,6 +413,7 @@
   const ui = {
     layers: [...document.querySelectorAll("[data-layer]")],
     onlyOrtho: document.querySelector("[data-only-ortho]"),
+    onlyPeds: document.querySelector("[data-only-peds]"),
     onlyNew: document.querySelector("[data-only-new]"),
     gone: document.querySelector("[data-gone]"),
     circles: document.querySelector("[data-circles]"),
@@ -420,7 +424,7 @@
   function apply(fit) {
     const on = new Set(ui.layers.filter(i => i.checked).map(i => i.dataset.layer));
     const off = ui.office.value ? Number(ui.office.value) : null;
-    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, new: 0, gone: 0, visited: 0, due: 0, school_private: 0, school_charter: 0 };
+    const counts = { ours: 0, referrer: 0, competitor: 0, ortho: 0, peds: 0, new: 0, gone: 0, visited: 0, due: 0, school_private: 0, school_charter: 0 };
     const bounds = new google.maps.LatLngBounds();
     for (const x of markers) {
       const inOffice = off === null || x.office === off || (x.extra && off !== null);
@@ -428,11 +432,12 @@
         && !(ui.onlyVisited.checked && !x.visited && x.layer !== "ours" && !x.school)
         && !(ui.onlyDue.checked && !x.due && x.layer !== "ours" && !x.school)
         && !(x.layer === "referrer" && ui.onlyOrtho.checked && !x.ortho)
+        && !(ui.onlyPeds.checked && !x.peds)
         && !(ui.onlyNew.checked && !x.isNew && x.layer !== "ours" && !x.school || ui.onlyNew.checked && x.gone);
       x.m.map = show ? map : null;
       if (inOffice) {
         if (x.gone) counts.gone++;
-        else { if (!x.extra) counts[x.layer]++; if (x.ortho) counts.ortho++; if (x.isNew) counts.new++; }
+        else { if (!x.extra) counts[x.layer]++; if (x.ortho) counts.ortho++; if (x.isNew) counts.new++; if (x.peds) counts.peds++; }
         if (x.visited) counts.visited++; if (x.due) counts.due++;
       }
       if (show) bounds.extend(x.m.position);
@@ -445,6 +450,7 @@
   }
   ui.layers.forEach(i => i.addEventListener("change", () => apply(false)));
   ui.onlyOrtho.addEventListener("change", () => { if (ui.onlyOrtho.checked) ui.layers.find(i => i.dataset.layer === "referrer").checked = true; apply(false); });
+  ui.onlyPeds.addEventListener("change", () => apply(true));
   ui.circles.addEventListener("change", () => apply(false));
   ui.onlyNew.addEventListener("change", () => apply(false));
   ui.gone.addEventListener("change", () => apply(false));

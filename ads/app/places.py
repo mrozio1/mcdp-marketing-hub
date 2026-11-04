@@ -54,6 +54,9 @@ RENEW_FIELDS = "location"                                       # Place Details 
 MATCH_FIELDS = "places.id,places.location"                      # Text Search Pro, office import only
 DENTAL_TYPES = {"dentist", "dental_clinic", "orthodontist"}
 ORTHO_NAME = re.compile(r"ortho|braces|invisalign|aligner", re.I)
+PEDS_NAME = re.compile(r"p(a)?ediatric|children|\bpeds\b", re.I)      # Pediatric / Children's / Peds in the name
+PEDS_QUERIES = ("pediatric dentist", "children's dentist")
+PEDS_NAME_FIELDS = "id,displayName"                                # Place Details Pro, names checked in memory only
 LAYERS = {"ours": "Our offices", "referrer": "Dental practices (potential referrers)",
           "competitor": "Other orthodontists (competitors)"}
 
@@ -79,7 +82,7 @@ CREATE TABLE IF NOT EXISTS map_places (
 MIGRATIONS = {
     "map_offices": {"address": "TEXT DEFAULT ''", "match_note": "TEXT DEFAULT ''"},
     "map_places": {"brands_key": "TEXT DEFAULT ''", "first_seen": "TEXT", "last_seen": "TEXT", "gone_at": "TEXT",
-                   "ranked": "INTEGER DEFAULT 1"},
+                   "ranked": "INTEGER DEFAULT 1", "peds": "INTEGER DEFAULT 0", "peds_checked": "INTEGER DEFAULT 0"}, 
 }
 
 _lock = threading.Lock()
@@ -611,8 +614,8 @@ def map_data():
     prev, miles = db.get_setting("map_prev_refresh"), radius()
     return {"radius": miles,
             "offices": [{"id": o["id"], "label": o["label"], "place_id": o["place_id"], "lat": o["lat"],
-                         "lng": o["lng"]} for o in offs if o["lat"] is not None],
-            "places": [{"id": p["place_id"], "layer": p["layer"], "ortho": bool(p["offers_ortho"]),
+                         "lng": o["lng"], "peds": bool(PEDS_NAME.search(o["label"] or ""))} for o in offs if o["lat"] is not None],
+            "places": [{"id": p["place_id"], "layer": p["layer"], "ortho": bool(p["offers_ortho"]), "peds": bool(p["peds"]),
                         "office": p["office_id"], "mi": round(p["miles"], 1), "lat": p["lat"], "lng": p["lng"],
                         "new": _is_new(p, by_id, prev), "gone": (p["gone_at"] or "")[:10] or None,
                         "since": (p["first_seen"] or "")[:10]}
@@ -643,12 +646,12 @@ def refresh(now=None):
         raise MapError("A refresh is already running. Check back in a few minutes.")
     started = time.time()
     began = db.now()
-    pending = {"new": [], "upd": []}
+    pending = {"new": [], "upd": [], "peds": []}
     saved = {"new": 0, "upd": 0, "new_layer": 0}
     stamp = None
 
     def flush():
-        if not (pending["new"] or pending["upd"]):
+        if not (pending["new"] or pending["upd"] or pending["peds"]):
             return
         with db.conn() as c:
             c.executemany("INSERT INTO map_places(layer, offers_ortho, office_id, miles, lat, lng, coords_at, "
@@ -659,11 +662,13 @@ def refresh(now=None):
                           "gone_at=NULL", [r + (stamp,) for r in pending["new"]])
             c.executemany("UPDATE map_places SET layer=?, offers_ortho=?, office_id=?, miles=?, lat=?, lng=?, "
                           "coords_at=?, brands_key=?, last_seen=?, gone_at=NULL WHERE place_id=?", pending["upd"])
+            c.executemany("UPDATE map_places SET peds=?, peds_checked=1 WHERE place_id=?", pending["peds"])
         saved["new"] += len(pending["new"])
         saved["upd"] += len(pending["upd"])
         saved["new_layer"] += sum(1 for r in pending["new"] if r[0] in LAYERS)
         pending["new"].clear()
         pending["upd"].clear()
+        pending["peds"].clear()
 
     try:
         _set_status(busy=True, started=began, step="Finding our offices on Google")
@@ -715,6 +720,7 @@ def refresh(now=None):
                 j = _details(pid, key, NEW_FIELDS)
                 budget.pro += 1
                 layer = classify(j, brands)
+                pending["peds"].append((int(bool(PEDS_NAME.search((j.get("displayName") or {}).get("text") or ""))), pid))
                 lat, lng = _latlng(j)
                 coords_at = stamp if lat is not None else None
             else:           # known: just renew the location (Essentials)
@@ -773,6 +779,12 @@ def refresh(now=None):
         for o in waiting:
             extent[o["id"]] = 0   # stopped early: we can't say anything around this office is gone
 
+        # 3. Pediatric practices: search "pediatric dentist" (free, IDs only), then check the names of the
+        #    places already on the map that come up (once each), so the Pediatrics filter is complete.
+        if not (s.capped or budget.capped):
+            _set_status(busy=True, started=began, step="Checking for pediatric practices")
+            _peds_pass(s, offs, miles, key, budget)
+            db.set_setting("map_peds_at", stamp)
         complete = not (s.capped or budget.capped)
         skipped = counter["skipped"]
         gone = 0
@@ -813,6 +825,47 @@ def refresh(now=None):
         res = {"busy": False, "ok": False, "at": db.now(), "error": str(e)[:300], "kept": kept}
         _set_status(**res)
         raise MapError(str(e))
+    finally:
+        _lock.release()
+
+
+def _peds_pass(searcher, offs, miles, key, budget):
+    """Flag places named Pediatric / Children's / Peds. Returns how many names were checked."""
+    cands = set()
+    for o in offs:
+        if o.get("lat") is None:
+            continue
+        for q in PEDS_QUERIES:
+            cands |= searcher.sweep(q, o["lat"], o["lng"], miles)
+    with db.conn() as c:
+        todo = [r["place_id"] for r in c.execute("SELECT place_id FROM map_places WHERE peds_checked=0 AND layer IN "
+                                                  "('referrer', 'competitor')") if r["place_id"] in cands]
+    rows, checked = [], 0
+    for pid in todo:
+        if not budget.take():
+            break
+        try:
+            j = _details(pid, key, PEDS_NAME_FIELDS)
+        except MapError:
+            continue
+        budget.pro += 1
+        checked += 1
+        rows.append((int(bool(PEDS_NAME.search((j.get("displayName") or {}).get("text") or ""))), pid))
+    with db.conn() as c:
+        c.executemany("UPDATE map_places SET peds=?, peds_checked=1 WHERE place_id=?", rows)
+    return checked
+
+
+def find_pediatric():
+    """One-off pass for places already on the map (later refreshes keep it up to date)."""
+    key = server_key()
+    offs = [o for o in offices() if o["lat"] is not None]
+    if not key or not offs or not _lock.acquire(blocking=False):
+        return 0
+    try:
+        n = _peds_pass(Searcher(key), offs, radius(), key, _Budget(max_requests()))
+        db.set_setting("map_peds_at", db.now())
+        return n
     finally:
         _lock.release()
 
@@ -867,6 +920,8 @@ def start_scheduler():
                 purge_old()
                 if server_key() and offices() and due():
                     refresh()
+                elif server_key() and places() and not db.get_setting("map_peds_at"):
+                    find_pediatric()          # once, for the places already on the map
             except Exception:
                 pass
             time.sleep(24 * 3600)
