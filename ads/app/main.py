@@ -2830,6 +2830,8 @@ def reviews_page(request: Request):
                 gbp_redirect=_gbp_redirect(request), overdue=reviews.overdue_hours(), every=reviews.check_minutes(),
                 month_opts=month_opts, man_month=man_month, manual=manual, month_label=reviews.month_label,
                 meta_on=cx.meta_configured(), fb_linked=any(db.social_ids(p, "fb") or db.social_ids(p, "ig") for p in plist),
+                reply_style=reviews.reply_style(pid) if pid else "",
+                style_examples=len(reviews.past_replies(pid)) if pid else 0,
                 reported_n=reviews.reported_count(pid, plist), report_reasons=reviews.REPORT_REASONS,
                 report_tool=reviews.REPORT_TOOL, followup_days=reviews.REPORT_FOLLOWUP_DAYS,
                 sb_month=sb_month or "", sb_months=sb_months)
@@ -2875,7 +2877,8 @@ async def reviews_act(request: Request, iid: int, action: str):
         if not ai.available():
             return JSONResponse({"error": "AI isn't switched on."}, status_code=422)
         try:
-            return {"draft": await asyncio.to_thread(reviews.draft_reply, iid)}
+            return {"draft": await asyncio.to_thread(reviews.draft_reply, iid, str(form.get("tone") or "") or None,
+                                                     str(form.get("current") or ""))}
         except (reviews.ReviewsError, ai.AIError) as e:
             return JSONResponse({"error": str(e)}, status_code=422)
     back = _safe_back(form.get("back"))
@@ -2996,6 +2999,18 @@ async def reviews_locations_refresh(request: Request):
     except cx.ConnectorError as e:
         flash(request, f"Couldn't list Google locations: {e}", "error")
     return RedirectResponse("/reviews#google-setup", status_code=303)
+
+
+@app.post("/reviews/style")
+async def reviews_style(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    pid = _num(form.get("practice"))
+    if pid in {p["id"] for p in reviews.practices()}:
+        reviews.set_reply_style(pid, str(form.get("style") or ""))
+        flash(request, "Reply style saved. New drafts for this practice follow it.")
+    return RedirectResponse(f"/reviews?practice={pid or ''}#reply-style", status_code=303)
 
 
 @app.post("/reviews/settings")

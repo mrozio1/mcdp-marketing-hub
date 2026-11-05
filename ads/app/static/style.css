@@ -1289,3 +1289,4 @@ details.tool > summary { cursor: pointer; }
 .unlogged-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
 .unlogged-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; padding-bottom: 0.45rem; border-bottom: 1px solid var(--line); }
 .unl-btns { display: flex; align-items: center; gap: 0.6rem; }
+.rv-tones { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }

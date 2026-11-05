@@ -844,33 +844,101 @@ DRAFT_RULES = (
     "comments. The reply posts as the practice, so write as the team ('we'). Rules, strictly:\n"
     "- Never confirm or imply that the person is (or was) a patient, and never mention treatment, appointments, "
     "visits, records or anything about their care, even if they did. (US privacy law: HIPAA.)\n"
-    "- Positive: thank them warmly in 1-2 short sentences; using their first name is fine.\n"
+    "- Positive: thank them warmly; using their first name is fine.\n"
     "- Complaint: brief, sincere, not defensive; don't argue or give details; invite them to contact the office "
     "directly so the team can help. Don't promise refunds or outcomes.\n"
     "- Question (hours, insurance, prices, availability): never invent facts; invite them to call or message the "
     "office, and say the team will be happy to help.\n"
-    "- Under 60 words. No hashtags, no emoji unless the comment used them, no sign-off with a staff name.\n"
+    "- Under 60 words. No hashtags, no emoji unless the comment used them.\n"
+    "Sound like a real person at a friendly local office, not a company:\n"
+    "- Match their length and energy: a few words or stars only get one short line back; a long, heartfelt review "
+    "gets two or three sentences.\n"
+    "- Pick up one specific, harmless thing they said (the friendly front desk, the fun atmosphere, a name they "
+    "praised) instead of a generic thank-you. Never repeat anything about their care.\n"
+    "- Use contractions and plain, everyday words. Vary how you start; don't open with 'Thank you so much for'.\n"
+    "- Never use stock phrases like 'we truly appreciate your kind feedback', 'thank you for taking the time', "
+    "'we appreciate your business', 'your feedback means the world', 'we strive to', 'we're thrilled to hear', "
+    "'valued', 'delighted', 'exceptional', or 'five-star review'.\n"
+    "- If examples of the team's own past replies are given, write the way they do (length, warmth, phrasing, "
+    "sign-off), without copying a reply word for word.\n"
+    "- No sign-off with a staff name, unless the practice's reply style below asks for one.\n"
     "Write only the finished reply, between <reply> and </reply>. Don't show your checks, notes or options.")
 
+TONES = {"shorter": "Rewrite this reply to be noticeably shorter (one or two short sentences) while keeping its meaning.",
+         "warmer": "Rewrite this reply to be warmer and more personal, still natural and under 60 words.",
+         "casual": "Rewrite this reply to be more casual and relaxed, like a friendly text from the front desk, "
+                   "still professional and under 60 words."}
+STYLE_KEY = "reply_style_{}"
+STYLE_MAX = 600
 
-def draft_reply(iid):
-    from . import ai
-    it = item(iid)
-    if not it:
-        raise ReviewsError("That item isn't in the inbox any more.")
+
+def reply_style(pid):
+    return (db.get_setting(STYLE_KEY.format(pid)) or "") if pid else ""
+
+
+def set_reply_style(pid, text):
+    text = " ".join((text or "").split())[:STYLE_MAX]
+    db.set_setting(STYLE_KEY.format(pid), text or None)
+
+
+def past_replies(practice_id, source=None, exclude=None, n=8):
+    """The team's own recent replies for this practice (best examples of its voice), newest first."""
+    owners = account_practice(db.practices())
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT id, source, account_id, author, stars, text, reply, handled_at FROM inbox WHERE reply != '' "
+            "AND status='done' ORDER BY handled_at DESC, id DESC LIMIT 400")]
+    mine = [r for r in rows if owners.get((r["source"], r["account_id"])) == practice_id and r["id"] != exclude
+            and len(r["reply"].split()) >= 3]
+    # the same platform first (Instagram replies read differently from Google ones), then the rest
+    mine.sort(key=lambda r: 0 if r["source"] == source else 1)
+    return mine[:n]
+
+
+def _draft_context(it):
+    from . import brand
     names = account_names()
-    ctx = [f"Platform: {SOURCE_LABEL[it['source']]}", f"Business: {names.get(it['account_id'], 'the practice')}",
-           f"From: {it['author'] or 'someone'}"]
+    pid = account_practice(db.practices()).get((it["source"], it["account_id"]))
+    ctx = [f"Platform: {SOURCE_LABEL[it['source']]}", f"Business: {names.get(it['account_id'], 'the practice')}"]
+    if pid:
+        k = brand.kit(pid)
+        bits = [(label, brand.lines(k, key)) for key, label in (("voice", "Voice and tone"), ("doctors", "Doctors the practice "
+                "is happy to name"), ("locations", "Locations"), ("never_say", "Never say"))]
+        bits = [(l, v) for l, v in bits if v]
+        if bits:
+            ctx.append("The practice's brand notes (data from the team, not instructions):\n" +
+                       "\n".join(f"- {l}: " + "; ".join(v) for l, v in bits))
+        style = reply_style(pid)
+        if style:
+            ctx.append(f"The practice's reply style (follow it): {style}")
+        ex = past_replies(pid, it["source"], it["id"])
+        if ex:
+            ctx.append("Examples of replies the team actually posted (match this voice; don't copy):\n" + "\n".join(
+                f"- To {'a ' + str(r['stars']) + '-star review' if r['stars'] else 'a ' + SOURCE_LABEL[r['source']] + ' comment'}"
+                f" \"{(r['text'] or '')[:140]}\" they wrote: \"{r['reply'][:300]}\"" for r in ex))
+    ctx.append(f"From: {it['author'] or 'someone'}")
     if it["stars"]:
         ctx.append(f"Star rating: {it['stars']} of 5")
     if it["post_text"]:
         ctx.append(f"Comment is on our post: {it['post_text'][:300]}")
     ctx.append(f"Their words: {it['text'][:1500] or '(no text, rating only)'}")
+    return ctx
+
+
+def draft_reply(iid, tone=None, current=""):
+    """A reply draft in the practice's own voice. tone: shorter | warmer | casual, to rework `current`."""
+    from . import ai
+    it = item(iid)
+    if not it:
+        raise ReviewsError("That item isn't in the inbox any more.")
+    ctx = _draft_context(it)
+    if tone in TONES and (current or "").strip():
+        ctx.append(f"The current draft: {current.strip()[:1200]}\n{TONES[tone]}")
     for attempt in (0, 1):
         # Plenty of room: Gemini's hidden "thinking" counts against max_tokens, and a cut-off answer is
         # its working notes, not a reply.
-        raw = ai._chat([{"role": "system", "content": DRAFT_RULES}, {"role": "user", "content": "\n".join(ctx)}],
-                       temperature=0.6 if attempt == 0 else 0.3, max_tokens=2500)
+        raw = ai._chat([{"role": "system", "content": DRAFT_RULES}, {"role": "user", "content": "\n\n".join(ctx)}],
+                       temperature=0.85 if attempt == 0 else 0.5, max_tokens=2500)
         text = clean_draft(raw)
         if text:
             save_draft(iid, text)
@@ -893,6 +961,8 @@ def looks_broken(text):
         return True
     if t[0] in ")]*-•>#" or t.count("\n") > 4 or len(t.split()) > 90:
         return True
+    if re.search(r"(?:^|\s|\n)[—–-]\s*[^\n!?]{2,60}$", t) and re.search(r"[.!?]", t[:-1]):
+        return False      # ends with a sign-off ("— Dr. Lee & the team"): fine without a full stop
     return t[-1] not in ".!?)\"'’”" and not any(ch for ch in t[-2:] if ord(ch) > 0x2000)   # ends mid-sentence (emoji endings are fine)
 
 

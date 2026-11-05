@@ -255,6 +255,48 @@ def test_draft_endpoint_uses_ai_and_privacy_rules(env, monkeypatch):
     assert r.status_code == 403
 
 
+def test_drafts_sound_like_the_practice(env, monkeypatch):
+    rv, ai, db, h = env["reviews"], env["ai"], env["db"], env["heights"]
+    from app import brand
+    brand.init()
+    brand.save(h, {"voice": "Warm, upbeat, family-friendly", "doctors": "Dr. Lee", "never_say": "cheap"}, "Test")
+    now = rv._iso(rv.utcnow())
+    with db.conn() as c:
+        c.execute("INSERT INTO inbox(key, source, account_id, external_id, author, stars, text, created, status, outcome, "
+                  "handled_by, handled_at, reply, first_seen) VALUES ('g-past1', 'google', 'accounts/1/locations/11', "
+                  "'accounts/1/locations/11/reviews/past1', 'Jen K', 5, 'Loved the team!', ?, 'done', 'replied', 'Ed', ?, "
+                  "'Jen, you made our whole week! See you soon. — Dr. Lee & the Heights crew', ?)", (now, now, now))
+    seen = {}
+
+    def fake_chat(messages, **kw):
+        seen.update(system=messages[0]["content"], user=messages[1]["content"], temp=kw.get("temperature"))
+        return "<reply>Aw, thanks Sam! Our front desk will be thrilled. — Dr. Lee & the Heights crew</reply>"
+    monkeypatch.setattr(ai, "_chat", fake_chat)
+    # a reply style, set by an editor (viewers can't)
+    env["viewer"].post("/reviews/style", data={"practice": str(h), "style": "Be grumpy"})
+    assert rv.reply_style(h) == ""
+    env["editor"].post("/reviews/style", data={"practice": str(h), "style": "Sign off as — Dr. Lee & the Heights crew"})
+    assert rv.reply_style(h).startswith("Sign off as")
+    page = env["editor"].get(f"/reviews?practice={h}").text
+    assert "Reply style for Heights Orthodontics" in page and "Sign off as" in page and 'data-tone="shorter"' in page
+    iid = next(r["id"] for r in rv.inbox()[0] if r["external_id"].endswith("/r1"))
+    env["editor"].post(f"/reviews/items/{iid}/draft", headers={"Accept": "application/json"})
+    u = seen["user"]
+    assert "Warm, upbeat, family-friendly" in u and "Dr. Lee" in u and "cheap" in u                  # brand kit
+    assert "Jen, you made our whole week!" in u and "Loved the team!" in u                        # the team's own replies
+    assert "Sign off as — Dr. Lee & the Heights crew" in u                                        # reply style
+    assert "truly appreciate your kind feedback" in seen["system"] and "Match their length" in seen["system"]
+    assert seen["temp"] >= 0.8
+    # rework buttons send the current draft with the tone
+    r = env["editor"].post(f"/reviews/items/{iid}/draft", data={"tone": "shorter", "current": "A long draft here."},
+                           headers={"Accept": "application/json"})
+    assert r.json()["draft"].startswith("Aw, thanks Sam!")
+    assert "The current draft: A long draft here." in seen["user"] and "noticeably shorter" in seen["user"]
+    with db.conn() as c:
+        c.execute("DELETE FROM inbox WHERE key='g-past1'")
+    rv.set_reply_style(h, "")
+
+
 def test_draft_that_is_working_notes_is_retried_not_saved(env, monkeypatch):
     rv, ai = env["reviews"], env["ai"]
     answers = iter([").\n   *  Under 60 words? Yes (~", "<reply>Thank you so much for the birthday wishes! 🎂</reply>"])
