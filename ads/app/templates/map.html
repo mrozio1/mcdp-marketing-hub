@@ -28,13 +28,13 @@
 {% if browser_key %}
 <section class="panel map-panel">
   <div class="map-controls">
-    <fieldset class="map-layers">
+    <fieldset class="map-layers" autocomplete="off">
       <legend class="sr-only">Layers</legend>
       <label><input type="checkbox" data-layer="ours" checked><span class="dot dot-ours"></span> {{ layers.ours }} <span class="muted" data-count="ours"></span></label>
-      <label><input type="checkbox" data-layer="referrer" checked><span class="dot dot-referrer"></span> {{ layers.referrer }} <span class="muted" data-count="referrer"></span></label>
+      <label><input type="checkbox" data-layer="referrer"><span class="dot dot-referrer"></span> {{ layers.referrer }} <span class="muted" data-count="referrer"></span></label>
       <label class="sub"><input type="checkbox" data-only-ortho><span class="dot dot-referrer dot-ortho"></span> Only those that also come up for “orthodontist” <span class="muted" data-count="ortho"></span></label>
       <label><input type="checkbox" data-only-peds><span class="dot dot-peds"></span> Pediatric practices <span class="muted small">(Pediatric, Children's or Peds in the name)</span> <span class="muted" data-count="peds"></span></label>
-      <label><input type="checkbox" data-layer="competitor" checked><span class="dot dot-competitor"></span> {{ layers.competitor }} <span class="muted" data-count="competitor"></span></label>
+      <label><input type="checkbox" data-layer="competitor"><span class="dot dot-competitor"></span> {{ layers.competitor }} <span class="muted" data-count="competitor"></span></label>
       <label><input type="checkbox" data-layer="school_private"><span class="dot dot-school_private"></span> Private schools <span class="muted" data-count="school_private"></span></label>
       <label><input type="checkbox" data-layer="school_charter"><span class="dot dot-school_charter"></span> Charter schools <span class="muted" data-count="school_charter"></span></label>
       <label><input type="checkbox" data-gone><span class="dot dot-gone"></span> No longer listed on Google <span class="muted" data-count="gone"></span></label>
@@ -453,6 +453,8 @@
     });
     if (fit && !bounds.isEmpty()) map.fitBounds(bounds, 40);
   }
+  // Start from the defaults every time (some browsers bring back the last ticks on reload).
+  document.querySelectorAll(".map-layers input[type=checkbox]").forEach(i => { i.checked = i.defaultChecked; });
   ui.layers.forEach(i => i.addEventListener("change", () => apply(false)));
   ui.onlyOrtho.addEventListener("change", () => { if (ui.onlyOrtho.checked) ui.layers.find(i => i.dataset.layer === "referrer").checked = true; apply(false); });
   ui.onlyPeds.addEventListener("change", () => apply(true));
