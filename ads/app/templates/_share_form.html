@@ -1,0 +1,23 @@
+{# Make a share link. Needs: it (a file) or folder; mail_on. #}
+{% if can_edit %}
+<form method="post" action="{{ '/studio/i/%d/share'|format(it.id) if it else '/studio/folders/%d/share'|format(folder.id) }}" class="st-share-form" data-busy="Making the link…">
+  <div class="st-share-grid">
+    <label><span>Email it to <span class="muted small">(optional; commas between addresses)</span></span>
+      <input name="to" type="text" inputmode="email" placeholder="jordyn@schulzortho.com" autocomplete="off" {% if not mail_on %}disabled{% endif %}></label>
+    <label>Title on the page<input name="title" value="{{ it.title if it else folder.name }}" maxlength="200"></label>
+  </div>
+  <label><span>Message <span class="muted small">(shown on the page and in the email)</span></span>
+    <textarea name="message" rows="2" maxlength="2000" placeholder="Here's the Thanksgiving post for next week. Approve it or tell us what to change."></textarea></label>
+  <div class="st-share-grid st-share-opts">
+    <label>Link works for
+      <select name="days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="0">Until I turn it off</option></select></label>
+    <label><span>Password <span class="muted small">(optional)</span></span><input name="password" type="password" autocomplete="new-password" minlength="6"></label>
+  </div>
+  <div class="st-checks">
+    <label class="check"><input type="checkbox" name="allow_download" value="1" checked> They can download it</label>
+    <label class="check"><input type="checkbox" name="allow_review" value="1" checked> They can approve it or ask for changes</label>
+  </div>
+  {% if not mail_on %}<p class="small muted">To email links from {{ 'the marketing mailbox' }}, an admin turns on SharePoint and email under Connections → Studio. Until then, copy the link and send it yourself.</p>{% endif %}
+  <button class="btn" type="submit">{{ 'Make the link and send it' if mail_on else 'Make the link' }}</button>
+</form>
+{% endif %}

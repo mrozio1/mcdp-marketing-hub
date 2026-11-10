@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+{% block title %}Studio{% endblock %}
+{% block mainclass %}wrap st-wrap{% endblock %}
+{% macro size(n) -%}
+  {%- if not n -%}{%- elif n >= 1073741824 -%}{{ '%.1f'|format(n / 1073741824) }} GB
+  {%- elif n >= 1048576 -%}{{ '%.1f'|format(n / 1048576) }} MB{%- else -%}{{ (n / 1024)|round|int }} KB{%- endif -%}
+{%- endmacro %}
+{% macro dur(s) -%}{%- if s -%}{{ (s // 60)|int }}:{{ '%02d'|format((s % 60)|int) }}{%- endif -%}{%- endmacro %}
+{% macro qs(extra) -%}
+  ?b={{ pid if view == 'brand' else view }}{% if fid %}&f={{ fid }}{% endif %}{% if q %}&q={{ q|urlencode }}{% endif %}{{ extra }}
+{%- endmacro %}
+{% block content %}
+<div class="st" id="studio" data-pid="{{ pid if view == 'brand' else '' }}" data-folder="{{ fid if fid and fid != 'none' else '' }}"
+     data-chunk="{{ chunk }}" data-max="{{ max_file }}">
+  <aside class="st-side" aria-label="Brands and folders">
+    <label class="st-find"><span class="vh">Find a brand</span><input type="search" placeholder="Find a brand" data-brand-filter></label>
+    <p class="st-eyebrow">Brands</p>
+    <ul class="st-brands">
+      {% for b in brands %}
+      <li data-name="{{ b.name|lower }}">
+        <a href="/studio?b={{ b.id }}" class="st-brand {% if view == 'brand' and pid == b.id %}on{% endif %}" {% if view == 'brand' and pid == b.id and not fid %}aria-current="page"{% endif %}>
+          <span class="st-initial" aria-hidden="true">{{ b.name[:1] }}</span><span class="st-bname">{{ b.name }}</span>{% if b.count %}<span class="st-n">{{ b.count }}</span>{% endif %}
+        </a>
+        {% if view == 'brand' and pid == b.id %}
+        <ul class="st-folders">
+          <li><a href="/studio?b={{ pid }}" class="{{ 'on' if not fid }}">All files</a></li>
+          {% for f in folders %}<li><a href="/studio?b={{ pid }}&f={{ f.id }}" class="{{ 'on' if fid == f.id }}" {% if fid == f.id %}aria-current="page"{% endif %}>{{ f.name }}{% if f.n %} <span class="st-n">{{ f.n }}</span>{% endif %}</a></li>{% endfor %}
+          {% if folders %}<li><a href="/studio?b={{ pid }}&f=none" class="{{ 'on' if fid == 'none' }}">Not in a folder</a></li>{% endif %}
+          {% if can_edit %}
+          <li><details class="st-newfolder"><summary>+ New folder</summary>
+            <form method="post" action="/studio/folders" class="st-inline-form">
+              <input type="hidden" name="pid" value="{{ pid }}">
+              <label><span class="vh">Folder name</span><input name="name" placeholder="e.g. November social" maxlength="80" required></label>
+              <button class="btn btn-small" type="submit">Add</button>
+            </form></details></li>
+          {% endif %}
+        </ul>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="st-side-foot">
+      <a href="/studio?b=all" class="{{ 'on' if view == 'all' }}">Everything</a>
+      <a href="/studio?b=none" class="{{ 'on' if view == 'none' }}">Needs a brand{% if totals.unbranded %} <strong class="st-alert">{{ totals.unbranded }}</strong>{% endif %}</a>
+      <a href="/studio?b=feedback" class="{{ 'on' if view == 'feedback' }}">Outside feedback</a>
+      <a href="/studio?b=trash" class="{{ 'on' if view == 'trash' }}">Trash{% if totals.trash %} <span class="st-n">{{ totals.trash }}</span>{% endif %}</a>
+    </div>
+  </aside>
+
+  <section class="st-main">
+    <div class="st-head">
+      <div>
+        <p class="st-crumb">{% if view == 'brand' %}Studio · {{ brand_name }}{% else %}Studio{% endif %}</p>
+        <h1>{% if view == 'brand' %}{{ folder.name if folder else ('Not in a folder' if fid == 'none' else 'All files') }}{% elif view == 'none' %}Needs a brand{% elif view == 'trash' %}Trash{% elif view == 'feedback' %}Outside feedback{% else %}Everything{% endif %}</h1>
+      </div>
+      <div class="st-tools">
+        {% if view not in ('feedback',) %}
+        <form method="get" action="/studio" class="st-search" role="search">
+          <input type="hidden" name="b" value="{{ pid if view == 'brand' else view }}">
+          {% if fid %}<input type="hidden" name="f" value="{{ fid }}">{% endif %}
+          <label><span class="vh">Search</span><input type="search" name="q" value="{{ q }}" placeholder="Search designs, photos, videos"></label>
+        </form>
+        {% endif %}
+        {% if can_edit and view == 'brand' %}
+          {% if canva_on %}<form method="post" action="/studio/canva/import" data-busy="Starting…"><button class="btn btn-quiet st-pill" type="submit" {% if canva_running %}disabled{% endif %}>Import from Canva</button></form>{% endif %}
+          <label class="btn st-pill st-upload-btn">+ Add files<input type="file" multiple data-upload-input class="vh"></label>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if canva_running or (canva_status.state and canva_status.finished and view in ('brand', 'none')) %}
+    <section class="st-canva panel" aria-live="polite" data-canva {% if canva_running %}data-running{% endif %}>
+      <div class="st-canva-main">
+        <p class="st-canva-title" data-canva-title>
+          {% if canva_running %}Importing from Canva · {{ canva_status.done or 0 }} of {{ canva_status.total or '…' }} designs
+          {% elif canva_status.state == 'error' %}The Canva import stopped: {{ canva_status.error }}
+          {% else %}Canva import finished · {{ canva_status.new or 0 }} new, {{ canva_status.updated or 0 }} updated{% if canva_status.failed %}, {{ canva_status.failed }} couldn't be exported{% endif %}{% endif %}
+        </p>
+        {% if canva_running %}<div class="st-bar"><div data-canva-bar style="width: {{ ((canva_status.done or 0) / (canva_status.total or 1) * 100)|round|int }}%"></div></div>{% endif %}
+        <p class="small muted">Designs come in as finished files (a picture for one page, a PDF for several, an MP4 for videos), filed by brand from their names. Edit the layers in Canva; run the import again to bring changes in.
+          {% if canva_status.errors %}<br>Couldn't export: {{ canva_status.errors[:3]|join('; ') }}{% endif %}</p>
+      </div>
+      {% if totals.unbranded %}<a class="btn btn-quiet st-pill" href="/studio?b=none">Pick brands for {{ totals.unbranded }}</a>{% endif %}
+      {% if canva_running and can_edit %}<form method="post" action="/studio/canva/stop"><button class="linklike" type="submit">Stop</button></form>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if view == 'feedback' %}
+      {% if feedback %}
+      <ul class="st-feedback">
+        {% for e in feedback %}
+        <li>
+          <a class="st-fb-thumb" href="/studio/i/{{ e.item_id }}"><img src="/studio/t/{{ e.item_id }}" alt="" loading="lazy"></a>
+          <div>
+            <p><strong>{{ e.who }}</strong> {{ 'approved' if e.kind == 'approved' else 'asked for changes to' }} <a href="/studio/i/{{ e.item_id }}">{{ e.title }}</a>
+              <span class="muted small">· {{ names.get(e.practice_id, 'Needs a brand') }} · {{ e.at[:16]|replace('T', ' ') }}</span></p>
+            {% if e.comment %}<blockquote class="st-quote">{{ e.comment }}</blockquote>{% endif %}
+          </div>
+          <span class="st-status st-s-{{ 'approved' if e.kind == 'approved' else 'changes' }}">{{ 'Approved' if e.kind == 'approved' else 'Changes asked' }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="empty">When someone you share a link with approves a file or asks for changes, it shows up here (and the person who made the link gets an email).</p>{% endif %}
+    {% else %}
+
+    {% if counts %}
+    <nav class="st-chips" aria-label="Status">
+      <a href="/studio{{ qs('') }}" class="chip {{ 'on' if not status }}">All {{ counts.all }}</a>
+      {% for k, l in statuses %}<a href="/studio{{ qs('&s=' ~ k) }}" class="chip {{ 'on' if status == k }}">{{ l }} {{ counts[k] }}</a>{% endfor %}
+    </nav>
+    {% endif %}
+
+    {% if view == 'none' and items %}<p class="lede small">These came from Canva without a brand in their name. Tick them, pick the brand, and they move into its “Imported from Canva” folder.</p>{% endif %}
+
+    <form method="post" action="/studio/bulk" class="st-bulkform" data-bulk>
+      {% if items and can_edit %}
+      <div class="st-bulk" data-bulkbar hidden>
+        <span data-bulkcount>0 selected</span>
+        {% if view == 'trash' %}
+          <button class="btn btn-small" name="action" value="restore" type="submit">Restore</button>
+        {% else %}
+          <label><span class="vh">Set status</span><select name="status_pick" data-status-pick>
+            <option value="">Set status…</option>{% for k, l in statuses %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>
+          {% if view in ('none', 'all') %}
+          <label><span class="vh">Brand</span><select name="pid" data-brand-pick><option value="">Brand…</option>{% for b in brands %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select></label>
+          <button class="btn btn-small" name="action" value="brand" type="submit">Move to brand</button>
+          {% elif folders %}
+          <label><span class="vh">Folder</span><select name="folder"><option value="">No folder</option>{% for f in folders %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}</select></label>
+          <button class="btn btn-small btn-quiet" name="action" value="folder" type="submit">Move</button>
+          {% endif %}
+          <button class="linklike danger" name="action" value="trash" type="submit">Move to trash</button>
+        {% endif %}
+        <input type="hidden" name="action" value="" data-status-action disabled>
+      </div>
+      {% endif %}
+
+      {% if items %}
+      <ul class="st-grid">
+        {% for it in items %}
+        <li class="st-card">
+          {% if can_edit %}<label class="st-tick"><span class="vh">Select {{ it.title }}</span><input type="checkbox" name="ids" value="{{ it.id }}"></label>{% endif %}
+          <a href="/studio/i/{{ it.id }}" class="st-card-link">
+            <span class="st-thumb st-k-{{ it.kind }}">
+              <img src="/studio/t/{{ it.id }}" alt="" loading="lazy">
+              {% if it.kind == 'video' %}<span class="st-play" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg></span>{% if it.duration %}<span class="st-dur">{{ dur(it.duration) }}</span>{% endif %}{% endif %}
+              {% if it.pages and it.pages > 1 %}<span class="st-dur">{{ it.pages }} pages</span>{% endif %}
+            </span>
+            <span class="st-card-body">
+              <strong class="st-title">{{ it.title }}</strong>
+              <span class="st-meta">
+                <span>{% if view in ('all', 'trash') %}{{ names.get(it.practice_id, 'Needs a brand') }}{% else %}{{ 'Canva' if it.source == 'canva' else it.kind|capitalize }}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}{% endif %}</span>
+                <span class="st-status st-s-{{ it.status }}">{{ it.status_label }}</span>
+              </span>
+            </span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+      {% elif view == 'brand' %}
+      <div class="empty st-empty" data-dropzone-hint>
+        {% if q or status %}Nothing here matches.{% else %}
+        <p><strong>Drop designs, photos and videos here</strong>{% if can_edit %}, or use + Add files{% endif %}.</p>
+        <p class="small">Anything up to 4 GB. {% if sp_ready %}Files are kept on the Studio SharePoint site.{% else %}Files are kept on the NAS until SharePoint is linked (Connections → Studio).{% endif %}</p>
+        {% endif %}
+      </div>
+      {% elif view == 'trash' %}<p class="empty">The trash is empty. Files in it are deleted for good after 30 days.</p>
+      {% elif view == 'none' %}<p class="empty">Every file has a brand.</p>
+      {% else %}<p class="empty">No files yet.</p>{% endif %}
+    </form>
+
+    {% if folder %}
+    <section class="st-section" id="share">
+      <details class="drawer" {% if new_share %}open{% endif %}>
+        <summary><span class="drawer-title">Share this folder</span><span class="drawer-hint">A link to everything in “{{ folder.name }}”, for people outside the hub. No account needed.</span></summary>
+        <div class="drawer-body">
+          {% include "_share_form.html" %}
+          {% if folder_shares %}{% set shares = folder_shares %}{% include "_share_list.html" %}{% endif %}
+        </div>
+      </details>
+      {% if can_edit %}
+      <details class="drawer">
+        <summary><span class="drawer-title">Rename or remove the folder</span></summary>
+        <div class="drawer-body">
+          <form method="post" action="/studio/folders/{{ folder.id }}/rename" class="st-inline-form">
+            <label><span class="vh">Name</span><input name="name" value="{{ folder.name }}" maxlength="80" required></label>
+            <button class="btn btn-small btn-quiet" type="submit">Rename</button>
+          </form>
+          <form method="post" action="/studio/folders/{{ folder.id }}/delete" data-confirm="Remove the folder “{{ folder.name }}”? Its files stay in {{ brand_name }}.">
+            <button class="linklike danger" type="submit">Remove the folder (keeps its files)</button>
+          </form>
+        </div>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if assets or (view == 'brand' and look and pid and not fid and not q and not status) %}
+    <section class="st-section st-assets">
+      <h2>Brand assets</h2>
+      <p class="small muted">The logo, colours, photos and AI images from {{ brand_name }}'s brand kit. Change them on the practice page; they show here as soon as they're saved.</p>
+      <div class="st-swatches">
+        <span class="st-swatch" style="background: {{ look.primary }}"></span><code>{{ look.primary }}</code>
+        <span class="st-swatch" style="background: {{ look.accent }}"></span><code>{{ look.accent }}</code>
+        <a class="small" href="/p/{{ pid }}#brand">Open the brand kit</a>
+      </div>
+      {% if assets %}
+      <ul class="st-asset-grid">
+        {% for a in assets[:24] %}
+        <li><a href="/brand-images/{{ a.id }}" target="_blank" rel="noopener"><img src="/brand-images/{{ a.id }}" alt="{{ a.label or a.kind }}" loading="lazy" class="{{ 'st-logo' if a.kind == 'logo' }}"></a>
+          <span class="small muted">{{ {'logo': 'Logo', 'photo': 'Photo', 'ai': 'AI image'}.get(a.kind, a.kind|capitalize) }}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% endif %}
+  </section>
+</div>
+
+{% if can_edit and view == 'brand' %}
+<div class="st-drop" data-drop hidden><p>Drop to add to <strong>{{ folder.name if folder else brand_name }}</strong></p></div>
+<aside class="st-tray" data-tray hidden aria-live="polite">
+  <p class="st-tray-title" data-tray-title>Adding files</p>
+  <ul data-tray-list></ul>
+</aside>
+{% endif %}
+
+<script>
+(() => {
+  const root = document.getElementById("studio");
+  // brand filter
+  const bf = document.querySelector("[data-brand-filter]");
+  bf && bf.addEventListener("input", () => {
+    const q = bf.value.trim().toLowerCase();
+    document.querySelectorAll(".st-brands > li").forEach(li => { li.hidden = q && !li.dataset.name.includes(q); });
+  });
+  // bulk bar
+  const bulk = document.querySelector("[data-bulk]"), bar = document.querySelector("[data-bulkbar]");
+  if (bulk && bar) {
+    const sync = () => {
+      const n = bulk.querySelectorAll("input[name=ids]:checked").length;
+      bar.hidden = !n;
+      bar.querySelector("[data-bulkcount]").textContent = `${n} selected`;
+    };
+    bulk.addEventListener("change", e => {
+      if (e.target.matches("[data-status-pick]") && e.target.value) {
+        const a = bulk.querySelector("[data-status-action]");
+        a.disabled = false; a.value = e.target.value; bulk.submit();
+      }
+      sync();
+    });
+  }
+  // Canva progress
+  const cv = document.querySelector("[data-canva][data-running]");
+  if (cv) {
+    const tick = async () => {
+      try {
+        const r = await fetch("/studio/canva/status", { headers: { Accept: "application/json" } });
+        const s = await r.json();
+        if (!s.running) { location.reload(); return; }
+        cv.querySelector("[data-canva-title]").textContent = `Importing from Canva · ${s.done || 0} of ${s.total || "…"} designs`;
+        const b = cv.querySelector("[data-canva-bar]"); if (b) b.style.width = `${Math.round((s.done || 0) / (s.total || 1) * 100)}%`;
+      } catch (e) {}
+      setTimeout(tick, 4000);
+    };
+    setTimeout(tick, 4000);
+  }
+
+  // uploads: in pieces, so big videos get past Cloudflare's 100 MB limit and survive a blip
+  const input = document.querySelector("[data-upload-input]");
+  if (!input || !root.dataset.pid) return;
+  const CHUNK = +root.dataset.chunk, MAX = +root.dataset.max;
+  const tray = document.querySelector("[data-tray]"), list = document.querySelector("[data-tray-list]");
+  const drop = document.querySelector("[data-drop]");
+  const post = (url, body, json) => fetch(url, { method: "POST", body, headers: json ? { "Content-Type": "application/json", Accept: "application/json" } : { Accept: "application/json" } })
+    .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; });
+
+  const videoInfo = file => new Promise(res => {
+    const v = document.createElement("video"), url = URL.createObjectURL(file);
+    let done = false; const finish = x => { if (!done) { done = true; URL.revokeObjectURL(url); res(x); } };
+    v.preload = "metadata"; v.muted = true; v.playsInline = true; v.src = url;
+    v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 3); };
+    v.onseeked = () => {
+      const c = document.createElement("canvas"), s = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight, 1));
+      c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+      c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob(b => finish({ w: v.videoWidth, h: v.videoHeight, d: v.duration, thumb: b }), "image/jpeg", 0.82);
+    };
+    v.onerror = () => finish({});
+    setTimeout(() => finish({}), 15000);
+  });
+
+  const one = async file => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="st-tray-name"></span><span class="st-tray-bar"><span></span></span><span class="st-tray-note small muted"></span>`;
+    li.querySelector(".st-tray-name").textContent = file.name;
+    list.appendChild(li);
+    const barEl = li.querySelector(".st-tray-bar span"), note = li.querySelector(".st-tray-note");
+    try {
+      if (file.size > MAX) throw new Error("over 4 GB");
+      const info = file.type.startsWith("video/") ? videoInfo(file) : Promise.resolve({});
+      const { id } = await post("/studio/upload/start", JSON.stringify({ name: file.name, size: file.size, mime: file.type,
+        pid: root.dataset.pid, folder: root.dataset.folder || null }), true);
+      for (let off = 0; off < file.size; off += CHUNK) {
+        let tries = 0;
+        for (;;) {
+          try { await post(`/studio/upload/${id}/chunk?offset=${off}`, file.slice(off, off + CHUNK)); break; }
+          catch (e) { if (++tries > 4) throw e; await new Promise(r => setTimeout(r, 1500 * tries)); }
+        }
+        barEl.style.width = `${Math.round(Math.min(file.size, off + CHUNK) / file.size * 100)}%`;
+      }
+      note.textContent = "Finishing…";
+      const meta = await info, fd = new FormData();
+      if (meta.w) { fd.append("width", meta.w); fd.append("height", meta.h); }
+      if (meta.d && isFinite(meta.d)) fd.append("duration", meta.d);
+      if (meta.thumb) fd.append("thumb", meta.thumb, "thumb.jpg");
+      await post(`/studio/upload/${id}/done`, fd);
+      li.classList.add("ok"); note.textContent = "Added";
+      return true;
+    } catch (e) { li.classList.add("bad"); note.textContent = `Didn't add: ${e.message}`; return false; }
+  };
+
+  const run = async files => {
+    if (!files.length) return;
+    tray.hidden = false;
+    document.querySelector("[data-tray-title]").textContent = `Adding ${files.length} file${files.length === 1 ? "" : "s"}`;
+    let ok = 0, bad = 0;
+    for (let i = 0; i < files.length; i += 3) {             // three at a time
+      const got = await Promise.all(files.slice(i, i + 3).map(one));
+      got.forEach(g => g ? ok++ : bad++);
+    }
+    document.querySelector("[data-tray-title]").textContent = bad ? `Added ${ok}, ${bad} didn't go` : `Added ${ok}`;
+    if (!bad) setTimeout(() => location.reload(), 600);
+    else { const b = document.createElement("button"); b.className = "btn btn-small"; b.textContent = "Show them"; b.onclick = () => location.reload(); tray.appendChild(b); }
+  };
+  input.addEventListener("change", () => { run([...input.files]); input.value = ""; });
+  let depth = 0;
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+  window.addEventListener("dragenter", e => { if (hasFiles(e)) { depth++; drop.hidden = false; } });
+  window.addEventListener("dragleave", e => { if (hasFiles(e) && --depth <= 0) { depth = 0; drop.hidden = true; } });
+  window.addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener("drop", e => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; drop.hidden = true; run([...e.dataTransfer.files]); });
+  window.addEventListener("beforeunload", e => { if (!tray.hidden && list.querySelector("li:not(.ok):not(.bad)")) { e.preventDefault(); e.returnValue = ""; } });
+})();
+</script>
+{% endblock %}

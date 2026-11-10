@@ -21,6 +21,9 @@ from . import connectors as cx, db
 GRAPH = "https://graph.microsoft.com/v1.0"
 SCOPES = ("offline_access openid profile email User.Read User.ReadBasic.All "
           "Calendars.ReadWrite Calendars.ReadWrite.Shared")
+# Studio: files on SharePoint and sharing by email. Asked for only once an admin turns them on (they need
+# admin consent), so the calendar keeps working until then.
+STUDIO_SCOPES = "Files.ReadWrite.All Sites.ReadWrite.All Mail.Send Mail.Send.Shared"
 DEFAULT_TZ = "America/Detroit"     # the practices are in Michigan
 _tok_lock = threading.Lock()
 _token = {}
@@ -69,8 +72,18 @@ def save(tenant, client_id, secret, mbox, tz):
     _token.clear()
 
 
+def studio_on():
+    """Signed in with the Studio permissions (SharePoint files and sending mail)."""
+    return connected() and db.get_setting("ms_studio_scopes") == "1"
+
+
+def scopes(studio=None):
+    studio = studio_on() if studio is None else studio
+    return SCOPES + (" " + STUDIO_SCOPES if studio else "")
+
+
 def disconnect():
-    for k in ("ms_refresh_token", "ms_user", "ms_last_refresh", "ms_status"):
+    for k in ("ms_refresh_token", "ms_user", "ms_last_refresh", "ms_status", "ms_studio_scopes"):
         db.set_setting(k, None)
     _token.clear()
 
@@ -86,16 +99,17 @@ def pkce_pair():
     return verifier, challenge
 
 
-def auth_url(redirect_uri, state, challenge):
+def auth_url(redirect_uri, state, challenge, studio=None):
     return _authority() + "/authorize?" + urllib.parse.urlencode({
         "client_id": db.get_setting("ms_client_id"), "response_type": "code", "redirect_uri": redirect_uri,
-        "response_mode": "query", "scope": SCOPES, "state": state, "code_challenge": challenge,
+        "response_mode": "query", "scope": scopes(studio), "state": state, "code_challenge": challenge,
         "code_challenge_method": "S256", "prompt": "select_account"})
 
 
-def _token_post(fields):
+def _token_post(fields, scope=None):
     body = urllib.parse.urlencode({"client_id": db.get_setting("ms_client_id"),
-                                   "client_secret": db.get_setting("ms_client_secret"), "scope": SCOPES, **fields}).encode()
+                                   "client_secret": db.get_setting("ms_client_secret"), "scope": scope or scopes(),
+                                   **fields}).encode()
     req = urllib.request.Request(_authority() + "/token", data=body,
                                  headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
     try:
@@ -126,11 +140,13 @@ def _explain_signin(msg):
     return msg
 
 
-def exchange_code(code, redirect_uri, verifier):
+def exchange_code(code, redirect_uri, verifier, studio=None):
     tok = _token_post({"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
-                       "code_verifier": verifier})
+                       "code_verifier": verifier}, scope=scopes(studio))
     if not tok.get("refresh_token"):
         raise MSError("Microsoft didn't return a long-term sign-in (offline_access). Check the app's API permissions.")
+    granted = (tok.get("scope") or "").lower()
+    db.set_setting("ms_studio_scopes", "1" if "files.readwrite.all" in granted and "mail.send" in granted else None)
     _store(tok)
     me = graph("GET", "/me", params={"$select": "displayName,mail,userPrincipalName"})
     db.set_setting("ms_user", json.dumps({"name": me.get("displayName", ""),
@@ -193,6 +209,67 @@ def graph(method, path, body=None, params=None, headers=None):
             raise MSError(_explain_graph(msg, e.code))
         except urllib.error.URLError as e:
             raise MSError(f"Couldn't reach Microsoft Graph: {e.reason}")
+
+
+def graph_bytes(method, path, data, content_type="application/octet-stream", headers=None):
+    """Graph with a raw body (file uploads)."""
+    for attempt in (0, 1):
+        tok = _access(force=attempt == 1)
+        url = path if path.startswith("https://") else GRAPH + path
+        h = {"Authorization": f"Bearer {tok}", "Accept": "application/json", "Content-Type": content_type,
+             **(headers or {})}
+        req = urllib.request.Request(url, data=data, headers=h, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                raw = r.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode(errors="replace")
+            if e.code == 401 and attempt == 0:
+                continue
+            raise MSError(_graph_msg(raw, e.code))
+        except urllib.error.URLError as e:
+            raise MSError(f"Couldn't reach Microsoft Graph: {e.reason}")
+
+
+def put_chunk(upload_url, data, start, total):
+    """One piece of a large upload. The upload URL carries its own permission (no sign-in header)."""
+    end = start + len(data) - 1
+    req = urllib.request.Request(upload_url, data=data, method="PUT", headers={
+        "Content-Length": str(len(data)), "Content-Range": f"bytes {start}-{end}/{total}"})
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                raw = r.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode(errors="replace")
+            if e.code in (500, 502, 503, 504) and attempt < 3:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise MSError(_graph_msg(raw, e.code))
+        except urllib.error.URLError as e:
+            if attempt < 3:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise MSError(f"Couldn't reach SharePoint: {e.reason}")
+
+
+def _graph_msg(raw, code):
+    try:
+        err = json.loads(raw).get("error", {})
+        return f"{err.get('message') or err.get('code') or raw[:200]} (HTTP {code})"
+    except (ValueError, AttributeError):
+        return f"HTTP {code}: {raw[:200]}"
+
+
+def send_mail(to, subject, html_body, reply_to=None):
+    """Send from the send-from mailbox (the same one calendar invites come from)."""
+    msg = {"subject": subject[:255], "body": {"contentType": "HTML", "content": html_body},
+           "toRecipients": [{"emailAddress": {"address": a}} for a in to]}
+    if reply_to:
+        msg["replyTo"] = [{"emailAddress": {"address": reply_to}}]
+    graph("POST", base() + "/sendMail", {"message": msg, "saveToSentItems": True})
 
 
 def _explain_graph(msg, code):

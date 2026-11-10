@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{{ it.title }} · Studio{% endblock %}
+{% block mainclass %}wrap st-wrap{% endblock %}
+{% macro size(n) -%}
+  {%- if not n -%}{%- elif n >= 1073741824 -%}{{ '%.1f'|format(n / 1073741824) }} GB
+  {%- elif n >= 1048576 -%}{{ '%.1f'|format(n / 1048576) }} MB{%- else -%}{{ (n / 1024)|round|int }} KB{%- endif -%}
+{%- endmacro %}
+{% block content %}
+{% set back = '/studio?b=' ~ (it.practice_id if it.practice_id is not none else 'none') ~ ('&f=' ~ it.folder_id if it.folder_id else '') %}
+<p class="st-crumb"><a href="{{ '/studio?b=trash' if it.trashed_at else back }}">← {{ 'Trash' if it.trashed_at else (brand_name ~ (' / ' ~ folder.name if folder else '')) }}</a></p>
+<div class="st-item-head">
+  <h1>{{ it.title }}</h1>
+  <span class="st-status st-s-{{ it.status }}">{{ it.status_label }}</span>
+  {% if it.trashed_at %}<span class="st-status st-s-off">In the trash</span>{% endif %}
+</div>
+
+<div class="st-item">
+  <section class="st-preview st-k-{{ it.kind }}" aria-label="Preview">
+    {% if it.kind == 'image' %}
+      <img src="/studio/f/{{ it.id }}" alt="{{ it.title }}">
+    {% elif it.kind == 'video' %}
+      <video src="/studio/f/{{ it.id }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/studio/t/{{ it.id }}"{% endif %} data-needs-thumb="{{ 0 if it.has_thumb else 1 }}" data-id="{{ it.id }}"></video>
+    {% elif it.kind == 'audio' %}
+      <audio src="/studio/f/{{ it.id }}" controls preload="metadata"></audio>
+    {% elif it.kind == 'pdf' %}
+      {% if it.has_thumb %}<img src="/studio/t/{{ it.id }}" alt="First page of {{ it.title }}">{% endif %}
+      <p><a class="btn btn-quiet" href="/studio/f/{{ it.id }}" target="_blank" rel="noopener">Open the PDF{% if it.pages %} ({{ it.pages }} pages){% endif %}</a></p>
+    {% else %}
+      <img src="/studio/t/{{ it.id }}" alt="">
+    {% endif %}
+    <p class="small muted st-facts">
+      {{ it.filename }} · {{ size(it.size) }}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}{% if it.duration %} · {{ (it.duration // 60)|int }}:{{ '%02d'|format((it.duration % 60)|int) }}{% endif %}
+      · {% if it.storage == 'sp' %}on SharePoint{% elif it.sp_error %}on the NAS (SharePoint said: {{ it.sp_error }}){% else %}on the NAS{% endif %}
+      · added {{ it.created_at[:10] }}{% if it.created_by %} by {{ it.created_by }}{% endif %}
+    </p>
+    <div class="btn-row">
+      <a class="btn" href="/studio/f/{{ it.id }}?dl=1">Download</a>
+      {% if it.sp_web %}<a class="btn btn-quiet" href="{{ it.sp_web }}" target="_blank" rel="noopener">Open in SharePoint</a>{% endif %}
+      {% if it.canva_url %}<a class="btn btn-quiet" href="{{ it.canva_url }}" target="_blank" rel="noopener">Edit in Canva</a>{% endif %}
+    </div>
+    {% if it.canva_id and canva_on and can_edit %}
+    <form method="post" class="btn-row st-more" data-busy="Asking Canva…" onsubmit="this.action = '/studio/i/{{ it.id }}/canva/' + this.fmt.value">
+      <label class="st-inline">Also get it as
+        <select name="fmt"><option value="pptx">PowerPoint</option><option value="mp4">MP4 video</option><option value="pdf">PDF</option><option value="png">PNG picture</option></select></label>
+      <button class="btn btn-small btn-quiet" type="submit">Export from Canva</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="st-details">
+    {% if can_edit and not it.trashed_at %}
+    <form method="post" action="/studio/i/{{ it.id }}" class="stack">
+      <label>Title<input name="title" value="{{ it.title }}" maxlength="200" required></label>
+      <label>Status
+        <select name="status">{% for k, l in statuses %}<option value="{{ k }}" {% if it.status == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+      <div class="st-share-grid">
+        <label>Brand
+          <select name="brand" data-brand-select>
+            {% if it.practice_id is none %}<option value="" selected disabled>Pick a brand</option>{% endif %}
+            {% for b in brands %}<option value="{{ b.id }}" {% if it.practice_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select></label>
+        <label>Folder
+          <select name="folder" data-folder-select>
+            <option value="">No folder</option>
+            {% for f in folders %}<option value="{{ f.id }}" {% if it.folder_id == f.id %}selected{% endif %}>{{ f.name }}</option>{% endfor %}</select></label>
+      </div>
+      <label><span>Notes <span class="muted small">(caption ideas, where it's running, who asked for it)</span></span><textarea name="notes" rows="3" maxlength="4000">{{ it.notes }}</textarea></label>
+      <div><button class="btn" type="submit">Save</button></div>
+    </form>
+    <script type="application/json" id="st-folders">{{ all_folders|tojson }}</script>
+    {% else %}
+      <dl class="st-dl"><dt>Brand</dt><dd>{{ brand_name }}</dd><dt>Folder</dt><dd>{{ folder.name if folder else '—' }}</dd>
+        {% if it.notes %}<dt>Notes</dt><dd>{{ it.notes }}</dd>{% endif %}</dl>
+    {% endif %}
+
+    {% if not it.trashed_at %}
+    <section class="st-section" id="share">
+      <h2>Share outside the hub</h2>
+      <p class="small muted">A private page with {{ brand_name if it.practice_id else 'the' }} branding where people can view, download and approve it, without an account. You see every view and download here.</p>
+      {% if shares %}{% include "_share_list.html" %}{% endif %}
+      <details class="drawer" {% if not shares %}open{% endif %}>
+        <summary><span class="drawer-title">{{ 'Make another link' if shares else 'Make a link' }}</span></summary>
+        <div class="drawer-body">{% include "_share_form.html" %}</div>
+      </details>
+    </section>
+    {% endif %}
+
+    <section class="st-section">
+      <h2>Activity</h2>
+      <ul class="st-events">
+        {% for e in events %}
+        <li><span class="muted small">{{ e.at[:16]|replace('T', ' ') }}</span>
+          {% if e.kind == 'added' %}Added{% if e.who %} by {{ e.who }}{% endif %}{% if e.comment %} ({{ e.comment }}){% endif %}
+          {% elif e.kind == 'status' %}{{ e.who or 'Someone' }} set it to <strong>{{ e.comment }}</strong>
+          {% elif e.kind == 'approved' %}<strong>{{ e.who }}</strong> approved it from a share link{% if e.comment %}: “{{ e.comment }}”{% endif %}
+          {% elif e.kind == 'changes' %}<strong>{{ e.who }}</strong> asked for changes: “{{ e.comment }}”
+          {% elif e.kind == 'view' %}Opened from a share link
+          {% elif e.kind == 'download' %}Downloaded from a share link
+          {% elif e.kind == 'sent' %}{{ e.who or 'Someone' }} emailed the link to {{ e.email }}
+          {% elif e.kind == 'shared' %}{{ e.who or 'Someone' }} made a share link
+          {% elif e.kind == 'unshared' %}{{ e.who or 'Someone' }} turned a share link off
+          {% elif e.kind == 'new_version' %}New version{% if e.comment %} ({{ e.comment }}){% endif %}
+          {% elif e.kind == 'trashed' %}{{ e.who or 'Someone' }} moved it to the trash
+          {% elif e.kind == 'restored' %}{{ e.who or 'Someone' }} restored it
+          {% else %}{{ e.kind }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    {% if can_edit %}
+    <div class="drawer-danger">
+      {% if it.trashed_at %}
+      <div class="btn-row">
+        <form method="post" action="/studio/i/{{ it.id }}/restore"><button class="btn" type="submit">Restore</button></form>
+        <form method="post" action="/studio/i/{{ it.id }}/delete" data-confirm="Delete “{{ it.title }}” for good? Share links to it stop working.{% if it.storage == 'sp' %} (SharePoint keeps it in its recycle bin for a while.){% endif %}"><button class="linklike danger" type="submit">Delete for good</button></form>
+      </div>
+      {% else %}
+      <form method="post" action="/studio/i/{{ it.id }}/trash"><button class="linklike danger" type="submit">Move to trash</button></form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+<script>
+(() => {
+  // folder list follows the brand
+  const bs = document.querySelector("[data-brand-select]"), fs = document.querySelector("[data-folder-select]");
+  const data = document.getElementById("st-folders");
+  if (bs && fs && data) {
+    const all = JSON.parse(data.textContent);
+    bs.addEventListener("change", () => {
+      fs.innerHTML = '<option value="">No folder</option>' + (all[bs.value] || []).map(f => `<option value="${f.id}">${f.name.replace(/[<&]/g, c => c === "<" ? "&lt;" : "&amp;")}</option>`).join("");
+    });
+  }
+  // a video with no picture yet: grab a frame for the library grid
+  const v = document.querySelector("video[data-needs-thumb='1']");
+  if (v) v.addEventListener("loadeddata", () => {
+    const go = () => {
+      try {
+        const c = document.createElement("canvas"), s = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight, 1));
+        c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        c.toBlob(b => { if (!b) return; const fd = new FormData(); fd.append("thumb", b, "t.jpg");
+          fetch(`/studio/i/${v.dataset.id}/thumb`, { method: "POST", body: fd }); }, "image/jpeg", 0.82);
+      } catch (e) {}
+    };
+    v.addEventListener("seeked", go, { once: true });
+    v.currentTime = Math.min(1, (v.duration || 2) / 3);
+  }, { once: true });
+})();
+</script>
+{% endblock %}

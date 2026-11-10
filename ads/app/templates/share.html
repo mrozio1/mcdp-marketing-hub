@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>{{ s.title if s and not locked else 'Shared file' }}{% if brand %} · {{ brand }}{% endif %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="/static/favicon-32.png?v=2" type="image/png">
+<link rel="stylesheet" href="/static/style.css?v={{ static_v }}">
+<style>:root { --brand: {{ look.primary if look else '#0F7471' }}; --brand-2: {{ look.accent if look else '#D9A441' }}; }</style>
+</head>
+<body class="sh-body">
+{% if gone %}
+<main class="sh-wrap sh-gone">
+  <h1>{% if gone == 'expired' %}This link has expired{% elif gone == 'revoked' %}This link was turned off{% else %}This link doesn't work{% endif %}</h1>
+  <p class="lede">{% if gone == 'missing' %}Check that it was copied in full.{% else %}Ask the person who sent it for a new one.{% endif %}</p>
+</main>
+{% else %}
+<header class="sh-head">
+  <div class="sh-head-in">
+    <img class="sh-logo" src="/s/{{ s.token }}/logo" alt="{{ brand }}">
+    <span class="sh-brand">{{ brand }}</span>
+  </div>
+</header>
+<main class="sh-wrap">
+  {% if locked %}
+  <section class="sh-lock">
+    <h1>{{ brand }} shared something with you</h1>
+    <p class="lede">Enter the password you were given.</p>
+    <form method="post" action="/s/{{ s.token }}/unlock" class="stack sh-lock-form">
+      <label>Password<input type="password" name="password" autocomplete="current-password" required autofocus></label>
+      {% if error == 'password' %}<p class="flash flash-error" role="alert">That password isn't right.</p>{% elif error == 'wait' %}<p class="flash flash-error" role="alert">Too many tries. Wait 15 minutes and try again.</p>{% endif %}
+      <button class="btn sh-btn" type="submit">Open</button>
+    </form>
+  </section>
+  {% else %}
+  <div class="sh-intro">
+    <h1>{{ s.title }}</h1>
+    {% if s.message %}<p class="lede sh-message">{{ s.message }}</p>{% endif %}
+    <p class="small muted">Shared by {{ s.created_by or brand }}{% if s.expires_at %} · this link works until {{ s.expires_at[:10] }}{% endif %}</p>
+  </div>
+  {% if error and error not in ('password', 'wait') %}<p class="flash flash-error" role="alert">{{ error }}</p>{% endif %}
+  {% if not items %}<p class="empty">There's nothing on this link right now.</p>{% endif %}
+  {% for it in items %}
+  {% set rv = reviews.get(it.id) %}
+  <article class="sh-item" id="i{{ it.id }}">
+    <div class="sh-media sh-k-{{ it.kind }}">
+      {% if it.kind == 'image' %}<img src="/s/{{ s.token }}/f/{{ it.id }}" alt="{{ it.title }}" loading="lazy">
+      {% elif it.kind == 'video' %}<video src="/s/{{ s.token }}/f/{{ it.id }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/s/{{ s.token }}/t/{{ it.id }}"{% endif %} {% if not s.allow_download %}controlslist="nodownload"{% endif %}></video>
+      {% elif it.kind == 'audio' %}<audio src="/s/{{ s.token }}/f/{{ it.id }}" controls preload="metadata"></audio>
+      {% else %}<img src="/s/{{ s.token }}/t/{{ it.id }}" alt="" loading="lazy">{% endif %}
+    </div>
+    <div class="sh-side">
+      <h2>{{ it.title }}</h2>
+      <p class="small muted">{% if it.kind == 'pdf' and it.pages %}{{ it.pages }}-page PDF{% else %}{{ it.kind|capitalize }}{% endif %}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}</p>
+      <div class="btn-row">
+        {% if it.kind == 'pdf' %}<a class="btn btn-quiet sh-btn-quiet" href="/s/{{ s.token }}/f/{{ it.id }}" target="_blank" rel="noopener">View the PDF</a>{% endif %}
+        {% if s.allow_download %}<a class="btn sh-btn" href="/s/{{ s.token }}/f/{{ it.id }}?dl=1">Download</a>{% endif %}
+      </div>
+      {% if s.allow_review %}
+        {% if rv %}
+        <p class="sh-decided sh-{{ rv.kind }}">{{ rv.who }} {{ 'approved this' if rv.kind == 'approved' else 'asked for changes' }} {{ rv.at[:10] }}{% if rv.comment %}: “{{ rv.comment }}”{% endif %}</p>
+        {% endif %}
+        {% if done and done.item == it.id %}<p class="flash" role="status">Thanks, the team has it.</p>{% endif %}
+        <details class="sh-review" {% if not rv %}open{% endif %}>
+          <summary>{{ 'Change your answer' if rv else 'Approve or ask for changes' }}</summary>
+          <form method="post" action="/s/{{ s.token }}/review" class="stack">
+            <input type="hidden" name="item_id" value="{{ it.id }}">
+            <div class="sh-two">
+              <label>Your name<input name="name" required maxlength="120" value="{{ request.session.get('share_name', '') }}" autocomplete="name"></label>
+              <label><span>Email <span class="muted small">(optional)</span></span><input name="email" type="email" maxlength="200" autocomplete="email"></label>
+            </div>
+            <label><span>Comment <span class="muted small">(needed if asking for changes)</span></span><textarea name="comment" rows="3" maxlength="4000"></textarea></label>
+            <div class="btn-row">
+              <button class="btn sh-btn" name="decision" value="approved" type="submit">Approve</button>
+              <button class="btn btn-quiet sh-btn-quiet" name="decision" value="changes" type="submit">Ask for changes</button>
+            </div>
+          </form>
+        </details>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+  {% endif %}
+  <footer class="sh-foot small muted">Shared privately by {{ brand }} through the MCDP Hub. Please don't forward this link.</footer>
+</main>
+{% endif %}
+</body>
+</html>

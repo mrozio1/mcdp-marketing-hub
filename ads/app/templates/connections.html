@@ -122,6 +122,74 @@
   </details>
 </section>
 
+<section class="panel conn section-gap" id="studio">
+  <h2>Studio storage and sharing <span class="muted small">· SharePoint and email</span></h2>
+  {% if sp_drive and ms_studio %}
+    <p class="state state-good">Files go to SharePoint</p>
+    <p>New Studio files are saved in <strong>{{ sp_name or sp_site }}</strong>, in the <strong>{{ sp_root }}</strong> folder (one folder per brand, then campaign).
+      Share links are emailed from <strong>{{ ms.mailbox or ms_user.email }}</strong>.</p>
+    {% if studio_counts.local %}<p class="small">{{ studio_counts.local }} file{{ '' if studio_counts.local == 1 else 's' }} still on the NAS, moving across in the background.{% if sp_status.error %} Last problem: {{ sp_status.error }}{% endif %}</p>{% endif %}
+    <div class="conn-actions">
+      {% if studio_counts.local %}<form method="post" action="/connections/studio-sharepoint/push"><button class="btn btn-quiet" type="submit">Move them now</button></form>{% endif %}
+      {% if sp_site %}<a class="btn btn-quiet" href="{{ sp_site }}" target="_blank" rel="noopener">Open the site</a>{% endif %}
+      <form method="post" action="/connections/studio-sharepoint/disconnect" data-confirm="Unlink the SharePoint site? New files stay on the NAS until you link one again."><button class="linklike danger" type="submit">Unlink the site</button></form>
+    </div>
+  {% else %}
+    <p class="state">Files are on the NAS</p>
+    <p class="small">Until a SharePoint site is linked, Studio files are kept on the NAS. Once it is, they move across on their own and the hub keeps showing and playing them the same way.</p>
+  {% endif %}
+  <details class="drawer drawer-inline" {% if not (sp_drive and ms_studio) %}open{% endif %}>
+    <summary><span class="drawer-title">{{ 'Change the site' if sp_drive else 'Set it up' }}</span></summary>
+    <div class="drawer-body">
+      <p><strong>1. Permissions.</strong>
+        {% if ms_studio %}<span class="state state-good">On</span> The Microsoft 365 sign-in includes SharePoint files and sending email.
+        {% elif ms_on %}In Entra → App registrations → the hub's app → API permissions, add these (Microsoft Graph, delegated):
+          <code>Files.ReadWrite.All</code>, <code>Sites.ReadWrite.All</code>, <code>Mail.Send</code>, <code>Mail.Send.Shared</code>, then click <strong>Grant admin consent</strong>. Then:
+          <a class="btn btn-small" href="/microsoft/connect?studio=1">Turn on SharePoint and email</a>
+          <span class="small muted">(signs in to Microsoft again; the calendar keeps working the whole time)</span>
+        {% else %}Connect Microsoft 365 above first.{% endif %}</p>
+      <form method="post" action="/connections/studio-sharepoint" class="stack" data-busy="Linking…">
+        <p><strong>2. The site.</strong> Make (or pick) a SharePoint site for marketing files, open it, and paste its address.</p>
+        <label>SharePoint site address<input name="site" value="{{ sp_site }}" placeholder="https://mcdentalpartners.sharepoint.com/sites/Marketing" autocomplete="off" spellcheck="false" required {% if not ms_studio %}disabled{% endif %}></label>
+        <label>Folder for Studio files <span class="muted small">(in the site's Documents)</span><input name="root" value="{{ sp_root }}" placeholder="MCDP Studio" autocomplete="off" {% if not ms_studio %}disabled{% endif %}></label>
+        <button class="btn {{ 'btn-quiet' if sp_drive else '' }}" type="submit" {% if not ms_studio %}disabled{% endif %}>Link the site</button>
+      </form>
+      <p class="small muted">People outside never get SharePoint access: share links open a page in the hub that streams the file. Staff with access to the site can also open the files in SharePoint directly.</p>
+    </div>
+  </details>
+</section>
+
+<section class="panel conn section-gap" id="canva">
+  <h2>Canva <span class="muted small">· import designs into the Studio</span></h2>
+  {% if canva_on %}
+    <p class="state state-good">Connected</p>
+    <p>Signed in{% if canva_user.name %} as {{ canva_user.name }}{% endif %}. The import reads every design this person can see in Canva; start it from the Studio.</p>
+    <div class="conn-actions">
+      <a class="btn btn-quiet" href="/studio">Open the Studio</a>
+      <a class="btn btn-quiet" href="/canva/connect">Sign in again</a>
+      <form method="post" action="/canva/disconnect" data-confirm="Disconnect Canva? Designs already imported stay in the Studio."><button class="linklike danger" type="submit">Disconnect</button></form>
+    </div>
+  {% else %}
+    <p class="state">Not connected</p>
+  {% endif %}
+  <details class="drawer drawer-inline" {% if not canva_on %}open{% endif %}>
+    <summary><span class="drawer-title">{{ 'Change the connection' if canva_cfg.client_id else 'Connect Canva' }}</span></summary>
+    <div class="drawer-body">
+      <form method="post" action="/connections/canva" class="stack">
+        <label>Client ID<input name="client_id" value="{{ canva_cfg.client_id }}" autocomplete="off" spellcheck="false" required></label>
+        <label>Client secret {% if canva_cfg.secret %}<span class="muted small">(saved; paste a new one only to replace it)</span>{% endif %}<input name="client_secret" type="password" autocomplete="off" {% if not canva_cfg.secret %}required{% endif %}></label>
+        <button class="btn {{ 'btn-quiet' if canva_cfg.client_id else '' }}" type="submit">Save</button>
+      </form>
+      {% if canva_cfg.client_id and canva_cfg.secret %}<p><a class="btn" href="/canva/connect">Sign in with Canva</a></p>{% endif %}
+      <details class="how">
+        <summary>Where do I get this?</summary>
+        <p>Sign in to Canva with the account that owns the team's designs, open <strong>canva.com/developers</strong> → <strong>Your integrations</strong> → <strong>Create an integration</strong>. Under <strong>Scopes</strong>, tick <code>design:meta</code> (read), <code>design:content</code> (read) and <code>profile</code> (read). Under <strong>Authentication</strong>, add the redirect URL <code class="break-all">{{ canva_redirect }}</code>. Generate a client secret and paste both here.</p>
+        <p>Canva only lets a private integration be used by your own team on Canva Enterprise; on other plans, use it as the person who created it, or submit it for Canva's review.</p>
+      </details>
+    </div>
+  </details>
+</section>
+
 <section class="panel conn section-gap" id="salesforce">
   <h2>Salesforce <span class="muted small">· field visits</span></h2>
   {% if sf_on %}

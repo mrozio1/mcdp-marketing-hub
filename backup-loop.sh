@@ -28,7 +28,23 @@ backup() {
     echo "$(date) ERROR: media backup failed"; ok=1
   fi
   if [ -f /ads-data/ads.db ]; then
-    tar czf "$OUT/ads-$stamp.tgz" -C /ads-data . || { echo "$(date) ERROR: ads backup failed"; ok=1; }
+    # Studio files (designs, photos, videos) are big and never change once saved, so they're kept as one
+    # mirror instead of in each day's archive. Once SharePoint is linked they live there instead.
+    tar czf "$OUT/ads-$stamp.tgz" --exclude=./studio/files --exclude=./studio/tmp -C /ads-data . \
+      || { echo "$(date) ERROR: ads backup failed"; ok=1; }
+    if [ -d /ads-data/studio/files ]; then
+      mkdir -p "$OUT/studio-files"
+      for f in /ads-data/studio/files/*; do
+        [ -f "$f" ] || continue
+        [ -f "$OUT/studio-files/${f##*/}" ] || cp "$f" "$OUT/studio-files/" || ok=1
+      done
+      for f in "$OUT"/studio-files/*; do      # gone from the hub (deleted, or moved to SharePoint): drop the copy
+        [ -f "$f" ] || continue
+        if [ ! -f "/ads-data/studio/files/${f##*/}" ]; then
+          find "$f" -mtime +7 -exec rm -f {} \; 2>/dev/null || true
+        fi
+      done
+    fi
   fi
   prune
   [ "$ok" = 0 ] && echo "$(date) Backup written: db-$stamp.sql.gz, uploads-$stamp.tgz"

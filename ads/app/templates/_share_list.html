@@ -1,0 +1,43 @@
+{# Existing share links. Needs: shares, base, new_share (id of one just made), mail_on. #}
+<ul class="st-shares">
+  {% for sh in shares %}
+  <li class="{{ 'st-share-new' if new_share == sh.id }} {{ '' if sh.live else 'st-share-off' }}">
+    <div class="st-share-top">
+      <strong>{{ sh.title }}</strong>
+      <span class="st-status {{ 'st-s-approved' if sh.live else 'st-s-off' }}">{{ 'Live' if sh.live else ('Expired' if sh.expired else 'Turned off') }}</span>
+      {% if sh.pw_hash %}<span class="tag">Password</span>{% endif %}
+      {% if not sh.allow_download %}<span class="tag">No downloads</span>{% endif %}
+    </div>
+    {% if sh.live %}
+    <div class="st-copy">
+      <input readonly value="{{ base }}/s/{{ sh.token }}" aria-label="Share link" onclick="this.select()">
+      <button type="button" class="btn btn-small" data-copy="{{ base }}/s/{{ sh.token }}">Copy link</button>
+      <a class="small" href="/s/{{ sh.token }}" target="_blank" rel="noopener">Open</a>
+    </div>
+    {% endif %}
+    <p class="small muted">Made by {{ sh.created_by or 'someone' }} {{ sh.created_at[:10] }}{% if sh.expires_at %} · {{ 'ended' if sh.expired else 'works until' }} {{ sh.expires_at[:10] }}{% endif %}
+      · {{ sh.views }} view{{ '' if sh.views == 1 else 's' }}{% if sh.last_view %} (last {{ sh.last_view[:16]|replace('T', ' ') }}){% endif %}
+      · {{ sh.downloads }} download{{ '' if sh.downloads == 1 else 's' }}{% if sh.sents %} · emailed {{ sh.sents }}×{% endif %}
+      {% if sh.approveds %} · <strong>{{ sh.approveds }} approved</strong>{% endif %}{% if sh.changess %} · <strong>{{ sh.changess }} asked for changes</strong>{% endif %}</p>
+    {% if sh.live and can_edit %}
+    <div class="btn-row">
+      {% if mail_on %}
+      <details class="st-resend"><summary class="linklike">Email it to someone</summary>
+        <form method="post" action="/studio/shares/{{ sh.id }}/send" class="st-inline-form" data-busy="Sending…">
+          <label><span class="vh">To</span><input name="to" placeholder="name@practice.com" required></label>
+          <label><span class="vh">Note</span><input name="note" placeholder="A note (optional)"></label>
+          <button class="btn btn-small" type="submit">Send</button>
+        </form></details>
+      {% endif %}
+      <form method="post" action="/studio/shares/{{ sh.id }}/revoke" data-confirm="Turn this link off? Anyone who has it will see that it's no longer available."><button class="linklike danger" type="submit">Turn off</button></form>
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+<script>
+document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(b.dataset.copy); } catch (e) { b.previousElementSibling.select(); document.execCommand("copy"); }
+  const t = b.textContent; b.textContent = "Copied"; setTimeout(() => { b.textContent = t; }, 1500);
+}));
+</script>

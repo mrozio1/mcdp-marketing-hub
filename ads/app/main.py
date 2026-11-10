@@ -7,6 +7,7 @@ import html
 import os
 import re
 import sqlite3
+import time
 import urllib.parse
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -19,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -36,13 +37,13 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # ---------- who may do what ----------
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
-PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/")
+PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
 CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and changing events: editors, or field visits on
-ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|team)(/|$)"), re.compile(r"^/map/setup$"),
+ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|canva|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/p/\d+/delete$"))
 
 
@@ -167,7 +168,9 @@ def _startup():
     visibility.init()
     brand.init()
     images.init()
+    studio.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
+        studio.start_scheduler()
         sync.start_scheduler()
         reviews.start_scheduler()
         visibility.start_scheduler()
@@ -1919,7 +1922,11 @@ def connections(request: Request):
                 window=sync.sync_window(), sf_client=all(salesforce.client()), sf_on=salesforce.connected(),
                 sf_user=salesforce.user(), sf_status=salesforce.status(), sf_redirect=_sf_redirect(request),
                 sf_login=salesforce.login_url(), sf_waiting=len(salesforce.pending_ids(10000)) if salesforce.connected() else 0,
-                ms=microsoft.settings(), ms_on=microsoft.connected(), ms_user=microsoft.user(), ms_redirect=_ms_redirect(request))
+                ms=microsoft.settings(), ms_on=microsoft.connected(), ms_user=microsoft.user(), ms_redirect=_ms_redirect(request),
+                ms_studio=microsoft.studio_on(), sp_site=studio.sp_site(), sp_name=db.get_setting("studio_sp_site_name") or "",
+                sp_root=studio.sp_root(), sp_drive=bool(studio.sp_drive()), sp_status=studio.sp_status(),
+                studio_counts=studio.counts(), canva_cfg=canva.settings(), canva_on=canva.connected(),
+                canva_user=canva.user(), canva_redirect=_canva_redirect(request))
 
 
 @app.post("/connections/refresh")
@@ -3563,8 +3570,10 @@ def microsoft_connect(request: Request):
         return RedirectResponse("/connections#microsoft", status_code=303)
     state = os.urandom(16).hex()
     verifier, challenge = microsoft.pkce_pair()
+    studio_scopes = request.query_params.get("studio") == "1" or microsoft.studio_on()
     request.session["ms_state"], request.session["ms_verifier"] = state, verifier
-    return RedirectResponse(microsoft.auth_url(_ms_redirect(request), state, challenge), status_code=303)
+    request.session["ms_studio"] = studio_scopes
+    return RedirectResponse(microsoft.auth_url(_ms_redirect(request), state, challenge, studio_scopes), status_code=303)
 
 
 @app.get("/microsoft/callback")
@@ -3572,22 +3581,30 @@ async def microsoft_callback(request: Request, code: str = "", state: str = "", 
     if (r := guard(request)):
         return r
     expected, verifier = request.session.pop("ms_state", None), request.session.pop("ms_verifier", None)
+    studio_scopes = bool(request.session.pop("ms_studio", False))
     if error:
         flash(request, f"Microsoft sign-in didn't finish: {microsoft._explain_signin(error_description or error)}", "error")
     elif not expected or not hmac.compare_digest(state, expected):
         flash(request, "That Microsoft sign-in link expired. Try again.", "error")
     else:
         try:
-            who = await asyncio.to_thread(microsoft.exchange_code, code, _ms_redirect(request), verifier)
+            who = await asyncio.to_thread(microsoft.exchange_code, code, _ms_redirect(request), verifier, studio_scopes)
             problem = await asyncio.to_thread(microsoft.check_mailbox)
             name = who.get("displayName") or who.get("mail") or "you"
             if problem:
                 flash(request, f"Signed in as {name}, but the send-from calendar isn't reachable yet: {problem}", "error")
+            elif studio_scopes and not microsoft.studio_on():
+                flash(request, f"Signed in as {name}, but Microsoft didn't grant the SharePoint and email permissions. In Entra → "
+                               "App registrations → the hub's app → API permissions, add Files.ReadWrite.All, Sites.ReadWrite.All, "
+                               "Mail.Send and Mail.Send.Shared (Microsoft Graph, delegated), click “Grant admin consent”, then "
+                               "turn them on again here.", "error")
             else:
-                flash(request, f"Microsoft 365 connected as {name}. Invites will come from {microsoft.mailbox() or who.get('mail')}.")
+                flash(request, f"Microsoft 365 connected as {name}. Invites will come from {microsoft.mailbox() or who.get('mail')}."
+                      + (" SharePoint and email for the Studio are on." if microsoft.studio_on() else ""))
+                studio.kick_push()
         except microsoft.MSError as e:
             flash(request, f"Microsoft sign-in failed: {e}", "error")
-    return RedirectResponse("/connections#microsoft", status_code=303)
+    return RedirectResponse("/connections#" + ("studio" if studio_scopes else "microsoft"), status_code=303)
 
 
 @app.post("/microsoft/check")
@@ -3607,3 +3624,713 @@ def microsoft_disconnect(request: Request):
     microsoft.disconnect()
     flash(request, "Microsoft 365 disconnected. Events already sent stay in Outlook; new ones are saved in the hub only.")
     return RedirectResponse("/connections#microsoft", status_code=303)
+
+
+# ---------- Studio: designs, photos and videos by brand ----------
+STUDIO_FMTS = {"pptx", "mp4", "pdf", "png"}
+
+
+def _brand_in(v):
+    """Form value → brand id (0 = MCDP); None if it isn't one."""
+    try:
+        pid = int(v)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid == studio.MCDP or db.practice(pid) else None
+
+
+def _studio_back(request, fallback="/studio"):
+    back = request.headers.get("referer") or ""
+    return back if back.startswith(str(request.base_url)) else fallback
+
+
+def _brand_look(pid):
+    """Colours and logo for a brand's share page."""
+    if pid in (None, studio.MCDP):
+        return {"primary": field_report.DEFAULT_PRIMARY, "accent": field_report.DEFAULT_ACCENT, "logo": False}
+    p, a = field_report.colors(pid)
+    return {"primary": p, "accent": a, "logo": bool(images.logo(pid))}
+
+
+@app.get("/studio", response_class=HTMLResponse)
+def studio_page(request: Request, b: str = "", f: str = "", s: str = "", q: str = ""):
+    if (r := guard(request)):
+        return r
+    plist = db.practices()
+    view, pid, fid = "brand", None, None
+    if b in ("none", "trash", "feedback", "all"):
+        view = b
+    else:
+        pid = _brand_in(b)
+        if pid is None:
+            pid = request.session.get("studio_brand")
+            pid = pid if pid is not None and _brand_in(pid) is not None else studio.MCDP
+        request.session["studio_brand"] = pid
+    try:
+        fid = int(f) if f and f != "none" else ("none" if f == "none" else None)
+    except ValueError:
+        fid = None
+    fold = studio.folder(fid) if isinstance(fid, int) else None
+    if fold and fold["practice_id"] != pid:
+        fold, fid = None, None
+    status = s if s in studio.STATUS_LABEL else ""
+    if view == "brand":
+        got = studio.items(pid, fid, status or None, q)
+        counts = studio.status_counts(pid, fid, q)
+    elif view == "all":
+        got = studio.items(None, None, status or None, q, all_brands=True)
+        counts = studio.status_counts(None, None, q, all_brands=True)
+    elif view == "none":
+        got, counts = studio.items(unbranded=True, q=q), None
+    elif view == "trash":
+        got, counts = studio.items(trash=True, q=q), None
+    else:
+        got, counts = [], None
+    names = {p["id"]: p["name"] for p in plist}
+    names[studio.MCDP] = "MCDP"
+    assets = []
+    if view == "brand" and pid and not fid and not q and not status:
+        assets = images.assets(pid)
+    look = _brand_look(pid) if view == "brand" else None
+    return page(request, "studio.html", view=view, pid=pid, fid=fid, folder=fold, status=status, q=q, items=got,
+                counts=counts, brands=studio.brands(plist), folders=studio.folders(pid) if view == "brand" else [],
+                statuses=studio.STATUSES, names=names, totals=studio.counts(), assets=assets, look=look,
+                brand_name=studio.brand_name(pid) if view == "brand" else "",
+                feedback=studio.outside_feedback() if view == "feedback" else [],
+                canva_on=canva.connected(), canva_status=canva.status(), canva_running=canva.running(),
+                sp_ready=studio.sp_ready(), chunk=8 * 1024 * 1024, max_file=studio.MAX_FILE,
+                folder_shares=studio.shares_for(folder_id=fold["id"]) if fold else [],
+                new_share=request.session.pop("studio_folder_share", None), mail_on=microsoft.studio_on(),
+                base=PUBLIC_URL or str(request.base_url).rstrip("/"),
+                all_folders={p: studio.folders(p) for p in ([studio.MCDP] + [x["id"] for x in plist])} if view in ("none", "all") else {})
+
+
+@app.post("/studio/folders")
+def studio_folder_add(request: Request, pid: str = Form(...), name: str = Form("")):
+    if (r := guard(request)):
+        return r
+    b = _brand_in(pid)
+    if b is None:
+        flash(request, "Pick a brand first.", "error")
+        return RedirectResponse("/studio", status_code=303)
+    try:
+        fid = studio.add_folder(b, name, actor(request))
+    except studio.StudioError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/studio?b={b}", status_code=303)
+    return RedirectResponse(f"/studio?b={b}&f={fid}", status_code=303)
+
+
+@app.post("/studio/folders/{fid}/rename")
+def studio_folder_rename(request: Request, fid: int, name: str = Form("")):
+    if (r := guard(request)):
+        return r
+    f = studio.folder(fid)
+    try:
+        studio.rename_folder(fid, name)
+    except studio.StudioError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/studio?b={f['practice_id'] if f else ''}&f={fid}", status_code=303)
+
+
+@app.post("/studio/folders/{fid}/delete")
+def studio_folder_delete(request: Request, fid: int):
+    if (r := guard(request)):
+        return r
+    f = studio.folder(fid)
+    studio.delete_folder(fid)
+    flash(request, "Folder removed. Its files are still in the brand, under All files.")
+    return RedirectResponse(f"/studio?b={f['practice_id'] if f else ''}", status_code=303)
+
+
+@app.post("/studio/upload/start")
+async def studio_upload_start(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    try:
+        j = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "Bad request."}, status_code=400)
+    pid = _brand_in(j.get("pid"))
+    fid = j.get("folder")
+    fid = int(fid) if isinstance(fid, (int, str)) and str(fid).isdigit() else None
+    try:
+        uid = studio.start_upload(j.get("name"), j.get("size"), j.get("mime"), pid if pid is not None else -1, fid,
+                                  actor(request))
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"id": uid}
+
+
+@app.post("/studio/upload/{uid}/chunk")
+async def studio_upload_chunk(request: Request, uid: str, offset: int = 0):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    data = await request.body()
+    if len(data) > studio.CHUNK_MAX:
+        return JSONResponse({"error": "Piece too large."}, status_code=413)
+    try:
+        have = await asyncio.to_thread(studio.put_chunk, uid, offset, data, actor(request))
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"have": have}
+
+
+@app.post("/studio/upload/{uid}/done")
+async def studio_upload_done(request: Request, uid: str):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    form = await request.form()
+
+    def num(k):
+        try:
+            v = float(form.get(k) or "")
+            return v if v > 0 else None
+        except ValueError:
+            return None
+    thumb = form.get("thumb")
+    tb = await thumb.read(5 * 1024 * 1024) if getattr(thumb, "filename", None) is not None and hasattr(thumb, "read") else None
+    try:
+        iid = await asyncio.to_thread(studio.finish_upload, uid, actor(request),
+                                      int(num("width") or 0) or None, int(num("height") or 0) or None, num("duration"), tb)
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    it = studio.item(iid)
+    return {"id": iid, "title": it["title"], "kind": it["kind"]}
+
+
+@app.post("/studio/bulk")
+async def studio_bulk(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("ids") if str(x).isdigit()][:500]
+    action = form.get("action") or ""
+    by = actor(request)
+    n, errs = 0, []
+    for iid in ids:
+        try:
+            if action == "trash":
+                studio.trash(iid, by)
+            elif action == "restore":
+                studio.restore(iid, by)
+            elif action in studio.STATUS_LABEL:
+                studio.update(iid, by, status=action)
+            elif action == "brand":
+                b = _brand_in(form.get("pid"))
+                if b is None:
+                    raise studio.StudioError("Pick a brand.")
+                fid = form.get("folder")
+                kw = {"practice_id": b}
+                if fid and str(fid).isdigit():
+                    kw["folder_id"] = int(fid)
+                studio.update(iid, by, **kw)
+            elif action == "folder":
+                it = studio.item(iid)
+                fid = form.get("folder")
+                studio.update(iid, by, folder_id=int(fid) if fid and str(fid).isdigit() else None,
+                              practice_id=it["practice_id"])
+            else:
+                raise studio.StudioError("Pick what to do.")
+            n += 1
+        except studio.StudioError as e:
+            errs.append(str(e))
+    if n:
+        flash(request, f"Done for {n} file{'s' if n != 1 else ''}." + (f" {errs[0]}" if errs else ""))
+    else:
+        flash(request, errs[0] if errs else "Tick the files first.", "error")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+@app.get("/studio/i/{iid}", response_class=HTMLResponse)
+def studio_item_page(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    it = studio.item(iid)
+    if not it:
+        flash(request, "That file is gone.", "error")
+        return RedirectResponse("/studio", status_code=303)
+    plist = db.practices()
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    shares = studio.shares_for(item_id=iid)
+    new_share = request.session.pop("studio_new_share", None)
+    return page(request, "studio_item.html", it=it, brand_name=studio.brand_name(it["practice_id"]),
+                folder=studio.folder(it["folder_id"]), brands=studio.brands(plist, counts=False),
+                folders=studio.folders(it["practice_id"]) if it["practice_id"] is not None else [],
+                all_folders={p: studio.folders(p) for p in ([studio.MCDP] + [x["id"] for x in plist])},
+                statuses=studio.STATUSES, shares=shares, base=base, new_share=new_share,
+                events=studio.events(iid), mail_on=microsoft.studio_on(), canva_on=canva.connected(),
+                share_fmts=STUDIO_FMTS)
+
+
+@app.post("/studio/i/{iid}")
+async def studio_item_save(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    fields = {}
+    for k in ("title", "notes", "status"):
+        if k in form:
+            fields[k] = form.get(k)
+    if "brand" in form:
+        b = _brand_in(form.get("brand"))
+        if b is None:
+            flash(request, "Pick a brand.", "error")
+            return RedirectResponse(f"/studio/i/{iid}", status_code=303)
+        fields["practice_id"] = b
+    if "folder" in form:
+        fv = form.get("folder")
+        fields["folder_id"] = int(fv) if fv and str(fv).isdigit() else None
+    try:
+        studio.update(iid, actor(request), **fields)
+        flash(request, "Saved.")
+    except studio.StudioError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/studio/i/{iid}", status_code=303)
+
+
+@app.post("/studio/i/{iid}/trash")
+def studio_item_trash(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    it = studio.item(iid)
+    studio.trash(iid, actor(request))
+    flash(request, f"Moved to the trash. It's emptied after {studio.TRASH_DAYS} days.")
+    return RedirectResponse(f"/studio?b={it['practice_id'] if it and it['practice_id'] is not None else 'none'}", status_code=303)
+
+
+@app.post("/studio/i/{iid}/restore")
+def studio_item_restore(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    studio.restore(iid, actor(request))
+    flash(request, "Restored.")
+    return RedirectResponse(f"/studio/i/{iid}", status_code=303)
+
+
+@app.post("/studio/i/{iid}/delete")
+def studio_item_delete(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    it = studio.item(iid)
+    if it and not it["trashed_at"]:
+        flash(request, "Move it to the trash first.", "error")
+        return RedirectResponse(f"/studio/i/{iid}", status_code=303)
+    studio.delete_forever(iid)
+    flash(request, "Deleted for good.")
+    return RedirectResponse("/studio?b=trash", status_code=303)
+
+
+@app.post("/studio/i/{iid}/thumb")
+async def studio_item_thumb(request: Request, iid: int, thumb: UploadFile = File(...)):
+    """The browser grabs a frame from a video that has no picture yet."""
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    data = await thumb.read(5 * 1024 * 1024)
+    await asyncio.to_thread(studio.set_thumb, iid, data)
+    return {"ok": True}
+
+
+@app.get("/studio/f/{iid}")
+async def studio_file(request: Request, iid: int, dl: int = 0):
+    if not authed(request):
+        return Response(status_code=401)
+    return await _send_studio_file(studio.item(iid), dl)
+
+
+async def _send_studio_file(it, dl):
+    from fastapi.responses import FileResponse
+    if not it:
+        return Response(status_code=404)
+    p = studio.local_path(it)
+    if p:
+        return FileResponse(p, media_type=it["mime"] or None, filename=studio.download_name(it) if dl else None,
+                            content_disposition_type="attachment" if dl else "inline",
+                            headers={"Cache-Control": "private, max-age=3600"})
+    if it.get("sp_item"):
+        try:
+            url = await asyncio.to_thread(studio.download_url, it)
+        except Exception:
+            url = None
+        if url:
+            return RedirectResponse(url, status_code=302)
+    return Response("That file isn't reachable right now (SharePoint didn't answer). Try again in a minute.",
+                    status_code=503)
+
+
+def _thumb_response(it):
+    from fastapi.responses import FileResponse
+    if it and it.get("has_thumb") and os.path.exists(studio.thumb_path(it["id"])):
+        return FileResponse(studio.thumb_path(it["id"]), media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=600"})
+    kind = (it or {}).get("kind", "file")
+    label = {"video": "VIDEO", "pdf": "PDF", "slides": "SLIDES", "doc": "DOC", "audio": "AUDIO", "image": "IMAGE"}.get(kind, "FILE")
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">'
+           f'<rect width="320" height="240" fill="#EEEBE5"/><text x="160" y="128" text-anchor="middle" '
+           f'font-family="Public Sans, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="3" fill="#8A857C">{label}</text></svg>')
+    return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "private, max-age=60"})
+
+
+@app.get("/studio/t/{iid}")
+def studio_thumb(request: Request, iid: int):
+    if not authed(request):
+        return Response(status_code=401)
+    return _thumb_response(studio.item(iid))
+
+
+# ---- sharing
+def _share_form(form):
+    def on(k):
+        return form.get(k) in ("1", "on", "true")
+    try:
+        days = int(form.get("days") or 30)
+    except ValueError:
+        days = 30
+    return dict(title=(form.get("title") or "").strip(), message=(form.get("message") or "").strip(),
+                password=form.get("password") or "", days=days, allow_download=on("allow_download"),
+                allow_review=on("allow_review"))
+
+
+async def _send_share(request, s, to_raw, note):
+    to = [a.strip() for a in re.split(r"[,;\s]+", to_raw or "") if a.strip()]
+    bad = [a for a in to if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", a)]
+    if bad:
+        raise studio.StudioError(f"That isn't an email address: {bad[0]}")
+    if not to:
+        return 0
+    if len(to) > 25:
+        raise studio.StudioError("Send to 25 people or fewer at a time.")
+    if not microsoft.studio_on():
+        raise studio.StudioError("Sending by email needs SharePoint and email turned on for Microsoft 365 (Connections). "
+                                 "Copy the link instead for now.")
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    link = f"{base}/s/{s['token']}"
+    look = _brand_look(s["practice_id"])
+    u = me(request) or {}
+    body = studio.share_email_html(s, link, note, u.get("name") or "The MCDP marketing team", look,
+                                   studio.brand_name(s["practice_id"]) if s["practice_id"] is not None else "MCDP")
+    await asyncio.to_thread(microsoft.send_mail, to, f"{s['title']} · shared with you", body, u.get("email") or None)
+    studio.log_share(s, "sent", s["item_id"], u.get("name") or "", ", ".join(to), note)
+    return len(to)
+
+
+async def _make_share(request, item_id=None, folder_id=None):
+    form = await request.form()
+    u = me(request) or {}
+    try:
+        s = studio.create_share(actor(request), u.get("email") or "", item_id=item_id, folder_id=folder_id, **_share_form(form))
+    except studio.StudioError as e:
+        flash(request, str(e), "error")
+        return None
+    request.session["studio_new_share"] = s["id"]
+    try:
+        n = await _send_share(request, s, form.get("to"), form.get("note") or s["message"])
+        flash(request, f"Link made and emailed to {n} {'person' if n == 1 else 'people'}." if n else
+              "Link made. Copy it below and send it however you like.")
+    except (studio.StudioError, microsoft.MSError) as e:
+        flash(request, f"Link made, but the email didn't go: {e}", "error")
+    return s
+
+
+@app.post("/studio/i/{iid}/share")
+async def studio_item_share(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    await _make_share(request, item_id=iid)
+    return RedirectResponse(f"/studio/i/{iid}#share", status_code=303)
+
+
+@app.post("/studio/folders/{fid}/share")
+async def studio_folder_share(request: Request, fid: int):
+    if (r := guard(request)):
+        return r
+    f = studio.folder(fid)
+    s = await _make_share(request, folder_id=fid)
+    if s:
+        request.session["studio_folder_share"] = s["id"]
+    return RedirectResponse(f"/studio?b={f['practice_id'] if f else ''}&f={fid}#share", status_code=303)
+
+
+@app.post("/studio/shares/{sid}/revoke")
+def studio_share_revoke(request: Request, sid: int):
+    if (r := guard(request)):
+        return r
+    studio.revoke_share(sid, actor(request))
+    flash(request, "Link turned off. Anyone opening it now sees that it's no longer available.")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+@app.post("/studio/shares/{sid}/send")
+async def studio_share_send(request: Request, sid: int, to: str = Form(""), note: str = Form("")):
+    if (r := guard(request)):
+        return r
+    s = studio.share(sid)
+    if not s or not s["live"]:
+        flash(request, "That link is off or expired. Make a new one.", "error")
+    else:
+        try:
+            n = await _send_share(request, s, to, note)
+            flash(request, f"Emailed to {n} {'person' if n == 1 else 'people'}." if n else "Add an email address.",
+                  "ok" if n else "error")
+        except (studio.StudioError, microsoft.MSError) as e:
+            flash(request, str(e), "error")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+# ---- Canva
+def _canva_redirect(request: Request):
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    return base + "/canva/callback"
+
+
+@app.post("/studio/canva/import")
+def studio_canva_import(request: Request):
+    if (r := guard(request)):
+        return r
+    if not canva.connected():
+        flash(request, "Canva isn't connected yet. An admin signs in on the Connections page.", "error")
+    elif canva.start_import(actor(request)):
+        flash(request, "Importing from Canva. Designs appear here as they come in; you can leave this page.")
+    else:
+        flash(request, "An import is already running.")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+@app.post("/studio/canva/stop")
+def studio_canva_stop(request: Request):
+    if (r := guard(request)):
+        return r
+    canva.stop_import()
+    flash(request, "Stopping after the design it's on. Run it again any time to carry on.")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+@app.get("/studio/canva/status")
+def studio_canva_status(request: Request):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    return {**canva.status(), "running": canva.running(), "unbranded": studio.counts()["unbranded"]}
+
+
+@app.post("/studio/i/{iid}/canva/{fmt}")
+async def studio_canva_more(request: Request, iid: int, fmt: str):
+    if (r := guard(request)):
+        return r
+    if fmt not in STUDIO_FMTS:
+        return RedirectResponse(f"/studio/i/{iid}", status_code=303)
+    try:
+        nid = await asyncio.to_thread(canva.export_more, iid, fmt, actor(request))
+        flash(request, "Added next to the original.")
+        return RedirectResponse(f"/studio/i/{nid}", status_code=303)
+    except (canva.CanvaError, studio.StudioError) as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/studio/i/{iid}", status_code=303)
+
+
+@app.post("/connections/canva")
+def connections_canva(request: Request, client_id: str = Form(""), client_secret: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if not client_id.strip():
+        flash(request, "Paste the client ID.", "error")
+    else:
+        canva.save(client_id, client_secret)
+        flash(request, "Saved. Now sign in with Canva.")
+    return RedirectResponse("/connections#canva", status_code=303)
+
+
+@app.get("/canva/connect")
+def canva_connect(request: Request):
+    if (r := guard(request)):
+        return r
+    if not canva.configured():
+        flash(request, "Save the Canva client ID and secret first.", "error")
+        return RedirectResponse("/connections#canva", status_code=303)
+    state = os.urandom(16).hex()
+    verifier, challenge = canva.pkce_pair()
+    request.session["canva_state"], request.session["canva_verifier"] = state, verifier
+    return RedirectResponse(canva.auth_url(_canva_redirect(request), state, challenge), status_code=303)
+
+
+@app.get("/canva/callback")
+async def canva_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    if (r := guard(request)):
+        return r
+    expected, verifier = request.session.pop("canva_state", None), request.session.pop("canva_verifier", None)
+    if error:
+        flash(request, f"Canva sign-in didn't finish: {error_description or error}", "error")
+    elif not expected or not hmac.compare_digest(state, expected):
+        flash(request, "That Canva sign-in link expired. Try again.", "error")
+    else:
+        try:
+            name = await asyncio.to_thread(canva.exchange_code, code, _canva_redirect(request), verifier)
+            flash(request, f"Canva connected{' as ' + name if name else ''}. Start the import from the Studio.")
+        except canva.CanvaError as e:
+            flash(request, f"Canva sign-in failed: {e}", "error")
+    return RedirectResponse("/connections#canva", status_code=303)
+
+
+@app.post("/canva/disconnect")
+def canva_disconnect(request: Request):
+    if (r := guard(request)):
+        return r
+    canva.disconnect()
+    flash(request, "Canva disconnected. Designs already imported stay in the Studio.")
+    return RedirectResponse("/connections#canva", status_code=303)
+
+
+# ---- SharePoint for the Studio (admins)
+@app.post("/connections/studio-sharepoint")
+async def connections_studio_sp(request: Request, site: str = Form(""), root: str = Form("")):
+    if (r := guard(request)):
+        return r
+    try:
+        name = await asyncio.to_thread(studio.connect_sharepoint, site, root)
+        n = studio.counts()["local"]
+        flash(request, f"Studio files now go to {name} on SharePoint." +
+              (f" The {n} file{'s' if n != 1 else ''} on the NAS are moving there in the background." if n else ""))
+    except (studio.StudioError, microsoft.MSError) as e:
+        flash(request, f"Couldn't link the site: {e}", "error")
+    return RedirectResponse("/connections#studio", status_code=303)
+
+
+@app.post("/connections/studio-sharepoint/push")
+def connections_studio_push(request: Request):
+    if (r := guard(request)):
+        return r
+    studio.kick_push()
+    flash(request, "Moving NAS files to SharePoint in the background.")
+    return RedirectResponse("/connections#studio", status_code=303)
+
+
+@app.post("/connections/studio-sharepoint/disconnect")
+def connections_studio_sp_off(request: Request):
+    if (r := guard(request)):
+        return r
+    studio.disconnect_sharepoint()
+    flash(request, "Unlinked. New Studio files stay on the NAS; files already on SharePoint stay there and won't open "
+                   "in the hub until a site is linked again.")
+    return RedirectResponse("/connections#studio", status_code=303)
+
+
+# ---- public share pages: /s/<token> (no sign-in)
+def _share_open(request, s):
+    return not s["pw_hash"] or request.session.get(f"sh{s['id']}") is True
+
+
+def _share_gone(request, why):
+    return templates.TemplateResponse(request, "share.html", {"gone": why, "s": None, "static_v": STATIC_V},
+                                      status_code=404 if why == "missing" else 410)
+
+
+@app.get("/s/{token}", response_class=HTMLResponse)
+def share_page(request: Request, token: str, error: str = ""):
+    s = studio.share_by_token(token)
+    if not s:
+        return _share_gone(request, "missing")
+    if not s["live"]:
+        return _share_gone(request, "expired" if s["expired"] else "revoked")
+    look = _brand_look(s["practice_id"])
+    brand = studio.brand_name(s["practice_id"]) if s["practice_id"] is not None else "MCDP"
+    ctx = {"s": s, "look": look, "brand": brand, "static_v": STATIC_V, "gone": None,
+           "locked": not _share_open(request, s), "error": error, "done": request.session.pop(f"shd{s['id']}", None)}
+    if not ctx["locked"]:
+        ctx["items"] = studio.share_items(s)
+        seen_key = f"shv{s['id']}"
+        if request.session.get(seen_key, 0) < time.time() - 3600:      # one view per visitor per hour
+            request.session[seen_key] = time.time()
+            studio.log_share(s, "view", s["item_id"])
+        ctx["reviews"] = {e["item_id"]: e for e in reversed(studio.events(share_id=s["id"], kinds=("approved", "changes")))}
+    return templates.TemplateResponse(request, "share.html", ctx)
+
+
+@app.post("/s/{token}/unlock")
+def share_unlock(request: Request, token: str, password: str = Form("")):
+    s = studio.share_by_token(token)
+    if not s or not s["live"]:
+        return RedirectResponse(f"/s/{token}", status_code=303)
+    key = f"shtry{s['id']}"
+    tries = [t for t in request.session.get(key, []) if t > time.time() - 900]
+    if len(tries) >= 8:
+        return RedirectResponse(f"/s/{token}?error=wait", status_code=303)
+    if studio.check_password(s, password):
+        request.session[f"sh{s['id']}"] = True
+        request.session.pop(key, None)
+        return RedirectResponse(f"/s/{token}", status_code=303)
+    request.session[key] = tries + [time.time()]
+    return RedirectResponse(f"/s/{token}?error=password", status_code=303)
+
+
+def _share_item(request, token, iid):
+    s = studio.share_by_token(token)
+    if not s or not s["live"] or not _share_open(request, s) or not studio.share_has(s, iid):
+        return None, None
+    return s, studio.item(iid)
+
+
+@app.get("/s/{token}/f/{iid}")
+async def share_file(request: Request, token: str, iid: int, dl: int = 0):
+    s, it = _share_item(request, token, iid)
+    if not it:
+        return Response(status_code=404)
+    if dl:
+        if not s["allow_download"]:
+            return Response("Downloads are turned off for this link.", status_code=403)
+        studio.log_share(s, "download", iid)
+    return await _send_studio_file(it, dl)
+
+
+@app.get("/s/{token}/t/{iid}")
+def share_thumb(request: Request, token: str, iid: int):
+    s, it = _share_item(request, token, iid)
+    return _thumb_response(it) if it else Response(status_code=404)
+
+
+@app.get("/s/{token}/logo")
+def share_logo(request: Request, token: str):
+    from fastapi.responses import FileResponse
+    s = studio.share_by_token(token)
+    a = images.logo(s["practice_id"]) if s and s["live"] and s["practice_id"] else None
+    p = images.path(a) if a else None
+    if not p:
+        return RedirectResponse("/static/favicon-192.png", status_code=302)
+    return FileResponse(p, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.post("/s/{token}/review")
+def share_review(request: Request, token: str, item_id: int = Form(...), decision: str = Form(""),
+                 name: str = Form(""), email: str = Form(""), comment: str = Form("")):
+    s, it = _share_item(request, token, item_id)
+    if not it:
+        return RedirectResponse(f"/s/{token}", status_code=303)
+    try:
+        studio.review_from_share(s, item_id, decision, name, email, comment)
+        request.session[f"shd{s['id']}"] = {"item": item_id, "decision": decision}
+        request.session["share_name"] = name.strip()[:120]
+        _notify_share_owner(request, s, it, decision, name, comment)
+    except studio.StudioError as e:
+        return RedirectResponse(f"/s/{token}?error=" + urllib.parse.quote(str(e)) + f"#i{item_id}", status_code=303)
+    return RedirectResponse(f"/s/{token}#i{item_id}", status_code=303)
+
+
+def _notify_share_owner(request, s, it, decision, who, comment):
+    """Email whoever made the link, from the marketing mailbox, when someone outside answers."""
+    if not (s.get("created_by_email") and microsoft.studio_on()):
+        return
+    import html as _h
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    verb = "approved" if decision == "approved" else "asked for changes to"
+    body = (f'<div style="font-family:Segoe UI,Arial,sans-serif;font-size:15px;line-height:1.5">'
+            f'<p><strong>{_h.escape(who)}</strong> {verb} <strong>{_h.escape(it["title"])}</strong> '
+            f'({_h.escape(studio.brand_name(it["practice_id"]))}).</p>'
+            + (f'<blockquote style="margin:0 0 14px;padding:8px 12px;border-left:3px solid #0F7471;background:#F4F7F6">'
+               f'{_h.escape(comment)}</blockquote>' if comment.strip() else "")
+            + f'<p><a href="{base}/studio/i/{it["id"]}">Open it in the Studio</a></p></div>')
+
+    def go():
+        try:
+            microsoft.send_mail([s["created_by_email"]], f"{who} {verb} {it['title']}", body)
+        except Exception:
+            pass
+    import threading as _t
+    _t.Thread(target=go, daemon=True).start()
