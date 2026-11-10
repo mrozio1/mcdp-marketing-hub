@@ -977,8 +977,9 @@ def log_share(s, kind, iid=None, who="", email="", comment=""):
     event(iid, kind, who, email, comment, share_id=s["id"])
 
 
-def review_from_share(s, iid, decision, who, email="", comment=""):
-    """Someone outside said yes or asked for changes. A yes approves the file; changes send it back to draft."""
+def review_from_share(s, iid, decision, who, email="", comment="", apply_status=True):
+    """Someone outside said yes or asked for changes. A yes approves the file; changes send it back to draft.
+    apply_status=False: only check and record it (an approval chain decides what happens next)."""
     if not s["allow_review"]:
         raise StudioError("This link doesn't take approvals.")
     if decision not in ("approved", "changes"):
@@ -992,6 +993,8 @@ def review_from_share(s, iid, decision, who, email="", comment=""):
     if not it or not share_has(s, iid):
         raise StudioError("That file isn't on this link any more.")
     log_share(s, decision, iid, who, email, comment.strip())
+    if not apply_status:
+        return it
     new = "approved" if decision == "approved" else "draft"
     if it["status"] in ("draft", "review", "approved") and it["status"] != new:
         with db.conn() as c:

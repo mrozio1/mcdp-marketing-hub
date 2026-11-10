@@ -36,7 +36,7 @@
   {% endfor %}
 </ul>
 <script>
-document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+document.querySelectorAll("[data-copy]:not([data-bound])").forEach(b => (b.dataset.bound = 1, b).addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(b.dataset.copy); } catch (e) { b.previousElementSibling.select(); document.execCommand("copy"); }
   const t = b.textContent; b.textContent = "Copied"; setTimeout(() => { b.textContent = t; }, 1500);
 }));

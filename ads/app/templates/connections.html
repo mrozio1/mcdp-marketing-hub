@@ -122,6 +122,29 @@
   </details>
 </section>
 
+<section class="panel conn section-gap" id="posting">
+  <h2>Posting from the Studio <span class="muted small">· through Social</span></h2>
+  {% if post_key %}
+    <p class="state state-good">Ready</p>
+    <p>The Studio posts and schedules through Social, as each practice's Page, Instagram account and Google profile. {{ "It uses Social's own API key." if post_key == 'social' else 'It uses the API key pasted here.' }}</p>
+  {% else %}
+    <p class="state">Not set up</p>
+    <p class="small">The hub couldn't find Social's API key. In Social, open <strong>Settings → Public API</strong> and copy the key, then paste it here.</p>
+  {% endif %}
+  <details class="drawer drawer-inline" {% if not post_key %}open{% endif %}>
+    <summary><span class="drawer-title">{{ 'Change it' if post_key else 'Set it up' }}</span></summary>
+    <div class="drawer-body">
+      <form method="post" action="/connections/posting" class="stack" data-busy="Checking…">
+        <label><span>Social's API key <span class="muted small">(leave blank to keep using {{ "Social's own" if post_key == 'social' else 'the saved one' }})</span></span><input name="api_key" type="password" autocomplete="off"></label>
+        <label><span>Social's address for the hub <span class="muted small">(normally {{ post_default_url }})</span></span><input name="api_url" value="{{ post_url if post_url != post_default_url else '' }}" placeholder="{{ post_default_url }}" autocomplete="off" spellcheck="false"></label>
+        <button class="btn btn-quiet" type="submit">Save and check</button>
+      </form>
+      {% if post_key == 'pasted' %}<form method="post" action="/connections/posting"><input type="hidden" name="clear" value="1"><button class="linklike danger small" type="submit">Forget the pasted key</button></form>{% endif %}
+      <p class="small muted">Which channels belong to a practice comes from its linked Facebook Pages and Instagram accounts (practice page → Linked accounts); Google profiles and anything else are remembered once picked for a post.</p>
+    </div>
+  </details>
+</section>
+
 <section class="panel conn section-gap" id="studio">
   <h2>Studio storage and sharing <span class="muted small">· SharePoint and email</span></h2>
   {% if sp_drive and ms_studio %}

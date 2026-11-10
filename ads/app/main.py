@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -169,8 +169,10 @@ def _startup():
     brand.init()
     images.init()
     studio.init()
+    studio_flow.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         studio.start_scheduler()
+        studio_flow.start_scheduler()
         sync.start_scheduler()
         reviews.start_scheduler()
         visibility.start_scheduler()
@@ -251,6 +253,10 @@ def page(request, name, **ctx):
     ctx["can_log"] = bool(u) and bool(u.get("field"))
     ctx["show_social"] = bool(u) and bool(u.get("social", 1))
     ctx.setdefault("inbox_open", reviews.open_count() if u else 0)
+    try:
+        ctx.setdefault("studio_waiting", studio_flow.waiting_count(u["id"]) if u else 0)
+    except Exception:
+        ctx["studio_waiting"] = 0
     preview = request.query_params.get("season_preview", "") if ctx["is_admin"] else ""
     try:
         ctx["season"] = seasons.for_page(u, preview) if u else None
@@ -1929,7 +1935,8 @@ def connections(request: Request):
                 ms_studio=microsoft.studio_on(), sp_site=studio.sp_site(), sp_name=db.get_setting("studio_sp_site_name") or "",
                 sp_root=studio.sp_root(), sp_drive=bool(studio.sp_drive()), sp_status=studio.sp_status(),
                 studio_counts=studio.counts(), canva_cfg=canva.settings(), canva_on=canva.connected(),
-                canva_user=canva.user(), canva_redirect=_canva_redirect(request))
+                canva_user=canva.user(), canva_redirect=_canva_redirect(request),
+                post_key=social.key_source(), post_url=social.base_url(), post_default_url=social.DEFAULT_URL)
 
 
 @app.post("/connections/refresh")
@@ -3661,7 +3668,7 @@ def studio_page(request: Request, b: str = "", f: str = "", s: str = "", q: str 
         return r
     plist = db.practices()
     view, pid, fid = "brand", None, None
-    if b in ("none", "trash", "feedback", "all"):
+    if b in ("none", "trash", "feedback", "all", "mine"):
         view = b
     else:
         pid = _brand_in(b)
@@ -3687,6 +3694,8 @@ def studio_page(request: Request, b: str = "", f: str = "", s: str = "", q: str 
         got, counts = studio.items(unbranded=True, q=q), None
     elif view == "trash":
         got, counts = studio.items(trash=True, q=q), None
+    elif view == "mine":
+        got, counts = [studio._row(x) for x in studio_flow.waiting_for((me(request) or {}).get("id"))], None
     else:
         got, counts = [], None
     names = {p["id"]: p["name"] for p in plist}
@@ -3857,7 +3866,33 @@ def studio_item_page(request: Request, iid: int):
     base = PUBLIC_URL or str(request.base_url).rstrip("/")
     shares = studio.shares_for(item_id=iid)
     new_share = request.session.pop("studio_new_share", None)
+    u = me(request) or {}
+    chain = studio_flow.chain(iid)
+    my_step = next((st for st in chain if st["status"] == "pending" and st["kind"] == "person"
+                    and (st["user_id"] == u.get("id"))), None)
+    chans, brand_chans, social_error = [], [], ""
+    if it["kind"] in ("image", "design", "video") and not it["trashed_at"]:
+        try:
+            chans = social.integrations()
+            brand_chans = social.for_brand(it["practice_id"], chans)
+        except social.SocialError as e:
+            social_error = str(e)
+    tz = studio_flow.local_tz()
+    from datetime import datetime as _dt, timedelta as _td
+    soon = (_dt.now(tz) + _td(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    posts = studio_flow.posts(iid)
+    for p_ in posts:
+        try:
+            p_["local"] = _dt.fromisoformat(p_["when_utc"].replace("Z", "+00:00")).astimezone(tz).strftime("%a %b %-d, %-I:%M %p")
+        except (ValueError, AttributeError):
+            p_["local"] = ""
     return page(request, "studio_item.html", it=it, brand_name=studio.brand_name(it["practice_id"]),
+                chain=chain, my_step=my_step, open_chain=any(st["status"] in ("pending", "waiting") for st in chain),
+                team=[x for x in users.all_users() if x["active"] and x["pw_hash"]],
+                comments=studio_flow.comments(iid), posts=posts, chans=chans, brand_chans=[c["id"] for c in brand_chans],
+                social_error=social_error, gmb_actions=social.GMB_ACTIONS, soon_day=soon.strftime("%Y-%m-%d"),
+                soon_time=soon.strftime("%H:%M"), tz_name=str(tz), ai_on=ai.available(),
+                share_by_id={sh["id"]: sh for sh in shares},
                 folder=studio.folder(it["folder_id"]), brands=studio.brands(plist, counts=False),
                 folders=studio.folders(it["practice_id"]) if it["practice_id"] is not None else [],
                 all_folders={p: studio.folders(p) for p in ([studio.MCDP] + [x["id"] for x in plist])},
@@ -4307,11 +4342,15 @@ def share_review(request: Request, token: str, item_id: int = Form(...), decisio
     if not it:
         return RedirectResponse(f"/s/{token}", status_code=303)
     try:
-        studio.review_from_share(s, item_id, decision, name, email, comment)
+        st = studio_flow.step_for_share(s["id"], item_id)
+        studio.review_from_share(s, item_id, decision, name, email, comment, apply_status=not st)
         request.session[f"shd{s['id']}"] = {"item": item_id, "decision": decision}
         request.session["share_name"] = name.strip()[:120]
-        _notify_share_owner(request, s, it, decision, name, comment)
-    except studio.StudioError as e:
+        if st:                                   # part of an approval chain: it moves on (and tells people) itself
+            studio_flow.decide(st["id"], decision, comment, f"{name.strip()} (outside link)", _base(request))
+        else:
+            _notify_share_owner(request, s, it, decision, name, comment)
+    except (studio.StudioError, studio_flow.FlowError) as e:
         return RedirectResponse(f"/s/{token}?error=" + urllib.parse.quote(str(e)) + f"#i{item_id}", status_code=303)
     return RedirectResponse(f"/s/{token}#i{item_id}", status_code=303)
 
@@ -4635,3 +4674,183 @@ async def studio_design_check(request: Request, iid: int):
     j = await request.json()
     texts = [str(t)[:2000] for t in (j.get("texts") or [])][:60]
     return {"problems": studio.check_texts(it["practice_id"] if it else None, texts)}
+
+
+# ---------- Studio phase 3: approvals, comments, posting as the brand ----------
+def _base(request):
+    return PUBLIC_URL or str(request.base_url).rstrip("/")
+
+
+def _flow_back(iid, anchor):
+    return RedirectResponse(f"/studio/i/{iid}#{anchor}", status_code=303)
+
+
+@app.post("/studio/i/{iid}/approval")
+async def studio_ask_approval(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    kinds, uids, names, emails = (form.getlist(k) for k in ("step_kind", "step_user", "step_name", "step_email"))
+    steps = []
+    for i, k in enumerate(kinds):
+        if k == "person" and i < len(uids) and str(uids[i]).isdigit():
+            steps.append({"kind": "person", "user_id": int(uids[i])})
+        elif k == "outside" and i < len(names) and (names[i] or "").strip():
+            steps.append({"kind": "outside", "name": names[i], "email": emails[i] if i < len(emails) else ""})
+    u = me(request) or {}
+    try:
+        first = await asyncio.to_thread(studio_flow.request_approval, iid, steps, form.get("note") or "", actor(request),
+                                        u.get("email") or "", _base(request))
+        if first and first["kind"] == "outside":
+            request.session["studio_new_share"] = first.get("share_id")
+            flash(request, f"Sent for approval. {first['name']} is first" +
+                  (": the link was emailed." if first["email"] and microsoft.studio_on() else
+                   ": copy their link below and send it to them."))
+        else:
+            flash(request, f"Sent for approval. {first['name'] if first else 'Everyone'} is first" +
+                  (" and got an email." if microsoft.studio_on() else "; it's waiting under Studio → Waiting for me."))
+    except (studio_flow.FlowError, studio.StudioError) as e:
+        flash(request, str(e), "error")
+    return _flow_back(iid, "approve")
+
+
+@app.post("/studio/steps/{sid}")
+async def studio_decide(request: Request, sid: int, decision: str = Form(""), comment: str = Form("")):
+    if (r := guard(request)):
+        return r
+    st = studio_flow.step(sid)
+    u = me(request) or {}
+    if not st:
+        return RedirectResponse("/studio", status_code=303)
+    if st["kind"] != "person" or (st["user_id"] != u.get("id") and u.get("role") != "admin"):
+        flash(request, "That approval is someone else's.", "error")
+        return _flow_back(st["item_id"], "approve")
+    who = actor(request) + ("" if st["user_id"] == u.get("id") else f" (for {st['name']})")
+    try:
+        nxt = await asyncio.to_thread(studio_flow.decide, sid, decision, comment, who, _base(request))
+        if decision == "changes":
+            flash(request, "Sent back with your changes. It's a draft again.")
+        else:
+            flash(request, f"Approved. Next: {nxt['name']}." if nxt else "Approved. That was the last approval, so it's ready to post.")
+    except studio_flow.FlowError as e:
+        flash(request, str(e), "error")
+    return _flow_back(st["item_id"], "approve")
+
+
+@app.post("/studio/i/{iid}/approval/stop")
+def studio_stop_approval(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    studio_flow.cancel_chain(iid, actor(request))
+    flash(request, "Approval stopped. It's a draft again.")
+    return _flow_back(iid, "approve")
+
+
+@app.post("/studio/i/{iid}/comments")
+async def studio_comment(request: Request, iid: int, body: str = Form(""), x: str = Form(""), y: str = Form("")):
+    if (r := guard(request)):
+        return r
+    u = me(request) or {}
+    try:
+        studio_flow.add_comment(iid, u.get("id"), actor(request), body, x, y, base_url=_base(request))
+    except studio_flow.FlowError as e:
+        flash(request, str(e), "error")
+    return _flow_back(iid, "comments")
+
+
+@app.post("/studio/comments/{cid}/resolve")
+def studio_comment_resolve(request: Request, cid: int, undo: str = Form(""), item: int = Form(0)):
+    if (r := guard(request)):
+        return r
+    studio_flow.resolve_comment(cid, actor(request), undo == "1")
+    return _flow_back(item, "comments")
+
+
+@app.post("/studio/comments/{cid}/delete")
+def studio_comment_delete(request: Request, cid: int, item: int = Form(0)):
+    if (r := guard(request)):
+        return r
+    u = me(request) or {}
+    if not studio_flow.delete_comment(cid, u.get("id"), u.get("role") == "admin"):
+        flash(request, "Only the person who wrote a comment can delete it.", "error")
+    return _flow_back(item, "comments")
+
+
+@app.post("/studio/i/{iid}/post")
+async def studio_post(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    kind = form.get("when") or "schedule"
+    opts = {"ig_story": form.get("ig_story") == "1", "gmb_cta": form.get("gmb_cta") or "NONE",
+            "gmb_url": (form.get("gmb_url") or "").strip()}
+    u = me(request) or {}
+    try:
+        when = studio_flow.parse_when(form.get("day"), form.get("time")) if kind == "schedule" else None
+        n = await asyncio.to_thread(studio_flow.publish, iid, form.getlist("channels"), form.get("caption") or "", kind,
+                                    when, opts, actor(request), form.get("override") == "1" and u.get("role") == "admin")
+        if kind == "draft":
+            flash(request, f"Saved as a draft in Social for {n} channel{'s' if n != 1 else ''}. Finish it there, or schedule it here.")
+        elif kind == "now":
+            flash(request, f"Sent to Social to post now on {n} channel{'s' if n != 1 else ''}. The links show here once it's live.")
+        else:
+            local = when.astimezone(studio_flow.local_tz())
+            flash(request, f"Scheduled on {n} channel{'s' if n != 1 else ''} for {local.strftime('%a %b %-d at %-I:%M %p')}. "
+                           "It's in Social's calendar too.")
+    except (studio_flow.FlowError, social.SocialError, studio.StudioError) as e:
+        flash(request, str(e), "error")
+    return _flow_back(iid, "post")
+
+
+@app.post("/studio/posts/{rid}/cancel")
+async def studio_post_cancel(request: Request, rid: int):
+    if (r := guard(request)):
+        return r
+    row = studio_flow.post_row(rid)
+    try:
+        await asyncio.to_thread(studio_flow.cancel_post, rid, actor(request))
+        flash(request, "Cancelled; it won't post.")
+    except (studio_flow.FlowError, social.SocialError) as e:
+        flash(request, str(e), "error")
+    return _flow_back(row["item_id"] if row else 0, "post")
+
+
+@app.post("/studio/posts/sync")
+async def studio_posts_sync(request: Request):
+    if (r := guard(request)):
+        return r
+    n = await asyncio.to_thread(studio_flow.sync_posts)
+    flash(request, f"Checked with Social: {n} update{'s' if n != 1 else ''}." if n else "Checked with Social: nothing new yet.")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+@app.post("/studio/i/{iid}/caption")
+async def studio_caption(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    it = studio.item(iid)
+    if not it:
+        return JSONResponse({"error": "That file is gone."}, status_code=404)
+    j = await request.json()
+    try:
+        caps = await asyncio.to_thread(studio_flow.ai_caption, it, (j.get("brief") or "").strip())
+    except (studio_flow.FlowError, ai.AIError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"captions": caps}
+
+
+@app.post("/connections/posting")
+async def connections_posting(request: Request, api_key: str = Form(""), api_url: str = Form(""), clear: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if clear == "1":
+        social.save(key="")
+    else:
+        social.save(key=api_key if api_key.strip() else None, url=api_url)
+    try:
+        await asyncio.to_thread(social.check)
+        n = len(await asyncio.to_thread(social.integrations, True))
+        flash(request, f"Social answered: {n} Facebook, Instagram and Google channel{'s' if n != 1 else ''} to post to.")
+    except social.SocialError as e:
+        flash(request, f"Saved, but Social didn't answer yet: {e}", "error")
+    return RedirectResponse("/connections#posting", status_code=303)

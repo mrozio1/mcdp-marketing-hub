@@ -40,6 +40,7 @@
       {% endfor %}
     </ul>
     <div class="st-side-foot">
+      <a href="/studio?b=mine" class="{{ 'on' if view == 'mine' }}">Waiting for my approval{% if studio_waiting %} <strong class="st-alert">{{ studio_waiting }}</strong>{% endif %}</a>
       <a href="/studio?b=all" class="{{ 'on' if view == 'all' }}">Everything</a>
       <a href="/studio?b=none" class="{{ 'on' if view == 'none' }}">Needs a brand{% if totals.unbranded %} <strong class="st-alert">{{ totals.unbranded }}</strong>{% endif %}</a>
       <a href="/studio?b=feedback" class="{{ 'on' if view == 'feedback' }}">Outside feedback</a>
@@ -51,7 +52,7 @@
     <div class="st-head">
       <div>
         <p class="st-crumb">{% if view == 'brand' %}Studio · {{ brand_name }}{% else %}Studio{% endif %}</p>
-        <h1>{% if view == 'brand' %}{{ folder.name if folder else ('Not in a folder' if fid == 'none' else 'All files') }}{% elif view == 'none' %}Needs a brand{% elif view == 'trash' %}Trash{% elif view == 'feedback' %}Outside feedback{% else %}Everything{% endif %}</h1>
+        <h1>{% if view == 'brand' %}{{ folder.name if folder else ('Not in a folder' if fid == 'none' else 'All files') }}{% elif view == 'none' %}Needs a brand{% elif view == 'mine' %}Waiting for my approval{% elif view == 'trash' %}Trash{% elif view == 'feedback' %}Outside feedback{% else %}Everything{% endif %}</h1>
       </div>
       <div class="st-tools">
         {% if view not in ('feedback',) %}
@@ -149,7 +150,7 @@
             <span class="st-card-body">
               <strong class="st-title">{{ it.title }}</strong>
               <span class="st-meta">
-                <span>{% if view in ('all', 'trash') %}{{ names.get(it.practice_id, 'Needs a brand') }}{% else %}{{ 'Canva' if it.source == 'canva' else it.kind|capitalize }}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}{% endif %}</span>
+                <span>{% if view in ('all', 'trash', 'mine') %}{{ names.get(it.practice_id, 'Needs a brand') }}{% else %}{{ 'Canva' if it.source == 'canva' else it.kind|capitalize }}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}{% endif %}</span>
                 <span class="st-status st-s-{{ it.status }}">{{ it.status_label }}</span>
               </span>
             </span>
@@ -166,6 +167,7 @@
       </div>
       {% elif view == 'trash' %}<p class="empty">The trash is empty. Files in it are deleted for good after 30 days.</p>
       {% elif view == 'none' %}<p class="empty">Every file has a brand.</p>
+      {% elif view == 'mine' %}<p class="empty">Nothing is waiting for your approval. When someone sends you a design to approve, it shows here{{ ' and you get an email' if mail_on }}.</p>
       {% else %}<p class="empty">No files yet.</p>{% endif %}
     </form>
 

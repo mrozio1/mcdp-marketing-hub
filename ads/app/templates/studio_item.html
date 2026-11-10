@@ -17,7 +17,12 @@
 <div class="st-item">
   <section class="st-preview st-k-{{ it.kind }}" aria-label="Preview">
     {% if it.kind in ('image', 'design') %}
-      <img src="/studio/f/{{ it.id }}?v={{ it.updated_at|urlencode }}" alt="{{ it.title }}">
+      <div class="st-pinbox" data-pinbox>
+        <img src="/studio/f/{{ it.id }}?v={{ it.updated_at|urlencode }}" alt="{{ it.title }}">
+        {% set pinned = comments|selectattr('x', 'ne', none)|list %}
+        {% for c in comments if c.x is not none and not c.resolved_at %}<a class="st-pin" href="#c{{ c.id }}" style="left: {{ c.x }}%; top: {{ c.y }}%" title="{{ c.who }}: {{ c.body[:80] }}">{{ loop.index }}</a>{% endfor %}
+        <span class="st-pin st-pin-new" data-pin-new hidden>+</span>
+      </div>
     {% elif it.kind == 'video' %}
       <video src="/studio/f/{{ it.id }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/studio/t/{{ it.id }}"{% endif %} data-needs-thumb="{{ 0 if it.has_thumb else 1 }}" data-id="{{ it.id }}"></video>
     {% elif it.kind == 'audio' %}
@@ -46,11 +51,188 @@
       <button class="btn btn-small btn-quiet" type="submit">Export from Canva</button>
     </form>
     {% endif %}
+
+    {% if not it.trashed_at %}
+    <section class="st-section st-comments" id="comments">
+      <h2>Comments</h2>
+      {% set open_pins = comments|selectattr('x', 'ne', none)|rejectattr('resolved_at')|list %}
+      <ul class="st-clist">
+        {% for c in comments %}
+        <li id="c{{ c.id }}" class="{{ 'st-c-done' if c.resolved_at }}">
+          <span class="st-avatar" aria-hidden="true">{{ (c.who or '?')[:1] }}</span>
+          <div>
+            <p class="st-c-meta"><strong>{{ c.who or 'Someone' }}</strong>
+              {% if c.source == 'approval' %}<span class="muted small">· with their approval answer</span>{% elif c.source == 'outside' %}<span class="muted small">· share link</span>{% endif %}
+              {% if c.x is not none and not c.resolved_at %}{% for p in open_pins %}{% if p.id == c.id %}<span class="st-pin st-pin-inline">{{ loop.index }}</span>{% endif %}{% endfor %}{% endif %}
+              <span class="muted small">{{ c.created_at[:16]|replace('T', ' ') }}</span></p>
+            <p class="st-c-body">{{ c.body }}</p>
+            {% if can_edit %}
+            <div class="st-c-acts small">
+              <form method="post" action="/studio/comments/{{ c.id }}/resolve"><input type="hidden" name="item" value="{{ it.id }}">
+                {% if c.resolved_at %}<input type="hidden" name="undo" value="1"><span class="muted">Resolved by {{ c.resolved_by }}</span> <button class="linklike" type="submit">Reopen</button>
+                {% else %}<button class="linklike" type="submit">Resolve</button>{% endif %}</form>
+              {% if c.user_id == me.id or is_admin %}<form method="post" action="/studio/comments/{{ c.id }}/delete" data-confirm="Delete this comment?"><input type="hidden" name="item" value="{{ it.id }}"><button class="linklike danger" type="submit">Delete</button></form>{% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      <form method="post" action="/studio/i/{{ it.id }}/comments" class="st-cform" data-comment-form>
+        <input type="hidden" name="x" data-pin-x><input type="hidden" name="y" data-pin-y>
+        <label><span class="vh">Add a comment</span><textarea name="body" rows="2" maxlength="4000" required placeholder="Add a comment, @ a teammate to tell them"></textarea></label>
+        <div class="btn-row">
+          <button class="btn btn-small" type="submit">Comment</button>
+          {% if it.kind in ('image', 'design') %}<span class="small muted" data-pin-hint>Click the picture to pin it to a spot.</span>
+          <button class="linklike small" type="button" data-pin-clear hidden>Remove the pin</button>{% endif %}
+        </div>
+      </form>
+    </section>
+    {% endif %}
   </section>
 
   <section class="st-details">
+    {% if not it.trashed_at %}
+    <section class="st-card-panel" id="approve">
+      <h2>Approvals</h2>
+      {% if chain %}
+      <ol class="st-chain">
+        {% for st in chain %}
+        <li class="st-step st-step-{{ st.status }}">
+          <span class="st-step-dot" aria-hidden="true">{% if st.status == 'approved' %}✓{% elif st.status == 'changes' %}!{% else %}{{ loop.index }}{% endif %}</span>
+          <div>
+            <strong>{{ st.name }}</strong> <span class="muted small">{{ 'outside, by link' if st.kind == 'outside' else 'in the hub' }}</span>
+            <div class="small {{ 'muted' if st.status in ('waiting', 'cancelled') }}">{{ st.label }}{% if st.decided_at %} · {{ st.decided_at[:16]|replace('T', ' ') }}{% endif %}{% if st.comment %}: “{{ st.comment }}”{% endif %}</div>
+            {% if st.kind == 'outside' and st.status == 'pending' and st.share_id and share_by_id.get(st.share_id) %}
+            {% set sh = share_by_id[st.share_id] %}
+            <div class="st-copy"><input readonly value="{{ base }}/s/{{ sh.token }}" aria-label="Their approval link" onclick="this.select()">
+              <button type="button" class="btn btn-small" data-copy="{{ base }}/s/{{ sh.token }}">Copy link</button></div>
+            <span class="small muted">{{ 'Emailed to ' ~ st.email ~ '. ' if st.email and mail_on }}{{ sh.views }} view{{ '' if sh.views == 1 else 's' }} so far.</span>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% if chain[0].requested_by %}<p class="small muted">Asked by {{ chain[0].requested_by }} {{ chain[0].created_at[:10] }}{% if chain[0].note %}: “{{ chain[0].note }}”{% endif %}</p>{% endif %}
+      {% endif %}
+
+      {% if my_step %}
+      <form method="post" action="/studio/steps/{{ my_step.id }}" class="st-decide">
+        <p><strong>It's your turn.</strong> Look it over, then:</p>
+        <label><span class="vh">Comment</span><textarea name="comment" rows="2" placeholder="Anything to add (needed if asking for changes)"></textarea></label>
+        <div class="btn-row">
+          <button class="btn st-approve" type="submit" name="decision" value="approved">Approve</button>
+          <button class="btn btn-quiet" type="submit" name="decision" value="changes">Ask for changes</button>
+        </div>
+      </form>
+      {% elif is_admin and chain and open_chain %}
+      {% for st in chain if st.status == 'pending' and st.kind == 'person' %}
+      <form method="post" action="/studio/steps/{{ st.id }}" class="btn-row small"><span class="muted">Admin: answer for {{ st.name }}</span>
+        <button class="linklike" type="submit" name="decision" value="approved">Approve for them</button></form>
+      {% endfor %}
+      {% endif %}
+
+      {% if can_edit %}
+        {% if open_chain %}
+        <form method="post" action="/studio/i/{{ it.id }}/approval/stop" data-confirm="Stop this approval? It goes back to Draft."><button class="linklike danger small" type="submit">Stop the approval</button></form>
+        {% else %}
+        <details class="drawer drawer-inline" {% if not chain and it.status == 'draft' %}open{% endif %}>
+          <summary><span class="drawer-title">{{ 'Ask again' if chain else 'Ask for approval' }}</span></summary>
+          <form method="post" action="/studio/i/{{ it.id }}/approval" class="stack st-askform" data-ask>
+            <p class="small muted">People approve in this order. Teammates answer here in the hub; someone outside gets a private link and needs no account.</p>
+            <ol class="st-steps-edit" data-steps></ol>
+            <div class="btn-row">
+              <button class="btn btn-small btn-quiet" type="button" data-add-step="person">+ A teammate</button>
+              <button class="btn btn-small btn-quiet" type="button" data-add-step="outside">+ Someone outside</button>
+            </div>
+            <label><span>Note <span class="muted small">(optional; they see it)</span></span><textarea name="note" rows="2" maxlength="2000" placeholder="For the Thanksgiving week posts. Hours are from the front desk."></textarea></label>
+            <div><button class="btn" type="submit">Send for approval</button></div>
+          </form>
+          <template data-step-person><li><input type="hidden" name="step_kind" value="person"><input type="hidden" name="step_name" value=""><input type="hidden" name="step_email" value="">
+            <label><span class="vh">Teammate</span><select name="step_user" required><option value="">Pick a teammate…</option>{% for t in team %}<option value="{{ t.id }}">{{ t.name }}{% if t.id == me.id %} (you){% endif %}</option>{% endfor %}</select></label>
+            <button type="button" class="linklike danger small" data-remove-step>Remove</button></li></template>
+          <template data-step-outside><li><input type="hidden" name="step_kind" value="outside"><input type="hidden" name="step_user" value="">
+            <label><span class="vh">Name</span><input name="step_name" placeholder="Name, e.g. Jordyn (practice manager)" required maxlength="120"></label>
+            <label><span class="vh">Email</span><input name="step_email" type="email" placeholder="Email (optional{{ '' if mail_on else '; copy the link instead' }})"></label>
+            <button type="button" class="linklike danger small" data-remove-step>Remove</button></li></template>
+        </details>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    {% if it.kind in ('image', 'design', 'video') %}
+    <section class="st-card-panel" id="post">
+      <h2>Post as {{ brand_name if it.practice_id else 'the brand' }}</h2>
+      {% if posts %}
+      <ul class="st-posts">
+        {% for p in posts %}
+        <li class="st-post-{{ p.state }}">
+          <span class="tag tag-{{ 'instagram' if p.provider.startswith('instagram') else ('facebook' if p.provider == 'facebook' else 'ok') }}">{{ {'facebook': 'Facebook', 'gmb': 'Google'}.get(p.provider, 'Instagram') }}</span>
+          <strong>{{ p.channel }}</strong>
+          <span class="st-status {{ 'st-s-posted' if p.state == 'published' else ('st-s-scheduled' if p.state == 'queued' else ('st-s-changes' if p.state == 'error' else 'st-s-off')) }}">{{ p.label }}</span>
+          <span class="small muted">{{ p.local }}</span>
+          {% if p.url %}<a class="small" href="{{ p.url }}" target="_blank" rel="noopener">See the post</a>{% endif %}
+          {% if p.error %}<span class="small st-err">{{ p.error }}</span>{% endif %}
+          {% if can_edit and p.state in ('queued', 'draft', 'error') %}<form method="post" action="/studio/posts/{{ p.id }}/cancel" data-confirm="Cancel this post on {{ p.channel }}?"><button class="linklike danger small" type="submit">Cancel</button></form>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      <form method="post" action="/studio/posts/sync" class="small"><button class="linklike" type="submit">Check with Social now</button> <span class="muted">(it checks every 10 minutes)</span></form>
+      {% endif %}
+
+      {% if social_error %}
+        <p class="small st-err">{{ social_error }}</p>
+      {% elif not chans %}
+        <p class="small muted">No Facebook, Instagram or Google channels are connected in Social yet.</p>
+      {% elif can_edit %}
+        {% set ready = it.status in ('approved', 'scheduled', 'posted') %}
+        {% if not ready %}<p class="small st-wait">{{ 'It can be posted once it’s approved.' if it.status in ('draft', 'review') else '' }}</p>{% endif %}
+        <form method="post" action="/studio/i/{{ it.id }}/post" class="st-postform" data-postform {% if not ready and not is_admin %}data-locked{% endif %}>
+          <fieldset class="st-chans"><legend>Where</legend>
+            {% for c in chans if c.id in brand_chans %}
+            <label class="st-chan"><input type="checkbox" name="channels" value="{{ c.id }}" data-provider="{{ c.provider }}" checked> <span class="tag tag-{{ 'instagram' if c.provider.startswith('instagram') else ('facebook' if c.provider == 'facebook' else 'ok') }}">{{ c.label }}</span> {{ c.name }}</label>
+            {% endfor %}
+            {% set others = chans|rejectattr('id', 'in', brand_chans)|list %}
+            {% if others %}
+            <details class="st-more-chans" {% if not brand_chans %}open{% endif %}><summary class="small">{{ 'Other channels' if brand_chans else 'Pick the channels (none are linked to ' ~ brand_name ~ ' yet; the ones you pick are remembered)' }}</summary>
+              <input type="search" class="pick-filter-st" placeholder="Find a channel" data-chan-filter>
+              <div class="st-chan-list">{% for c in others %}<label class="st-chan"><input type="checkbox" name="channels" value="{{ c.id }}" data-provider="{{ c.provider }}"> <span class="tag tag-{{ 'instagram' if c.provider.startswith('instagram') else ('facebook' if c.provider == 'facebook' else 'ok') }}">{{ c.label }}</span> {{ c.name }}</label>{% endfor %}</div>
+            </details>
+            {% endif %}
+          </fieldset>
+          <label><span>Caption</span><textarea name="caption" rows="5" maxlength="2200" data-caption placeholder="e.g. From our team to your family: happy Thanksgiving! We're closed Thursday and Friday and back Monday.">{{ it.notes if it.notes and it.notes|length < 600 else '' }}</textarea></label>
+          <div class="st-caprow small"><span data-caplen>0</span> characters
+            {% if ai_on %}<button type="button" class="chip" data-ai-caption>Write caption with AI</button>{% endif %}</div>
+          <div class="st-capopts" data-capopts></div>
+          <div class="st-netopts">
+            <label class="check" data-ig-opt hidden><input type="checkbox" name="ig_story" value="1"> Post to Instagram as a Story</label>
+            <div class="st-share-grid" data-gmb-opt hidden>
+              <label>Google profile button<select name="gmb_cta">{% for k, l in gmb_actions %}<option value="{{ k }}" {% if k == 'NONE' %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+              <label>Button goes to<input name="gmb_url" type="url" placeholder="https://practice-website.com/book"></label>
+            </div>
+          </div>
+          <fieldset class="st-when"><legend>When</legend>
+            <label class="check"><input type="radio" name="when" value="schedule" checked> Schedule</label>
+            <label class="check"><input type="radio" name="when" value="now"> Post now</label>
+            <label class="check"><input type="radio" name="when" value="draft"> Draft in Social</label>
+            <div class="st-share-grid" data-when-fields>
+              <label>Date<input type="date" name="day" value="{{ soon_day }}"></label>
+              <label>Time <span class="muted small">({{ tz_name.split('/')[-1]|replace('_', ' ') }} time)</span><input type="time" name="time" value="{{ soon_time }}" step="300"></label>
+            </div>
+          </fieldset>
+          {% if not ready and is_admin %}<label class="check small"><input type="checkbox" name="override" value="1" data-override> Post it without approval (admin)</label>{% endif %}
+          <button class="btn" type="submit" data-post-btn {% if not ready %}disabled{% endif %}>Schedule it</button>
+          <p class="small muted">Posts as the brand from Social's connections (the Page, the Instagram account, the Google profile), never as you. It shows in Social's calendar too.</p>
+        </form>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% endif %}
+
     {% if can_edit and not it.trashed_at %}
-    <form method="post" action="/studio/i/{{ it.id }}" class="stack">
+    <details class="drawer">
+    <summary><span class="drawer-title">Details</span><span class="drawer-hint">Title, status, brand, folder, notes</span></summary>
+    <form method="post" action="/studio/i/{{ it.id }}" class="stack drawer-body">
       <label>Title<input name="title" value="{{ it.title }}" maxlength="200" required></label>
       <label>Status
         <select name="status">{% for k, l in statuses %}<option value="{{ k }}" {% if it.status == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
@@ -67,6 +249,7 @@
       <label><span>Notes <span class="muted small">(caption ideas, where it's running, who asked for it)</span></span><textarea name="notes" rows="3" maxlength="4000">{{ it.notes }}</textarea></label>
       <div><button class="btn" type="submit">Save</button></div>
     </form>
+    </details>
     <script type="application/json" id="st-folders">{{ all_folders|tojson }}</script>
     {% else %}
       <dl class="st-dl"><dt>Brand</dt><dd>{{ brand_name }}</dd><dt>Folder</dt><dd>{{ folder.name if folder else '—' }}</dd>
@@ -101,6 +284,17 @@
           {% elif e.kind == 'unshared' %}{{ e.who or 'Someone' }} turned a share link off
           {% elif e.kind == 'new_version' %}New version{% if e.comment %} ({{ e.comment }}){% endif %}
           {% elif e.kind == 'edited' %}{{ e.who or 'Someone' }} edited the design
+          {% elif e.kind == 'approval_asked' %}{{ e.who or 'Someone' }} asked for approval from {{ e.comment }}
+          {% elif e.kind == 'approval_turn' %}{{ e.who }}'s turn to approve
+          {% elif e.kind == 'step_approved' %}<strong>{{ e.who }}</strong> approved it{% if e.comment %}: “{{ e.comment }}”{% endif %}
+          {% elif e.kind == 'step_changes' %}<strong>{{ e.who }}</strong> asked for changes: “{{ e.comment }}”
+          {% elif e.kind == 'approval_stopped' %}{{ e.who or 'Someone' }} stopped the approval
+          {% elif e.kind == 'scheduled' %}{{ e.who or 'Someone' }} scheduled it on {{ e.comment.split(' · ')[0] }}
+          {% elif e.kind == 'post_now' %}{{ e.who or 'Someone' }} posted it on {{ e.comment }}
+          {% elif e.kind == 'posted_draft' %}{{ e.who or 'Someone' }} made a draft in Social for {{ e.comment }}
+          {% elif e.kind == 'published' %}Went live on {{ e.comment }}
+          {% elif e.kind == 'post_failed' %}<span class="st-err">Didn't post: {{ e.comment }}</span>
+          {% elif e.kind == 'post_cancelled' %}{{ e.who or 'Someone' }} cancelled the post on {{ e.comment }}
           {% elif e.kind == 'trashed' %}{{ e.who or 'Someone' }} moved it to the trash
           {% elif e.kind == 'restored' %}{{ e.who or 'Someone' }} restored it
           {% else %}{{ e.kind }}{% endif %}</li>
@@ -124,6 +318,86 @@
 </div>
 <script>
 (() => {
+  const $ = (q, el = document) => el.querySelector(q), $$ = (q, el = document) => [...el.querySelectorAll(q)];
+  $$("[data-copy]:not([data-bound])").forEach(b => { b.dataset.bound = 1; b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); } catch (e) { b.previousElementSibling.select(); document.execCommand("copy"); }
+    const t = b.textContent; b.textContent = "Copied"; setTimeout(() => { b.textContent = t; }, 1500); }); });
+
+  // approval steps
+  const ask = $("[data-ask]");
+  if (ask) {
+    const list = $("[data-steps]", ask);
+    const add = kind => {
+      const t = document.querySelector(kind === "person" ? "[data-step-person]" : "[data-step-outside]");
+      list.appendChild(t.content.cloneNode(true));
+    };
+    $$("[data-add-step]").forEach(b => b.addEventListener("click", () => add(b.dataset.addStep)));
+    list.addEventListener("click", e => { if (e.target.matches("[data-remove-step]")) e.target.closest("li").remove(); });
+    add("outside"); add("person");
+  }
+
+  // pin a comment to a spot on the picture
+  const box = $("[data-pinbox]"), form = $("[data-comment-form]");
+  if (box && form) {
+    const mark = $("[data-pin-new]"), clr = $("[data-pin-clear]"), hint = $("[data-pin-hint]");
+    box.addEventListener("click", e => {
+      if (e.target.closest(".st-pin:not(.st-pin-new)")) return;
+      const r = box.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width * 100).toFixed(1), y = ((e.clientY - r.top) / r.height * 100).toFixed(1);
+      $("[data-pin-x]").value = x; $("[data-pin-y]").value = y;
+      mark.style.left = `${x}%`; mark.style.top = `${y}%`; mark.hidden = false;
+      clr.hidden = false; if (hint) hint.textContent = "Pinned. Write your comment below.";
+      form.querySelector("textarea").focus();
+    });
+    clr.addEventListener("click", () => { $("[data-pin-x]").value = $("[data-pin-y]").value = ""; mark.hidden = true; clr.hidden = true;
+      if (hint) hint.textContent = "Click the picture to pin it to a spot."; });
+  }
+
+  // posting
+  const pf = $("[data-postform]");
+  if (pf) {
+    const cap = $("[data-caption]", pf), len = $("[data-caplen]", pf), btn = $("[data-post-btn]", pf);
+    const sync = () => {
+      len.textContent = cap.value.length;
+      const ticked = $$("input[name=channels]:checked", pf).map(c => c.dataset.provider);
+      $("[data-ig-opt]", pf).hidden = !ticked.some(p => p.startsWith("instagram"));
+      $("[data-gmb-opt]", pf).hidden = !ticked.includes("gmb");
+      const when = (pf.querySelector("input[name=when]:checked") || {}).value;
+      $("[data-when-fields]", pf).hidden = when !== "schedule";
+      btn.textContent = when === "now" ? "Post it now" : when === "draft" ? "Make the draft in Social" : "Schedule it";
+      const ov = $("[data-override]", pf);
+      btn.disabled = pf.hasAttribute("data-locked") || (ov && !ov.checked) || !ticked.length;
+    };
+    pf.addEventListener("input", sync); pf.addEventListener("change", sync); sync();
+    pf.addEventListener("submit", e => {
+      const when = pf.querySelector("input[name=when]:checked").value;
+      if (when === "now" && !confirm("Post it now on the ticked channels?")) { e.preventDefault(); return; }
+      btn.disabled = true; btn.textContent = "Sending to Social…";
+    });
+    const f = $("[data-chan-filter]", pf);
+    if (f) f.addEventListener("input", () => $$(".st-chan-list .st-chan", pf).forEach(l => { l.hidden = !l.textContent.toLowerCase().includes(f.value.toLowerCase()); }));
+    const ai = $("[data-ai-caption]", pf);
+    if (ai) ai.addEventListener("click", async () => {
+      ai.disabled = true; ai.textContent = "Writing…";
+      const out = $("[data-capopts]", pf); out.innerHTML = "";
+      try {
+        const r = await fetch("/studio/i/{{ it.id }}/caption", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ brief: cap.value }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "It didn't work.");
+        j.captions.forEach(c => {
+          const d = document.createElement("div"); d.className = "st-capopt";
+          d.innerHTML = '<p></p><ul class="small"></ul><button type="button" class="btn btn-small btn-quiet">Use this</button>';
+          d.querySelector("p").textContent = c.text;
+          (c.notes || []).forEach(n => { const li = document.createElement("li"); li.textContent = n; d.querySelector("ul").appendChild(li); });
+          d.querySelector("button").addEventListener("click", () => { cap.value = c.text; out.innerHTML = ""; sync(); });
+          out.appendChild(d);
+        });
+      } catch (err) { out.textContent = err.message; }
+      ai.disabled = false; ai.textContent = "Write caption with AI";
+    });
+  }
+
   // folder list follows the brand
   const bs = document.querySelector("[data-brand-select]"), fs = document.querySelector("[data-folder-select]");
   const data = document.getElementById("st-folders");

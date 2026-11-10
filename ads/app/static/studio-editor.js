@@ -639,12 +639,8 @@
     },
     delete: () => { const its = items(); canvas.discardActiveObject(); its.forEach(o => canvas.remove(o)); canvas.requestRenderAll(); checkSoon(); },
     done: async () => { if (await save(true)) location.href = C.back; },
-    review: async () => {
-      if (!(await save(true))) return;
-      const fd = new FormData(); fd.append("status", "review");
-      await fetch(`/studio/i/${C.iid}`, { method: "POST", body: fd, redirect: "manual" });
-      const s = $("[data-status]"); s.textContent = "In review"; s.className = "st-status st-s-review";
-      $("[data-act=review]").hidden = true; say("Sent for review");
+    review: async () => {                                   // pick who approves it on the file's page
+      if (await save(true)) location.href = C.back + "#approve";
     },
     template: () => { const d = $("[data-tpl-dialog]"); d.showModal(); d.querySelector("input[name=name]").focus(); },
   };

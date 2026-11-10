@@ -35,7 +35,7 @@
     </details>
     {% if can_edit %}
     <button class="btn btn-quiet btn-small" type="button" data-act="template">Save as template</button>
-    <button class="btn btn-quiet btn-small" type="button" data-act="review" {% if it.status != 'draft' %}hidden{% endif %}>Send for review</button>
+    <button class="btn btn-quiet btn-small" type="button" data-act="review" {% if it.status != 'draft' %}hidden{% endif %}>Ask for approval</button>
     <button class="btn btn-small" type="button" data-act="done">Save and close</button>
     {% else %}
     <a class="btn btn-small" href="/studio/i/{{ it.id }}">Close</a>
