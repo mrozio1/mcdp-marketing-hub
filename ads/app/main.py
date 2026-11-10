@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -3887,6 +3887,7 @@ def studio_item_page(request: Request, iid: int):
         except (ValueError, AttributeError):
             p_["local"] = ""
     return page(request, "studio_item.html", it=it, brand_name=studio.brand_name(it["practice_id"]),
+                is_video_project=studio_video.is_project(it),
                 chain=chain, my_step=my_step, open_chain=any(st["status"] in ("pending", "waiting") for st in chain),
                 team=[x for x in users.all_users() if x["active"] and x["pw_hash"]],
                 comments=studio_flow.comments(iid), posts=posts, chans=chans, brand_chans=[c["id"] for c in brand_chans],
@@ -4423,6 +4424,7 @@ def studio_new(request: Request, b: str = "", f: str = ""):
     plist = db.practices()
     return page(request, "studio_new.html", pid=pid, folder=fold, brands=studio.brands(plist, counts=False),
                 brand_name=studio.brand_name(pid), sizes=studio.SIZES, groups=["Social", "Google", "Print"],
+                video_sizes=studio_video.SIZES,
                 templates=studio.templates(pid), all_folders={p: studio.folders(p) for p in ([studio.MCDP] + [x["id"] for x in plist])})
 
 
@@ -4854,3 +4856,156 @@ async def connections_posting(request: Request, api_key: str = Form(""), api_url
     except social.SocialError as e:
         flash(request, f"Saved, but Social didn't answer yet: {e}", "error")
     return RedirectResponse("/connections#posting", status_code=303)
+
+
+# ---------- Studio phase 4: video ----------
+def _video(iid):
+    it = studio.item(iid)
+    return it if studio_video.is_project(it) else None
+
+
+@app.post("/studio/videos")
+async def studio_video_create(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    pid = _brand_in(form.get("pid"))
+    fv = form.get("folder")
+    try:
+        if pid is None:
+            raise studio_video.VideoError("Pick a brand.")
+        clips = [int(x) for x in form.getlist("clip") if str(x).isdigit()]
+        iid = await asyncio.to_thread(studio_video.create_project, pid, int(fv) if fv and str(fv).isdigit() else None,
+                                      form.get("vsize") or "story", form.get("title") or "", actor(request), clips)
+    except (studio_video.VideoError, studio.StudioError) as e:
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/studio/new?b={pid if pid is not None else ''}#video", status_code=303)
+    return RedirectResponse(f"/studio/video/{iid}", status_code=303)
+
+
+@app.get("/studio/video/{iid}", response_class=HTMLResponse)
+def studio_video_page(request: Request, iid: int):
+    if (r := guard(request)):
+        return r
+    it = _video(iid)
+    if not it:
+        flash(request, "That video project is gone.", "error")
+        return RedirectResponse("/studio", status_code=303)
+    pid = it["practice_id"] if it["practice_id"] is not None else studio.MCDP
+    look = _brand_look(it["practice_id"])
+    return page(request, "studio_video.html", it=it, brand_name=studio.brand_name(it["practice_id"]),
+                folder=studio.folder(it["folder_id"]), look=look, speeds=studio_video.SPEEDS,
+                ffmpeg_ok=studio_video.ffmpeg_ok(), captions_ok=studio_video.captions_ready(),
+                uploads_folder=studio.add_folder(pid, "Video uploads", "Studio video") if can_edit_now(request) else None,
+                pid=pid, render=studio_video.status(iid), max_total=studio_video.MAX_TOTAL)
+
+
+def can_edit_now(request):
+    u = me(request)
+    return bool(u) and users.rank(u["role"]) >= users.rank("editor")
+
+
+@app.get("/studio/video/{iid}/project")
+def studio_video_project(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    try:
+        p = studio_video.project(iid)
+    except studio_video.VideoError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    titles = {}
+    for c in p["clips"] + ([p["music"]] if p.get("music") else []):
+        it = studio.item(c["item"])
+        if it:
+            titles[it["id"]] = {"title": it["title"], "kind": it["kind"], "duration": it["duration"], "w": it["width"], "h": it["height"]}
+    return JSONResponse({"project": p, "items": titles}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/studio/video/{iid}/project")
+async def studio_video_save(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    if not _video(iid):
+        return JSONResponse({"error": "That video project is gone."}, status_code=404)
+    j = await request.json()
+    try:
+        p = await asyncio.to_thread(studio_video.save_project, iid, j.get("project") or {}, actor(request))
+        if j.get("title"):
+            studio.update(iid, actor(request), title=j["title"])
+    except (studio_video.VideoError, studio.StudioError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"ok": True, "project": p, "total": round(studio_video.total(p), 2)}
+
+
+@app.get("/studio/video-media")
+def studio_video_media(request: Request, pid: str = ""):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    b = _brand_in(pid)
+    out = {"videos": [], "pictures": [], "sounds": []}
+    for it in studio.items(b if b is not None else studio.MCDP, limit=300):
+        row = {"id": it["id"], "title": it["title"], "thumb": f"/studio/t/{it['id']}", "duration": it["duration"],
+               "w": it["width"], "h": it["height"], "src": f"/studio/f/{it['id']}"}
+        if it["kind"] == "video" and not studio_video.is_project(it):
+            out["videos"].append(row)
+        elif it["kind"] in ("image", "design"):
+            out["pictures"].append(row)
+        elif it["kind"] == "audio":
+            out["sounds"].append(row)
+    return out
+
+
+@app.get("/studio/video-info/{item_id}")
+async def studio_video_info(request: Request, item_id: int):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    try:
+        return await asyncio.to_thread(studio_video.media_info, item_id)
+    except studio_video.VideoError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+
+
+@app.post("/studio/video/{iid}/render")
+def studio_video_render(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    if not _video(iid):
+        return JSONResponse({"error": "That video project is gone."}, status_code=404)
+    if not studio_video.ffmpeg_ok():
+        return JSONResponse({"error": "The video tools aren't installed on the server yet. Run the hub update on the NAS."}, status_code=422)
+    started = studio_video.render(iid, actor(request))
+    return {**studio_video.status(iid), "started": started}
+
+
+@app.get("/studio/video/{iid}/render")
+def studio_video_render_status(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    it = studio.item(iid)
+    return {**studio_video.status(iid), "updated": (it or {}).get("updated_at")}
+
+
+@app.post("/studio/video/{iid}/captions")
+async def studio_video_captions(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    try:
+        caps = await asyncio.to_thread(studio_video.transcribe, iid)
+    except studio_video.VideoError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"captions": caps}
+
+
+@app.get("/studio/video/{iid}/outro.png")
+def studio_video_outro(request: Request, iid: int, text: str = ""):
+    if not authed(request):
+        return Response(status_code=401)
+    it = _video(iid)
+    if not it:
+        return Response(status_code=404)
+    p = studio_video.project(iid)
+    w, h = p["w"], p["h"]
+    k = 540 / max(w, h)
+    data = studio_video.outro_png(it["practice_id"] if it["practice_id"] not in (None, studio.MCDP) else None,
+                                  int(w * k), int(h * k), text[:60])
+    return Response(data, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})

@@ -65,7 +65,7 @@
         {% if can_edit and view == 'brand' %}
           {% if canva_on %}<form method="post" action="/studio/canva/import" data-busy="Starting…"><button class="btn btn-quiet st-pill" type="submit" {% if canva_running %}disabled{% endif %}>Import from Canva</button></form>{% endif %}
           <label class="btn btn-quiet st-pill st-upload-btn">+ Add files<input type="file" multiple data-upload-input class="vh"></label>
-          <a class="btn st-pill" href="/studio/new?b={{ pid }}{% if folder %}&f={{ folder.id }}{% endif %}">+ New design</a>
+          <a class="btn st-pill" href="/studio/new?b={{ pid }}{% if folder %}&f={{ folder.id }}{% endif %}">+ New design or video</a>
         {% endif %}
       </div>
     </div>

@@ -24,7 +24,7 @@
         <span class="st-pin st-pin-new" data-pin-new hidden>+</span>
       </div>
     {% elif it.kind == 'video' %}
-      <video src="/studio/f/{{ it.id }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/studio/t/{{ it.id }}"{% endif %} data-needs-thumb="{{ 0 if it.has_thumb else 1 }}" data-id="{{ it.id }}"></video>
+      <video src="/studio/f/{{ it.id }}?v={{ it.updated_at|urlencode }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/studio/t/{{ it.id }}"{% endif %} data-needs-thumb="{{ 0 if it.has_thumb else 1 }}" data-id="{{ it.id }}"></video>
     {% elif it.kind == 'audio' %}
       <audio src="/studio/f/{{ it.id }}" controls preload="metadata"></audio>
     {% elif it.kind == 'pdf' %}
@@ -40,6 +40,7 @@
     </p>
     <div class="btn-row">
       {% if it.kind == 'design' and not it.trashed_at %}<a class="btn" href="/studio/edit/{{ it.id }}">{{ 'Edit the design' if can_edit else 'Open the design' }}</a>{% endif %}
+      {% if is_video_project and not it.trashed_at %}<a class="btn" href="/studio/video/{{ it.id }}">{{ 'Edit the video' if can_edit else 'Open the edit' }}</a>{% endif %}
       <a class="btn {{ 'btn-quiet' if it.kind == 'design' }}" href="/studio/f/{{ it.id }}?dl=1">Download</a>
       {% if it.sp_web %}<a class="btn btn-quiet" href="{{ it.sp_web }}" target="_blank" rel="noopener">Open in SharePoint</a>{% endif %}
       {% if it.canva_url %}<a class="btn btn-quiet" href="{{ it.canva_url }}" target="_blank" rel="noopener">Edit in Canva</a>{% endif %}
@@ -292,6 +293,7 @@
           {% elif e.kind == 'scheduled' %}{{ e.who or 'Someone' }} scheduled it on {{ e.comment.split(' · ')[0] }}
           {% elif e.kind == 'post_now' %}{{ e.who or 'Someone' }} posted it on {{ e.comment }}
           {% elif e.kind == 'posted_draft' %}{{ e.who or 'Someone' }} made a draft in Social for {{ e.comment }}
+          {% elif e.kind == 'rendered' %}{{ e.who or 'Someone' }} made the MP4 ({{ e.comment }})
           {% elif e.kind == 'published' %}Went live on {{ e.comment }}
           {% elif e.kind == 'post_failed' %}<span class="st-err">Didn't post: {{ e.comment }}</span>
           {% elif e.kind == 'post_cancelled' %}{{ e.who or 'Someone' }} cancelled the post on {{ e.comment }}

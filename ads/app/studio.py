@@ -496,6 +496,8 @@ def _make_thumb(iid, path, kind, thumb_bytes=None):
     try:
         from PIL import Image, ImageOps
         import io
+        if not thumb_bytes and kind == "video" and path:
+            thumb_bytes = _video_frame(path)
         src = io.BytesIO(thumb_bytes) if thumb_bytes else (path if kind in ("image", "design") and path else None)
         if src is not None:
             with Image.open(src) as im:
@@ -513,6 +515,22 @@ def _make_thumb(iid, path, kind, thumb_bytes=None):
     with db.conn() as c:
         c.execute("UPDATE studio_items SET has_thumb=? WHERE id=?", (1 if ok else 0, iid))
     return ok
+
+
+def _video_frame(path):
+    """A frame a second in, for videos that arrive without a picture (Canva MP4s, some uploads)."""
+    import subprocess
+    if not shutil.which("ffmpeg"):
+        return None
+    try:
+        p = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", path, "-frames:v", "1", "-vf", "scale=640:-2",
+                            "-f", "image2", "-c:v", "mjpeg", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        if p.returncode != 0 or not p.stdout:
+            p = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-frames:v", "1", "-vf", "scale=640:-2",
+                                "-f", "image2", "-c:v", "mjpeg", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        return p.stdout or None
+    except Exception:
+        return None
 
 
 def set_thumb(iid, data):

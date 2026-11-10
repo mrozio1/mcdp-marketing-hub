@@ -26,6 +26,16 @@
     {% endfor %}
   </div>
   {% endfor %}
+  <h2 class="st-new-h" id="video">Video</h2>
+  <p class="small muted">Cut clips and photos together, add captions (written from the speech), a name tag, the brand's end card and music, then make the MP4.</p>
+  <div class="st-sizes">
+    {% for k, l, w, h in video_sizes %}
+    <button class="st-size" type="submit" formaction="/studio/videos" name="vsize" value="{{ k }}">
+      <span class="st-size-shape st-size-video" style="aspect-ratio: {{ w }} / {{ h }}; {{ 'width: 64px' if w >= h else 'height: 64px' }}"></span>
+      <strong>{{ l }}</strong><span class="small muted">{{ w }} × {{ h }}</span>
+    </button>
+    {% endfor %}
+  </div>
   <h2 class="st-new-h">Custom size</h2>
   <div class="st-inline-form st-custom">
     <label><span class="vh">Width</span><input name="w" type="number" min="100" max="6000" placeholder="Width" inputmode="numeric"></label>

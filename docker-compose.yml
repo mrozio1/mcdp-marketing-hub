@@ -193,6 +193,9 @@ services:
       META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:-}
       # Read-only use of Postiz's connected Facebook/Instagram channels for organic post stats.
       POSTIZ_DATABASE_URL: postgresql://postiz:${POSTGRES_PASSWORD}@postiz-postgres:5432/postiz
+      # Studio video captions from speech (Cloudflare Workers AI Whisper; same account as the AI images)
+      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
       GOOGLE_ADS_DEVELOPER_TOKEN: ${GOOGLE_ADS_DEVELOPER_TOKEN:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}

@@ -1,6 +1,9 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ADS_DB=/data/ads.db
 WORKDIR /srv
+# ffmpeg makes the Studio's videos; DejaVu is the caption font
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
