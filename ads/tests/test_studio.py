@@ -538,3 +538,166 @@ def test_canva_connect_flow(env, monkeypatch):
     assert "Import from Canva" in env["ed"].get(f"/studio?b={env['schulz']}").text
     assert env["ed"].get("/canva/connect").status_code in (200, 303)        # editors can't reach the sign-in
     assert env["ed"].get("/canva/connect", follow_redirects=False).headers["location"] != loc
+
+
+# ------------------------------------------------------------------ phase 2: the editor
+def make_design(c, pid, size="ig_square", title="Holiday hours", folder=None, template=None, w=None, h=None):
+    data = {"pid": str(pid), "size": size, "title": title}
+    if folder:
+        data["folder"] = str(folder)
+    if template:
+        data["template"] = str(template)
+    if w:
+        data.update(w=str(w), h=str(h))
+    r = c.post("/studio/designs", data=data, follow_redirects=False)
+    assert r.status_code == 303, r.text
+    m = re.search(r"/studio/edit/(\d+)", r.headers["location"])
+    assert m, r.headers["location"]
+    return int(m.group(1)), r.headers["location"]
+
+
+def test_new_design_page_and_create(env):
+    ed, studio, pid = env["ed"], env["studio"], env["schulz"]
+    page = ed.get(f"/studio/new?b={pid}").text
+    assert "Instagram post" in page and "1080 × 1920" in page and "Flyer" in page
+    fid = studio.add_folder(pid, "Holiday", "Ed")
+    iid, loc = make_design(ed, pid, folder=fid)
+    assert loc.endswith("?fresh=1")
+    it = studio.item(iid)
+    assert it["kind"] == "design" and (it["width"], it["height"]) == (1080, 1080) and it["folder_id"] == fid
+    assert it["size_key"] == "ig_square" and it["source"] == "studio" and it["status"] == "draft"
+    assert ed.get(f"/studio/designs/{iid}/doc").json() == {"w": 1080, "h": 1080, "objects": [], "background": "#ffffff"}
+    page = ed.get(f"/studio/edit/{iid}").text
+    assert "fabric-5.3.0.min.js" in page and "studio-editor.js" in page and '"canEdit": true' in page
+    assert "Holiday hours" in page
+    # custom sizes are checked
+    r = ed.post("/studio/designs", data={"pid": str(pid), "size": "custom", "w": "50", "h": "50"}, follow_redirects=False)
+    assert "/studio/new" in r.headers["location"]
+    cid, _ = make_design(ed, pid, size="custom", w=1500, h=500)
+    assert (studio.item(cid)["width"], studio.item(cid)["height"]) == (1500, 500)
+    assert "/studio/edit/" in ed.get(f"/studio/i/{iid}").text           # the file page opens the editor
+    assert "New design" in ed.get(f"/studio?b={pid}").text
+
+
+def test_save_design_doc_and_render(env):
+    ed, studio = env["ed"], env["studio"]
+    iid, _ = make_design(ed, env["schulz"], title="Promo")
+    doc = {"version": "5.3.0", "objects": [{"type": "textbox", "text": "Free consults", "role": "headline"}],
+           "background": "#0F7471", "w": 1080, "h": 1080, "v": 1}
+    files = {"doc": ("design.json", json.dumps(doc), "application/json")}
+    r = ed.post(f"/studio/designs/{iid}/save", files=files, data={"title": "Free consult promo"})
+    assert r.status_code == 200 and r.json()["rendered"] is False
+    assert ed.get(f"/studio/designs/{iid}/doc").json()["objects"][0]["text"] == "Free consults"
+    assert studio.item(iid)["title"] == "Free consult promo"
+    # with a picture: the library file and thumbnail become this version
+    png = png_bytes(1080, 1080, (15, 116, 113))
+    r = ed.post(f"/studio/designs/{iid}/save", files={**files, "png": ("d.png", png, "image/png")})
+    assert r.json()["rendered"] is True
+    assert ed.get(f"/studio/f/{iid}").content == png
+    assert any(e["kind"] == "edited" for e in studio.events(iid))
+    ed.post(f"/studio/designs/{iid}/save", files={**files, "png": ("d.png", png, "image/png")})
+    assert sum(e["kind"] == "edited" for e in studio.events(iid)) == 1       # not once per save
+    # bad saves
+    assert ed.post(f"/studio/designs/{iid}/save", files={"doc": ("d.json", "{not json", "application/json")}).status_code == 422
+    r = ed.post(f"/studio/designs/{iid}/save", files={**files, "png": ("d.png", b"GIF89a", "image/png")})
+    assert r.status_code == 422
+    big = {"objects": [{"type": "image", "src": "data:image/png;base64," + "A" * 2_100_000}]}
+    assert ed.post(f"/studio/designs/{iid}/save", files={"doc": ("d.json", json.dumps(big), "application/json")}).status_code == 422
+    assert env["vi"].post(f"/studio/designs/{iid}/save", files=files).status_code in (403, 200)
+    assert studio.design_doc(iid)["objects"][0]["text"] == "Free consults"     # viewer's save didn't land
+    # trashed designs can't be saved
+    studio.trash(iid)
+    assert ed.post(f"/studio/designs/{iid}/save", files=files).status_code == 422
+    studio.restore(iid)
+
+
+def test_resize_copy_and_templates(env):
+    ed, studio, pid = env["ed"], env["studio"], env["schulz"]
+    iid, _ = make_design(ed, pid, title="Fall promo")
+    files = {"doc": ("design.json", json.dumps({"objects": [{"type": "rect"}], "w": 1080, "h": 1080}), "application/json")}
+    ed.post(f"/studio/designs/{iid}/save", files=files)
+    r = ed.post(f"/studio/designs/{iid}/copy", json={"size": "story"})
+    assert r.status_code == 200
+    nid = r.json()["id"]
+    n = studio.item(nid)
+    assert n["title"] == "Fall promo (Story or Reel cover)" and (n["width"], n["height"]) == (1080, 1920)
+    doc = ed.get(f"/studio/designs/{nid}/doc").json()
+    assert doc["resize_from"] == {"w": 1080, "h": 1080} and doc["w"] == 1080 and doc["h"] == 1920
+    assert ed.post(f"/studio/designs/{iid}/copy", json={"size": "nope"}).status_code == 422
+    # save as a template, then start a new design from it in another size
+    r = ed.post("/studio/templates", data={"name": "Fall promo layout", "scope": "brand", "pid": str(pid)},
+                files={**files, "png": ("t.png", png_bytes(400, 400), "image/png")})
+    tid = r.json()["id"]
+    t = studio.template(tid)
+    assert t["practice_id"] == pid and (t["w"], t["h"]) == (1080, 1080)
+    assert ed.get(f"/studio/templates/{tid}/thumb").headers["content-type"] == "image/jpeg"
+    assert "Fall promo layout" in ed.get(f"/studio/new?b={pid}").text
+    assert "Fall promo layout" not in ed.get(f"/studio/new?b={env['havens']}").text     # brand-only
+    did, loc = make_design(ed, pid, size="custom", template=tid, w=1200, h=630)
+    assert not loc.endswith("fresh=1")
+    d = studio.design_doc(did)
+    assert d["resize_from"] == {"w": 1080, "h": 1080} and d["objects"] == [{"type": "rect"}]
+    assert ed.post("/studio/templates", data={"name": "", "scope": "all"}, files=files).status_code == 422
+    ed.post(f"/studio/templates/{tid}/delete")
+    assert studio.template(tid) is None
+
+
+def test_editor_uploads_media_and_fonts(env):
+    ed, studio, pid = env["ed"], env["studio"], env["havens"]
+    iid, _ = make_design(ed, pid, title="With photo")
+    r = ed.post(f"/studio/designs/{iid}/upload", files={"file": ("porch.png", png_bytes(900, 600), "image/png")})
+    assert r.status_code == 200, r.text
+    up = r.json()
+    n = studio.item(up["id"])
+    assert n["kind"] == "image" and studio.folder(n["folder_id"])["name"] == "Design uploads" and n["practice_id"] == pid
+    assert ed.get(up["src"]).status_code == 200                          # served from the hub's own address
+    r = ed.post(f"/studio/designs/{iid}/upload", files={"file": ("x.heic", b"....", "image/heic")})
+    assert r.status_code == 422
+    m = ed.get(f"/studio/media?pid={pid}").json()
+    assert any(x["id"] == up["id"] for x in m["library"]) and m["photos"]   # a brand-kit photo from an earlier test
+    assert m["photos"][0]["src"].endswith("?full=1")
+    assert ed.get(m["photos"][0]["src"]).status_code == 200
+    # brand fonts
+    assert studio.brand_fonts(pid) == studio.DEFAULT_FONTS
+    r = ed.post(f"/studio/brand/{pid}/fonts", json={"heading": "Fraunces", "body": "Lato"})
+    assert r.json()["heading"] == "Fraunces" and studio.brand_fonts(pid)["body"] == "Lato"
+    assert ed.post(f"/studio/brand/{pid}/fonts", json={"heading": "Comic Sans MS", "body": "Lato"}).status_code == 422
+    assert '"heading": "Fraunces"' in ed.get(f"/studio/edit/{iid}").text
+
+
+def test_design_check_and_ai_copy(env, monkeypatch):
+    ed, studio, pid = env["ed"], env["studio"], env["schulz"]
+    from app import ai, brand
+    brand.save(pid, {"never_say": "cheap"}, "Ed")
+    iid, _ = make_design(ed, pid)
+    probs = ed.post(f"/studio/designs/{iid}/check", json={"texts": ["Cheap braces, painless and guaranteed", "Happy Thanksgiving"]}).json()["problems"]
+    assert any("never say" in p for p in probs) and any("guarantee" in p for p in probs)
+    assert not any("Happy Thanksgiving" in p for p in probs)
+    seen = {}
+
+    def fake(messages, temperature=0.3, max_tokens=4000):
+        seen["prompt"] = messages[1]["content"]
+        return {"options": [{"headline": "Closed for Thanksgiving", "subhead": "Back Monday at 8.", "cta": ""},
+                            {"headline": "Cheap smiles", "subhead": "x", "cta": "Call us"}]}
+    monkeypatch.setattr(ai, "json_chat", fake)
+    r = ed.post("/studio/ai/copy", json={"pid": pid, "brief": "Closed Thursday and Friday", "size": "1080 × 1080"})
+    opts = r.json()["options"]
+    assert opts[0]["headline"] == "Closed for Thanksgiving" and opts[0]["notes"] == []
+    assert any("never say" in n for n in opts[1]["notes"])
+    assert "Schulz Orthodontics" in seen["prompt"] and "Closed Thursday" in seen["prompt"] and "cheap" in seen["prompt"]
+    assert ed.post("/studio/ai/copy", json={"pid": pid, "brief": ""}).status_code == 422
+    r = ed.post("/studio/ai/image", json={"pid": 0, "idea": "porch"})
+    assert r.status_code == 422 and "practice" in r.json()["error"]
+
+
+def test_design_shows_as_a_picture_on_share_pages(env):
+    ed, studio, TC, main = env["ed"], env["studio"], env["TestClient"], env["main"]
+    iid, _ = make_design(ed, env["schulz"], title="Shared design")
+    s = studio.create_share("Ed", item_id=iid)
+    with TC(main.app) as guest:
+        page = guest.get(f"/s/{s['token']}").text
+        assert f'<img src="/s/{s["token"]}/f/{iid}"' in page
+        assert guest.get(f"/s/{s['token']}/f/{iid}").headers["content-type"] == "image/png"
+    studio.trash(iid)
+    studio.delete_forever(iid)
+    assert not os.path.exists(studio.design_path(iid))

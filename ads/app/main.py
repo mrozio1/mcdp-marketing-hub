@@ -1451,6 +1451,9 @@ def brand_image_file(request: Request, aid: int, v: str = ""):
     a = images.asset(aid)
     if not a or not images.path(a):
         return Response(status_code=404)
+    if request.query_params.get("full") == "1":        # the Studio editor places the original
+        from fastapi.responses import FileResponse
+        return FileResponse(images.path(a), headers={"Cache-Control": "private, max-age=86400"})
     try:
         if v in images.VARIANTS:
             data = images.render(a, v, images.logo(a["practice_id"]))
@@ -3964,7 +3967,7 @@ def _thumb_response(it):
         return FileResponse(studio.thumb_path(it["id"]), media_type="image/jpeg",
                             headers={"Cache-Control": "private, max-age=600"})
     kind = (it or {}).get("kind", "file")
-    label = {"video": "VIDEO", "pdf": "PDF", "slides": "SLIDES", "doc": "DOC", "audio": "AUDIO", "image": "IMAGE"}.get(kind, "FILE")
+    label = {"design": "DESIGN", "video": "VIDEO", "pdf": "PDF", "slides": "SLIDES", "doc": "DOC", "audio": "AUDIO", "image": "IMAGE"}.get(kind, "FILE")
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">'
            f'<rect width="320" height="240" fill="#EEEBE5"/><text x="160" y="128" text-anchor="middle" '
            f'font-family="Public Sans, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="3" fill="#8A857C">{label}</text></svg>')
@@ -4334,3 +4337,301 @@ def _notify_share_owner(request, s, it, decision, who, comment):
             pass
     import threading as _t
     _t.Thread(target=go, daemon=True).start()
+
+
+# ---------- Studio editor (phase 2): designs made in the hub ----------
+async def _form_text(form, key):
+    """A big text part (the editor sends the design as a file part, since plain fields stop at 1 MB)."""
+    v = form.get(key)
+    if hasattr(v, "read"):
+        return (await v.read(studio.MAX_DOC + 1)).decode("utf-8", errors="replace")
+    return v or ""
+
+
+def _design(iid):
+    it = studio.item(iid)
+    return it if it and it["kind"] == "design" else None
+
+
+def _media_for(pid):
+    """Pictures the editor can place: the brand kit's logo, photos and AI images, and Studio pictures."""
+    out = {"logo": [], "photos": [], "ai": [], "library": []}
+    if pid:
+        for a in images.assets(pid):
+            key = {"logo": "logo", "photo": "photos", "generated": "ai"}.get(a["kind"])
+            if key:
+                out[key].append({"src": f"/brand-images/{a['id']}?full=1", "thumb": f"/brand-images/{a['id']}",
+                                 "w": a["width"], "h": a["height"], "name": a["label"] or a["kind"]})
+    names = {f["id"]: f["name"] for f in studio.folders(pid if pid is not None else studio.MCDP)}
+    for it in studio.items(pid if pid is not None else studio.MCDP, limit=120):
+        if it["kind"] == "image":
+            out["library"].append({"src": f"/studio/img/{it['id']}", "thumb": f"/studio/t/{it['id']}", "w": it["width"],
+                                   "h": it["height"], "name": it["title"], "id": it["id"],
+                                   "folder": names.get(it["folder_id"], "")})
+    return out
+
+
+@app.get("/studio/new", response_class=HTMLResponse)
+def studio_new(request: Request, b: str = "", f: str = ""):
+    if (r := guard(request)):
+        return r
+    pid = _brand_in(b)
+    if pid is None:
+        pid = request.session.get("studio_brand", studio.MCDP)
+    fold = studio.folder(int(f)) if f.isdigit() else None
+    if fold and fold["practice_id"] != pid:
+        fold = None
+    plist = db.practices()
+    return page(request, "studio_new.html", pid=pid, folder=fold, brands=studio.brands(plist, counts=False),
+                brand_name=studio.brand_name(pid), sizes=studio.SIZES, groups=["Social", "Google", "Print"],
+                templates=studio.templates(pid), all_folders={p: studio.folders(p) for p in ([studio.MCDP] + [x["id"] for x in plist])})
+
+
+@app.post("/studio/designs")
+async def studio_design_create(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    pid = _brand_in(form.get("pid"))
+    fv = form.get("folder")
+    fid = int(fv) if fv and str(fv).isdigit() else None
+    try:
+        if pid is None:
+            raise studio.StudioError("Pick a brand.")
+        size = studio.size_for(form.get("size"), form.get("w"), form.get("h"))
+        doc = None
+        tv = form.get("template")
+        if tv and str(tv).isdigit():
+            t = studio.template(int(tv))
+            if t:
+                doc = t["doc"]
+                if (t["w"], t["h"]) != (size["w"], size["h"]):
+                    doc["resize_from"] = {"w": t["w"], "h": t["h"]}
+                doc["w"], doc["h"] = size["w"], size["h"]
+        iid = studio.create_design(pid, fid, size, form.get("title") or "", actor(request), doc)
+    except studio.StudioError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/studio/new?b={pid if pid is not None else ''}", status_code=303)
+    return RedirectResponse(f"/studio/edit/{iid}" + ("" if doc else "?fresh=1"), status_code=303)
+
+
+@app.get("/studio/edit/{iid}", response_class=HTMLResponse)
+def studio_edit(request: Request, iid: int, fresh: int = 0):
+    if (r := guard(request)):
+        return r
+    it = _design(iid)
+    if not it:
+        flash(request, "That design is gone.", "error")
+        return RedirectResponse("/studio", status_code=303)
+    pid = it["practice_id"]
+    look = _brand_look(pid)
+    kit_colors = []
+    for c in (look["primary"], look["accent"]):
+        if c and c not in kit_colors:
+            kit_colors.append(c)
+    return page(request, "studio_edit.html", it=it, brand_name=studio.brand_name(pid), folder=studio.folder(it["folder_id"]),
+                look=look, colors=kit_colors, fonts=studio.brand_fonts(pid if pid is not None else studio.MCDP),
+                font_list=studio.FONTS, sizes=studio.SIZES, fresh=fresh, statuses=studio.STATUSES,
+                templates=studio.templates(pid), ai_on=ai.available(), is_practice=bool(pid),
+                logo=(images.logo(pid) or {}).get("id") if pid else None)
+
+
+@app.get("/studio/designs/{iid}/doc")
+def studio_design_doc(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    if not _design(iid):
+        return JSONResponse({"error": "That design is gone."}, status_code=404)
+    return JSONResponse(studio.design_doc(iid), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/studio/designs/{iid}/save")
+async def studio_design_save(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    form = await request.form()
+    png = form.get("png")
+    data = await png.read() if hasattr(png, "read") else None
+    try:
+        it = await asyncio.to_thread(studio.save_design, iid, await _form_text(form, "doc"), data, actor(request))
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    if form.get("title"):
+        it = studio.update(iid, actor(request), title=form.get("title"))
+    return {"ok": True, "saved": it["updated_at"], "title": it["title"], "rendered": bool(data)}
+
+
+@app.post("/studio/designs/{iid}/copy")
+async def studio_design_copy(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    try:
+        size = studio.size_for(j.get("size"), j.get("w"), j.get("h"))
+        nid = studio.copy_design(iid, size, actor(request))
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"id": nid, "url": f"/studio/edit/{nid}"}
+
+
+@app.post("/studio/designs/{iid}/upload")
+async def studio_design_upload(request: Request, iid: int, file: UploadFile = File(...)):
+    """A picture added from the computer while designing: it's kept in the brand's 'Design uploads' folder."""
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    it = _design(iid)
+    if not it:
+        return JSONResponse({"error": "That design is gone."}, status_code=404)
+    data = await file.read(40 * 1024 * 1024 + 1)
+    if len(data) > 40 * 1024 * 1024:
+        return JSONResponse({"error": "Pictures up to 40 MB."}, status_code=422)
+    mime = file.content_type or ""
+    if not mime.startswith("image/") or "heic" in mime or "heif" in mime:
+        return JSONResponse({"error": "Use a JPEG, PNG, WebP or SVG picture (export iPhone photos as JPEG)."}, status_code=422)
+    import tempfile
+    fd, path = tempfile.mkstemp(dir=studio._dir("tmp"))
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    pid = it["practice_id"] if it["practice_id"] is not None else studio.MCDP
+    try:
+        nid = await asyncio.to_thread(studio.add_file, path, file.filename or "picture", pid, studio.media_folder(pid),
+                                      actor(request), mime)
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    n = studio.item(nid)
+    return {"id": nid, "src": f"/studio/img/{nid}", "thumb": f"/studio/t/{nid}", "w": n["width"], "h": n["height"],
+            "name": n["title"]}
+
+
+@app.get("/studio/img/{iid}")
+async def studio_img(request: Request, iid: int):
+    """A Studio picture from the hub's own address (the editor can't export a design holding pictures from elsewhere)."""
+    from fastapi.responses import FileResponse
+    if not authed(request):
+        return Response(status_code=401)
+    it = studio.item(iid)
+    if not it or it["kind"] not in ("image", "design"):
+        return Response(status_code=404)
+    p = studio.local_path(it)
+    if p:
+        return FileResponse(p, media_type=it["mime"] or None, headers={"Cache-Control": "private, max-age=86400"})
+    try:
+        url = await asyncio.to_thread(studio.download_url, it)
+        import urllib.request as _u
+
+        def fetch():
+            with _u.urlopen(url, timeout=60) as r:
+                return r.read(60 * 1024 * 1024)
+        data = await asyncio.to_thread(fetch)
+    except Exception:
+        return Response(status_code=503)
+    return Response(data, media_type=it["mime"] or "application/octet-stream", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/studio/media")
+def studio_media(request: Request, pid: str = ""):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    b = _brand_in(pid)
+    return _media_for(b)
+
+
+@app.post("/studio/brand/{pid}/fonts")
+async def studio_brand_fonts(request: Request, pid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    if _brand_in(pid) is None:
+        return JSONResponse({"error": "Pick a brand."}, status_code=422)
+    try:
+        studio.set_brand_fonts(pid, j.get("heading"), j.get("body"))
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"ok": True, **studio.brand_fonts(pid)}
+
+
+@app.post("/studio/templates")
+async def studio_template_save(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    form = await request.form()
+    png = form.get("png")
+    data = await png.read() if hasattr(png, "read") else None
+    scope = _brand_in(form.get("pid")) if form.get("scope") == "brand" else None
+    try:
+        tid = studio.save_template(form.get("name"), await _form_text(form, "doc"), data, scope, actor(request))
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"id": tid}
+
+
+@app.get("/studio/templates/{tid}/doc")
+def studio_template_doc(request: Request, tid: int):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    t = studio.template(tid)
+    return JSONResponse(t["doc"]) if t else JSONResponse({"error": "gone"}, status_code=404)
+
+
+@app.get("/studio/templates/{tid}/thumb")
+def studio_template_thumb(request: Request, tid: int):
+    from fastapi.responses import FileResponse
+    if not authed(request):
+        return Response(status_code=401)
+    p = studio.template_thumb(tid)
+    return FileResponse(p, headers={"Cache-Control": "private, max-age=600"}) if os.path.exists(p) else _thumb_response(None)
+
+
+@app.post("/studio/templates/{tid}/delete")
+def studio_template_delete(request: Request, tid: int):
+    if (r := guard(request)):
+        return r
+    studio.delete_template(tid)
+    if "application/json" in request.headers.get("accept", ""):
+        return {"ok": True}
+    flash(request, "Template removed. Designs made from it are unchanged.")
+    return RedirectResponse(_studio_back(request), status_code=303)
+
+
+@app.post("/studio/ai/copy")
+async def studio_ai_copy(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    pid = _brand_in(j.get("pid"))
+    try:
+        got = await asyncio.to_thread(studio.ai_copy, pid or 0, j.get("brief"), j.get("size") or "")
+    except (studio.StudioError, ai.AIError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"options": got}
+
+
+@app.post("/studio/ai/image")
+async def studio_ai_image(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    pid = _brand_in(j.get("pid"))
+    p = db.practice(pid) if pid else None
+    if not p:
+        return JSONResponse({"error": "AI pictures are made for a practice; open a practice's design."}, status_code=422)
+    idea = (j.get("idea") or "").strip()[:300]
+    if not idea:
+        return JSONResponse({"error": "Describe the picture."}, status_code=422)
+    try:
+        ids = await asyncio.to_thread(images.generate, p, idea, 1, None, actor(request), idea)
+    except images.ImageError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    a = images.asset(ids[0])
+    return {"src": f"/brand-images/{a['id']}?full=1", "thumb": f"/brand-images/{a['id']}", "w": a["width"], "h": a["height"],
+            "name": idea[:60]}
+
+
+@app.post("/studio/designs/{iid}/check")
+async def studio_design_check(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    it = _design(iid)
+    j = await request.json()
+    texts = [str(t)[:2000] for t in (j.get("texts") or [])][:60]
+    return {"problems": studio.check_texts(it["practice_id"] if it else None, texts)}

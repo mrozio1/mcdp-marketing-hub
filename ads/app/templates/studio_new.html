@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}New design · Studio{% endblock %}
+{% block mainclass %}wrap st-wrap{% endblock %}
+{% block content %}
+<p class="st-crumb"><a href="/studio?b={{ pid }}{% if folder %}&f={{ folder.id }}{% endif %}">← {{ brand_name }}{% if folder %} / {{ folder.name }}{% endif %}</a></p>
+<h1>New design</h1>
+<form method="post" action="/studio/designs" class="st-new" id="st-new">
+  <div class="st-share-grid st-new-where">
+    <label>Brand
+      <select name="pid" data-brand-select>{% for b in brands %}<option value="{{ b.id }}" {% if b.id == pid %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select></label>
+    <label>Folder
+      <select name="folder" data-folder-select><option value="">No folder</option>
+        {% for f in all_folders.get(pid, []) %}<option value="{{ f.id }}" {% if folder and f.id == folder.id %}selected{% endif %}>{{ f.name }}</option>{% endfor %}</select></label>
+  </div>
+  <label>Name <span class="muted small">(optional; you can change it in the editor)</span><input name="title" maxlength="200" placeholder="e.g. Thanksgiving post"></label>
+
+  <input type="hidden" name="template" value="" data-template>
+  {% for g in groups %}
+  <h2 class="st-new-h">{{ g }}</h2>
+  <div class="st-sizes">
+    {% for k, l, grp, w, h in sizes if grp == g %}
+    <button class="st-size" type="submit" name="size" value="{{ k }}">
+      <span class="st-size-shape" style="aspect-ratio: {{ w }} / {{ h }}; {{ 'width: 64px' if w >= h else 'height: 64px' }}"></span>
+      <strong>{{ l }}</strong><span class="small muted">{{ w }} × {{ h }}</span>
+    </button>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <h2 class="st-new-h">Custom size</h2>
+  <div class="st-inline-form st-custom">
+    <label><span class="vh">Width</span><input name="w" type="number" min="100" max="6000" placeholder="Width" inputmode="numeric"></label>
+    <span aria-hidden="true">×</span>
+    <label><span class="vh">Height</span><input name="h" type="number" min="100" max="6000" placeholder="Height" inputmode="numeric"></label>
+    <span class="small muted">pixels</span>
+    <button class="btn btn-small btn-quiet" type="submit" name="size" value="custom">Start</button>
+  </div>
+
+  {% if templates %}
+  <h2 class="st-new-h">The team's templates</h2>
+  <p class="small muted">Starts from a saved layout, re-fitted to its size. Built-in layouts are in the editor's Templates panel.</p>
+  <ul class="st-tpls">
+    {% for t in templates %}
+    <li><button class="st-tpl" type="submit" name="size" value="custom" data-tpl="{{ t.id }}" data-w="{{ t.w }}" data-h="{{ t.h }}">
+      <img src="/studio/templates/{{ t.id }}/thumb" alt="" loading="lazy"><strong>{{ t.name }}</strong>
+      <span class="small muted">{{ t.w }} × {{ t.h }}{% if t.practice_id is none %} · all brands{% endif %}</span></button></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</form>
+<script type="application/json" id="st-folders">{{ all_folders|tojson }}</script>
+<script>
+(() => {
+  const form = document.getElementById("st-new");
+  const bs = form.querySelector("[data-brand-select]"), fs = form.querySelector("[data-folder-select]");
+  const all = JSON.parse(document.getElementById("st-folders").textContent);
+  const esc = s => s.replace(/[<&"]/g, c => ({ "<": "&lt;", "&": "&amp;", '"': "&quot;" })[c]);
+  bs.addEventListener("change", () => {
+    fs.innerHTML = '<option value="">No folder</option>' + (all[bs.value] || []).map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join("");
+  });
+  form.addEventListener("click", e => {
+    const t = e.target.closest("[data-tpl]");
+    form.querySelector("[data-template]").value = t ? t.dataset.tpl : "";
+    if (t) { form.w.value = t.dataset.w; form.h.value = t.dataset.h; }
+  });
+})();
+</script>
+{% endblock %}

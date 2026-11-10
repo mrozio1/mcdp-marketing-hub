@@ -63,7 +63,8 @@
         {% endif %}
         {% if can_edit and view == 'brand' %}
           {% if canva_on %}<form method="post" action="/studio/canva/import" data-busy="Starting…"><button class="btn btn-quiet st-pill" type="submit" {% if canva_running %}disabled{% endif %}>Import from Canva</button></form>{% endif %}
-          <label class="btn st-pill st-upload-btn">+ Add files<input type="file" multiple data-upload-input class="vh"></label>
+          <label class="btn btn-quiet st-pill st-upload-btn">+ Add files<input type="file" multiple data-upload-input class="vh"></label>
+          <a class="btn st-pill" href="/studio/new?b={{ pid }}{% if folder %}&f={{ folder.id }}{% endif %}">+ New design</a>
         {% endif %}
       </div>
     </div>
@@ -141,7 +142,7 @@
           {% if can_edit %}<label class="st-tick"><span class="vh">Select {{ it.title }}</span><input type="checkbox" name="ids" value="{{ it.id }}"></label>{% endif %}
           <a href="/studio/i/{{ it.id }}" class="st-card-link">
             <span class="st-thumb st-k-{{ it.kind }}">
-              <img src="/studio/t/{{ it.id }}" alt="" loading="lazy">
+              <img src="/studio/t/{{ it.id }}?v={{ (it.updated_at or "")|urlencode }}" alt="" loading="lazy">
               {% if it.kind == 'video' %}<span class="st-play" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg></span>{% if it.duration %}<span class="st-dur">{{ dur(it.duration) }}</span>{% endif %}{% endif %}
               {% if it.pages and it.pages > 1 %}<span class="st-dur">{{ it.pages }} pages</span>{% endif %}
             </span>
@@ -159,7 +160,7 @@
       {% elif view == 'brand' %}
       <div class="empty st-empty" data-dropzone-hint>
         {% if q or status %}Nothing here matches.{% else %}
-        <p><strong>Drop designs, photos and videos here</strong>{% if can_edit %}, or use + Add files{% endif %}.</p>
+        <p><strong>Drop designs, photos and videos here</strong>{% if can_edit %}, use + Add files, or make one with + New design{% endif %}.</p>
         <p class="small">Anything up to 4 GB. {% if sp_ready %}Files are kept on the Studio SharePoint site.{% else %}Files are kept on the NAS until SharePoint is linked (Connections → Studio).{% endif %}</p>
         {% endif %}
       </div>

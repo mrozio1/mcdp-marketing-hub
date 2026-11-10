@@ -14,3 +14,7 @@ Copyright (c) 2026 Dicecodes and AdForge contributors. OpenAdKit in turn credits
 **marketingskills** (https://github.com/coreyhaines31/marketingskills, MIT) and claude-ads.
 The prompts were condensed and rewritten for dental and orthodontic practices, Google and Meta
 only, and the hub's brand kits and live account data.
+
+The Studio editor uses **Fabric.js** 5.3.0 (http://fabricjs.com, https://github.com/fabricjs/fabric.js),
+MIT License, Copyright (c) 2008-2015 Printio (Juriy Zaytsev, Maxim Chernyak), unmodified, in
+`app/static/vendor/fabric-5.3.0.min.js`.

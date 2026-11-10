@@ -49,14 +49,14 @@
   {% set rv = reviews.get(it.id) %}
   <article class="sh-item" id="i{{ it.id }}">
     <div class="sh-media sh-k-{{ it.kind }}">
-      {% if it.kind == 'image' %}<img src="/s/{{ s.token }}/f/{{ it.id }}" alt="{{ it.title }}" loading="lazy">
+      {% if it.kind in ('image', 'design') %}<img src="/s/{{ s.token }}/f/{{ it.id }}" alt="{{ it.title }}" loading="lazy">
       {% elif it.kind == 'video' %}<video src="/s/{{ s.token }}/f/{{ it.id }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/s/{{ s.token }}/t/{{ it.id }}"{% endif %} {% if not s.allow_download %}controlslist="nodownload"{% endif %}></video>
       {% elif it.kind == 'audio' %}<audio src="/s/{{ s.token }}/f/{{ it.id }}" controls preload="metadata"></audio>
       {% else %}<img src="/s/{{ s.token }}/t/{{ it.id }}" alt="" loading="lazy">{% endif %}
     </div>
     <div class="sh-side">
       <h2>{{ it.title }}</h2>
-      <p class="small muted">{% if it.kind == 'pdf' and it.pages %}{{ it.pages }}-page PDF{% else %}{{ it.kind|capitalize }}{% endif %}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}</p>
+      <p class="small muted">{% if it.kind == 'pdf' and it.pages %}{{ it.pages }}-page PDF{% elif it.kind == 'design' %}Picture{% else %}{{ it.kind|capitalize }}{% endif %}{% if it.width and it.height %} · {{ it.width }}×{{ it.height }}{% endif %}</p>
       <div class="btn-row">
         {% if it.kind == 'pdf' %}<a class="btn btn-quiet sh-btn-quiet" href="/s/{{ s.token }}/f/{{ it.id }}" target="_blank" rel="noopener">View the PDF</a>{% endif %}
         {% if s.allow_download %}<a class="btn sh-btn" href="/s/{{ s.token }}/f/{{ it.id }}?dl=1">Download</a>{% endif %}

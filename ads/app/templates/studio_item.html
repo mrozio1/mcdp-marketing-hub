@@ -16,8 +16,8 @@
 
 <div class="st-item">
   <section class="st-preview st-k-{{ it.kind }}" aria-label="Preview">
-    {% if it.kind == 'image' %}
-      <img src="/studio/f/{{ it.id }}" alt="{{ it.title }}">
+    {% if it.kind in ('image', 'design') %}
+      <img src="/studio/f/{{ it.id }}?v={{ it.updated_at|urlencode }}" alt="{{ it.title }}">
     {% elif it.kind == 'video' %}
       <video src="/studio/f/{{ it.id }}" controls preload="metadata" playsinline {% if it.has_thumb %}poster="/studio/t/{{ it.id }}"{% endif %} data-needs-thumb="{{ 0 if it.has_thumb else 1 }}" data-id="{{ it.id }}"></video>
     {% elif it.kind == 'audio' %}
@@ -34,7 +34,8 @@
       · added {{ it.created_at[:10] }}{% if it.created_by %} by {{ it.created_by }}{% endif %}
     </p>
     <div class="btn-row">
-      <a class="btn" href="/studio/f/{{ it.id }}?dl=1">Download</a>
+      {% if it.kind == 'design' and not it.trashed_at %}<a class="btn" href="/studio/edit/{{ it.id }}">{{ 'Edit the design' if can_edit else 'Open the design' }}</a>{% endif %}
+      <a class="btn {{ 'btn-quiet' if it.kind == 'design' }}" href="/studio/f/{{ it.id }}?dl=1">Download</a>
       {% if it.sp_web %}<a class="btn btn-quiet" href="{{ it.sp_web }}" target="_blank" rel="noopener">Open in SharePoint</a>{% endif %}
       {% if it.canva_url %}<a class="btn btn-quiet" href="{{ it.canva_url }}" target="_blank" rel="noopener">Edit in Canva</a>{% endif %}
     </div>
@@ -99,6 +100,7 @@
           {% elif e.kind == 'shared' %}{{ e.who or 'Someone' }} made a share link
           {% elif e.kind == 'unshared' %}{{ e.who or 'Someone' }} turned a share link off
           {% elif e.kind == 'new_version' %}New version{% if e.comment %} ({{ e.comment }}){% endif %}
+          {% elif e.kind == 'edited' %}{{ e.who or 'Someone' }} edited the design
           {% elif e.kind == 'trashed' %}{{ e.who or 'Someone' }} moved it to the trash
           {% elif e.kind == 'restored' %}{{ e.who or 'Someone' }} restored it
           {% else %}{{ e.kind }}{% endif %}</li>
