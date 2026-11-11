@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 import urllib.error
@@ -37,27 +38,80 @@ def keys():
     return {"pixabay": bool(db.get_setting("pixabay_key")), "freesound": bool(db.get_setting("freesound_key"))}
 
 
+def _tidy_key(k):
+    """Keys pasted with spaces, quotes, or as part of a link ("...?key=123-abc&q=...")."""
+    k = (k or "").strip().strip("'\"").strip()
+    m = re.search(r"(?:key|token)=([^&\s]+)", k)
+    return (m.group(1) if m else k).strip() or None
+
+
 def save_keys(pixabay=None, freesound=None):
     if pixabay is not None:
-        db.set_setting("pixabay_key", pixabay.strip() or None)
+        db.set_setting("pixabay_key", _tidy_key(pixabay))
     if freesound is not None:
-        db.set_setting("freesound_key", freesound.strip() or None)
+        db.set_setting("freesound_key", _tidy_key(freesound))
 
 
-def _get(url, timeout=30):
-    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "MCDP-Hub/1.0"})
+UA = "Mozilla/5.0 (compatible; MCDP-Hub/1.0; +https://ads.mcdp.com)"
+HEADERS = {"Accept": "application/json, */*;q=0.8", "Accept-Language": "en-US,en;q=0.9", "User-Agent": UA}
+
+
+def _blocked(code, body):
+    """A firewall page (Cloudflare and the like), not an answer from the service itself."""
+    b = (body or "").lower()
+    return code in (403, 503) and ("<html" in b or "cloudflare" in b or "error code: 10" in b or "attention required" in b or not b.strip())
+
+
+def _curl(url, timeout, out_path=None):
+    """The same request through curl, which firewalls that turn away Python's own client normally accept."""
+    exe = shutil.which("curl")
+    if not exe:
+        return None
+    args = [exe, "-sS", "-L", "--max-time", str(timeout), "-A", UA, "-H", "Accept: application/json, */*;q=0.8"]
+    args += ["-o", out_path, "-w", "%{http_code}", url] if out_path else ["-w", "\n%{http_code}", url]
+    try:
+        r = subprocess.run(args, capture_output=True, timeout=timeout + 10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    text = r.stdout.decode(errors="replace")
+    if out_path:
+        return int(text.strip() or 0), ""
+    body, _, code = text.rpartition("\n")
+    return int(code.strip() or 0), body
+
+
+def _explain(code, body, service):
+    b = (body or "")[:300]
+    if code == 429:
+        return StockError("Too many searches in a minute; wait a moment and try again.")
+    if code in (400, 401) or "invalid" in b.lower() and "key" in b.lower():
+        return StockError(f"{service} says the key isn't right (HTTP {code}). Copy it again from your {service} account and paste it "
+                          f"on Connections → Stock and music.")
+    if _blocked(code, body):
+        return StockError(f"{service}'s firewall turned the hub away (HTTP {code}), so this isn't the key. Try again in a few "
+                          f"minutes; if it keeps happening, tell Claude this message.")
+    return StockError(f"{service} didn't answer the search (HTTP {code}): {re.sub(r'<[^>]+>', ' ', b).strip()[:160]}")
+
+
+def _get(url, timeout=30, service="The service"):
+    req = urllib.request.Request(url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        raw = e.read().decode(errors="replace")[:200]
-        if e.code in (400, 401, 403):
-            raise StockError(f"The service didn't accept the key (HTTP {e.code}). Check it on Connections → Stock and music.")
-        if e.code == 429:
-            raise StockError("Too many searches in a minute; wait a moment and try again.")
-        raise StockError(f"The search didn't work (HTTP {e.code}): {raw}")
+        code, body = e.code, e.read().decode(errors="replace")
     except urllib.error.URLError as e:
-        raise StockError(f"Couldn't reach the service: {e.reason}")
+        raise StockError(f"Couldn't reach {service}: {e.reason}")
+    if _blocked(code, body):
+        got = _curl(url, timeout)
+        if got:
+            code, body = got
+            if code == 200:
+                try:
+                    return json.loads(body)
+                except ValueError:
+                    pass
+    raise _explain(code, body, service)
 
 
 def _cache(key, fn):
@@ -75,7 +129,7 @@ def _cache(key, fn):
 
 # ------------------------------------------------------------------ Pixabay videos
 def pixabay_search(q, orientation="", page=1):
-    key = db.get_setting("pixabay_key")
+    key = _tidy_key(db.get_setting("pixabay_key"))
     if not key:
         raise StockError("Stock video search needs a free Pixabay key. An admin adds it on Connections → Stock and music.")
     q = re.sub(r"\s+", " ", q or "").strip()[:100]
@@ -83,7 +137,7 @@ def pixabay_search(q, orientation="", page=1):
 
     def fetch():
         params = {"key": key, "q": q, "safesearch": "true", "per_page": 30, "page": page, "video_type": "film"}
-        got = _get(PIXABAY + "?" + urllib.parse.urlencode(params))
+        got = _get(PIXABAY + "?" + urllib.parse.urlencode(params), service="Pixabay")
         out = []
         for h in got.get("hits", []):
             vids = h.get("videos") or {}
@@ -110,7 +164,7 @@ def pixabay_search(q, orientation="", page=1):
 def _download(url, suffix):
     fd, path = tempfile.mkstemp(suffix=suffix, dir=studio._dir("tmp"))
     total = 0
-    req = urllib.request.Request(url, headers={"User-Agent": "MCDP-Hub/1.0"})
+    req = urllib.request.Request(url, headers={**HEADERS, "Accept": "*/*"})
     try:
         with urllib.request.urlopen(req, timeout=300) as r, os.fdopen(fd, "wb") as f:
             while True:
@@ -124,6 +178,12 @@ def _download(url, suffix):
     except StockError:
         os.remove(path)
         raise
+    except urllib.error.HTTPError as e:
+        got = _curl(url, 300, out_path=path) if e.code in (403, 503) else None
+        if got and got[0] == 200 and os.path.getsize(path) <= MAX_DL:
+            return path
+        os.remove(path)
+        raise StockError(f"Couldn't download it (HTTP {e.code}).")
     except Exception as e:
         os.remove(path)
         raise StockError(f"Couldn't download it: {e}")
@@ -155,7 +215,7 @@ def music_folder():
 
 
 def freesound_search(q, page=1):
-    key = db.get_setting("freesound_key")
+    key = _tidy_key(db.get_setting("freesound_key"))
     if not key:
         raise StockError("Music search needs a free Freesound key. An admin adds it on Connections → Stock and music.")
     q = re.sub(r"\s+", " ", q or "").strip()[:100] or "music"
@@ -164,7 +224,7 @@ def freesound_search(q, page=1):
     def fetch():
         params = {"query": q, "filter": 'license:"Creative Commons 0" duration:[15 TO 600]', "page": page, "page_size": 20,
                   "fields": "id,name,duration,username,tags,previews,url,avg_rating", "sort": "rating_desc", "token": key}
-        got = _get(f"{FREESOUND}/search/text/?" + urllib.parse.urlencode(params))
+        got = _get(f"{FREESOUND}/search/text/?" + urllib.parse.urlencode(params), service="Freesound")
         out = []
         for r in got.get("results", []):
             pv = r.get("previews") or {}
