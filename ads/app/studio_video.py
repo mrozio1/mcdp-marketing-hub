@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import db, images, studio
+from . import db, images, studio, video2
 
 SIZES = (("story", "Reel or Story", 1080, 1920), ("square", "Square post", 1080, 1080),
          ("portrait", "Portrait post", 1080, 1350), ("wide", "Wide (YouTube, website)", 1920, 1080))
@@ -154,15 +154,15 @@ def create_project(pid, folder_id, size_key, title="", by="", clip_ids=()):
                           width=size["w"], height=size["h"], duration=1)
     with db.conn() as c:
         c.execute("UPDATE studio_items SET size_key=? WHERE id=?", ("video_" + size_key, iid))
-    proj = {"type": "video", "w": size["w"], "h": size["h"], "clips": [], "captions": [], "lowers": [],
-            "outro": {"on": True, "dur": 2.5, "text": "Book a visit"}, "music": None,
+    proj = {"type": "video", "v": 2, "w": size["w"], "h": size["h"], "main": [], "layers": [], "captions": [], "lowers": [],
+            "outro": {"on": True, "dur": 2.5, "text": "Book a visit", "trans": {"type": "fade", "dur": 0.4}}, "music": None,
             "style": {"captions": "box", "position": "low"}}
     for cid in list(clip_ids)[:MAX_CLIPS]:
         try:
             info = media_info(cid)
         except VideoError:
             continue
-        proj["clips"].append(_clip_from(info))
+        proj["main"].append(_clip_from(info))
     save_project(iid, proj)
     return iid
 
@@ -178,75 +178,27 @@ def project(iid):
         with open(studio.design_path(iid)) as f:
             p = json.load(f)
         if p.get("type") == "video":
-            return p
+            return video2.migrate(p)
     except (OSError, ValueError):
         pass
     raise VideoError("That video project is gone.")
 
 
-def _num(v, lo, hi, default):
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return default
-    return max(lo, min(hi, v))
-
-
 def clean(p, old=None):
-    """Keep only what the editor is allowed to set, within limits."""
     old = old or {}
-    out = {"type": "video", "w": int(old.get("w") or p.get("w") or 1080), "h": int(old.get("h") or p.get("h") or 1920),
-           "clips": [], "captions": [], "lowers": []}
-    for c in (p.get("clips") or [])[:MAX_CLIPS]:
-        it = studio.item(int(_num(c.get("item"), 0, 1e12, 0)))
-        if not it or it["kind"] not in ("video", "image", "design"):
-            continue
-        if it["kind"] != "video":                      # a picture: shown for "out" seconds
-            out["clips"].append({"item": it["id"], "in": 0, "out": round(_num(c.get("out"), 0.5, 30, 3), 2), "speed": 1,
-                                 "volume": 0, "still": True, "fit": "fill" if c.get("fit") == "fill" else "fit"})
-            continue
-        a = _num(c.get("in"), 0, 36000, 0)
-        b = _num(c.get("out"), a + 0.2, a + 600, a + 3)
-        out["clips"].append({"item": it["id"], "in": round(a, 3), "out": round(b, 3),
-                             "speed": min(SPEEDS, key=lambda s: abs(s - _num(c.get("speed"), 0.5, 2, 1))),
-                             "volume": round(_num(c.get("volume"), 0, 2, 1), 2), "fit": "fit" if c.get("fit") == "fit" else "fill"})
-    for c in (p.get("captions") or [])[:400]:
-        t = re.sub(r"\s+", " ", str(c.get("text") or "")).strip()[:160]
-        a = _num(c.get("start"), 0, MAX_TOTAL + 30, 0)
-        b = _num(c.get("end"), a + 0.2, a + 20, a + 2)
-        if t:
-            out["captions"].append({"start": round(a, 3), "end": round(b, 3), "text": t})
-    for c in (p.get("lowers") or [])[:20]:
-        t = re.sub(r"\s+", " ", str(c.get("text") or "")).strip()[:80]
-        a = _num(c.get("start"), 0, MAX_TOTAL + 30, 0)
-        b = _num(c.get("end"), a + 0.5, a + 60, a + 4)
-        if t:
-            out["lowers"].append({"start": round(a, 3), "end": round(b, 3), "text": t,
-                                  "sub": re.sub(r"\s+", " ", str(c.get("sub") or "")).strip()[:80]})
-    o = p.get("outro") or {}
-    out["outro"] = {"on": bool(o.get("on")), "dur": round(_num(o.get("dur"), 1, 8, 2.5), 2),
-                    "text": re.sub(r"\s+", " ", str(o.get("text") or "")).strip()[:60]}
-    m = p.get("music") or None
-    if m and m.get("item"):
-        it = studio.item(int(_num(m.get("item"), 0, 1e12, 0)))
-        out["music"] = {"item": it["id"], "volume": round(_num(m.get("volume"), 0, 1.5, 0.25), 2)} \
-            if it and it["kind"] in ("audio", "video") else None
-    else:
-        out["music"] = None
-    st = p.get("style") or {}
-    out["style"] = {"captions": "plain" if st.get("captions") == "plain" else "box",
-                    "position": "middle" if st.get("position") == "middle" else "low"}
-    if total(out) > MAX_TOTAL:
-        raise VideoError(f"Keep it under {int(MAX_TOTAL // 60)} minutes (it's {total(out):.0f} seconds now).")
-    return out
+    w, h = int(old.get("w") or p.get("w") or 1080), int(old.get("h") or p.get("h") or 1920)
+    try:
+        return video2.clean(p, w, h)
+    except video2.V2Error as e:
+        raise VideoError(str(e))
 
 
 def clip_len(c):
-    return (c["out"] if c.get("still") else (c["out"] - c["in"]) / (c.get("speed") or 1))
+    return video2.clip_len(c)
 
 
 def total(p):
-    return sum(clip_len(c) for c in p["clips"]) + (p["outro"]["dur"] if p.get("outro", {}).get("on") else 0)
+    return video2.layout(video2.migrate(p))["end"]
 
 
 def save_project(iid, p, by=""):
@@ -386,148 +338,126 @@ def _note(iid, **kw):
     db.set_setting(f"studio_render_{iid}", json.dumps(s))
 
 
-def _piece(src, c, w, h, out, has_audio):
-    """One clip, cropped to fill w×h at FPS, with sound (silence if none)."""
-    tail = f"setsar=1,fps={FPS},format=yuv420p"
-    if c.get("fit") == "fit":          # all of it, on a soft blurred copy of itself
-        vf = (f"split[fa][fb];[fa]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=24:6,"
-              f"eq=brightness=-0.06[bg];[fb]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
-              f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{tail}")
-    else:
-        vf = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},{tail}"
-    dur = clip_len(c)
-    if c.get("still"):
-        args = ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-t", f"{dur:.3f}", "-i", src,
-                "-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo",
-                "-filter_complex", f"[0:v]{vf}[v]", "-map", "[v]", "-map", "1:a"]
-    else:
-        sp = c.get("speed") or 1
-        tempo = []
-        left = sp
-        while left > 2.0:
-            tempo.append("atempo=2.0")
-            left /= 2.0
-        while left < 0.5:
-            tempo.append("atempo=0.5")
-            left /= 0.5
-        tempo.append(f"atempo={left:.4f}")
-        args = ["ffmpeg", "-y", "-v", "error", "-ss", f"{c['in']:.3f}", "-t", f"{c['out'] - c['in']:.3f}", "-i", src,
-                "-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
-        fc = f"[0:v]setpts=(PTS-STARTPTS)/{sp},{vf}[v]"
-        if has_audio and (c.get("volume") or 0) > 0:
-            fc += (f";[0:a]asetpts=PTS-STARTPTS,{','.join(tempo)},volume={c['volume']},aresample=48000,"
-                   f"aformat=channel_layouts=stereo[a0];[a0][1:a]amix=inputs=2:duration=longest:normalize=0[a]")
-            args += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
-        else:
-            args += ["-filter_complex", fc, "-map", "[v]", "-map", "1:a"]
-    args += ["-t", f"{dur:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-r", str(FPS),
-             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", out]
-    _run(args)
-
-
-def render(iid, by=""):
-    """Make the MP4 (in the background). The library file becomes the new video."""
+def render(iid, by="", texts=None):
+    """Make the MP4 (in the background). texts: {layer id: PNG bytes} drawn by the editor for text layers."""
     with _jobs_lock:
         if iid in _running:
             return False
         _running.add(iid)
-    threading.Thread(target=_render, args=(iid, by), daemon=True).start()
+    threading.Thread(target=_render, args=(iid, by, texts or {}), daemon=True).start()
     return True
 
 
-def _render(iid, by):
+def _dims(it, path):
+    if it["kind"] in ("image", "design"):
+        from PIL import Image
+        with Image.open(path) as im:
+            return im.size[0], im.size[1], False
+    return video2.probe_dims(path)
+
+
+def _render(iid, by, texts=None):
+    from . import bgremove
     work = tempfile.mkdtemp(dir=studio._dir("tmp"))
     temps = []
+    texts = texts or {}
+
+    def local(item_id):
+        it = studio.item(item_id)
+        if not it:
+            raise VideoError("A clip's file was deleted from the library.")
+        path, temp = source_path(it)
+        if temp:
+            temps.append(path)
+        return it, path
     try:
         _need_ffmpeg()
         it = studio.item(iid)
         p = project(iid)
-        if not p["clips"]:
-            raise VideoError("Add at least one clip first.")
+        if not p["main"]:
+            raise VideoError("Add at least one clip to the main track first.")
         pid = it["practice_id"] if it["practice_id"] not in (None, studio.MCDP) else None
-        w, h = p["w"], p["h"]
-        n = len(p["clips"]) + (1 if p["outro"]["on"] else 0) + 1
-        _note(iid, state="running", step=0, steps=n, error="", started=time.time())
+        W, H = p["w"], p["h"]
+        lay = video2.layout(p)
+        segs, end = lay["segs"], lay["end"]
+        steps = len(segs) + 3
+        _note(iid, state="running", step=0, steps=steps, error="", started=time.time())
         pieces = []
-        for i, c in enumerate(p["clips"]):
-            src_it = studio.item(c["item"])
-            if not src_it:
-                raise VideoError("A clip's file was deleted from the library.")
-            src, temp = source_path(src_it)
-            if temp:
-                temps.append(src)
-            if src_it["kind"] == "design" or src_it["kind"] == "image":
-                info = {"audio": False}
+        for k, sg in enumerate(segs):
+            nxt = segs[k + 1] if k + 1 < len(segs) else None
+            length = sg["len"] + (video2.EPS if nxt is not None and nxt["d"] == 0 else 0)
+            out = os.path.join(work, f"p{k:03d}.mp4")
+            if sg["kind"] == "outro":
+                png = os.path.join(work, "outro.png")
+                with open(png, "wb") as f:
+                    f.write(outro_png(pid, W, H, p["outro"]["text"]))
+                c = {"still": True, "out": length, "fit": "fill", "crop": video2._crop({}), "zoom": 1, "dx": 0, "dy": 0,
+                     "filter": {}, "motion": "none", "bg": {"mode": "black"}}
+                video2.piece_main(png, c, W, H, out, length, False, sw=W, sh=H)
             else:
-                info = probe(src)
-            out = os.path.join(work, f"p{i:03d}.mp4")
-            _piece(src, c, w, h, out, info["audio"])
+                c = dict(sg["c"])
+                src_it, src = local(c["item"])
+                sw, sh, has_audio = _dims(src_it, src)
+                if c.get("still"):
+                    c["out"] = length
+                elif length > sg["len"]:                       # run on a little past a straight cut
+                    c["out"] = c["out"] + video2.EPS * (c.get("speed") or 1)
+                mask = bgremove.mask_path(c["item"]) if c["bg"].get("cut") else None
+                bg_photo = None
+                if c["bg"]["mode"] == "photo" and c["bg"].get("item"):
+                    _, bg_photo = local(c["bg"]["item"])
+                if c["bg"]["mode"] == "color" and c["bg"]["color"] == "#0F7471" and pid:
+                    from . import field_report
+                    c["bg"]["color"] = field_report.colors(pid)[0]
+                video2.piece_main(src, c, W, H, out, length, has_audio, mask=mask, bg_photo=bg_photo, sw=sw, sh=sh)
             pieces.append(out)
-            _note(iid, step=i + 1)
-        if p["outro"]["on"]:
-            png = os.path.join(work, "outro.png")
-            with open(png, "wb") as f:
-                f.write(outro_png(pid, w, h, p["outro"]["text"]))
-            out = os.path.join(work, "outro.mp4")
-            _piece(png, {"still": True, "out": p["outro"]["dur"], "fit": "fill"}, w, h, out, False)
-            pieces.append(out)
-            _note(iid, step=len(p["clips"]) + 1)
-        lst = os.path.join(work, "list.txt")
-        with open(lst, "w") as f:
-            f.writelines(f"file '{x}'\n" for x in pieces)
-        joined = os.path.join(work, "joined.mp4")
-        _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", joined])
-        final = os.path.join(work, "final.mp4")
-        length = total(p)
-        args = ["ffmpeg", "-y", "-v", "error", "-i", joined]
-        vf = None
+            _note(iid, step=k + 1)
+        joined = os.path.join(work, "main.mp4")
+        video2.join_main(pieces, segs, joined, end)
+        _note(iid, step=len(segs) + 1)
+        layer_src = {}
+        for L in p["layers"]:
+            if L["kind"] == "text":
+                path = os.path.join(work, f"t_{L['id']}.png")
+                data = texts.get(L["id"])
+                if data and data.startswith(b"\x89PNG"):
+                    with open(path, "wb") as f:
+                        f.write(data)
+                else:
+                    video2.text_png(L, path)
+                layer_src[L["id"]] = {"path": path, "w": int(L["w"]), "h": int(L["h"]), "audio": False}
+            else:
+                src_it, src = local(L["item"])
+                sw, sh, aud = _dims(src_it, src)
+                layer_src[L["id"]] = {"path": src, "w": sw, "h": sh, "audio": aud,
+                                      "mask": bgremove.mask_path(L["item"]) if L.get("cut") and L["kind"] == "video" else None}
+        ass = fontsdir = None
         if p["captions"] or p["lowers"]:
             ass = os.path.join(work, "subs.ass")
             with open(ass, "w") as f:
                 f.write(ass_file(p, pid))
             fontsdir = FONT_DIR if os.path.isdir(FONT_DIR) else "/usr/share/fonts"
-            vf = f"ass={ass}:fontsdir={fontsdir}"
         music = None
         if p.get("music"):
-            m_it = studio.item(p["music"]["item"])
-            if m_it:
-                music, temp = source_path(m_it)
-                if temp:
-                    temps.append(music)
-        if music:
-            args += ["-stream_loop", "-1", "-i", music]
-            fade = max(0, length - 1.5)
-            fc = (f"[1:a]atrim=0:{length:.3f},volume={p['music']['volume']},afade=t=out:st={fade:.3f}:d=1.5,"
-                  f"aresample=48000,aformat=channel_layouts=stereo[m];[0:a][m]amix=inputs=2:duration=first:normalize=0[a]")
-            if vf:
-                fc = f"[0:v]{vf}[v];" + fc
-                args += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
-            else:
-                args += ["-filter_complex", fc, "-map", "0:v", "-map", "[a]"]
-        elif vf:
-            args += ["-vf", vf, "-map", "0:v", "-map", "0:a"]
-        else:
-            args += ["-map", "0:v", "-map", "0:a"]
-        if vf or music:
-            args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p"]
-        else:
-            args += ["-c:v", "copy"]
-        args += ["-c:a", "aac", "-b:a", "160k", "-t", f"{length:.3f}", "-movflags", "+faststart", final]
-        _run(args, timeout=3600)
+            _, mpath = local(p["music"]["item"])
+            music = {"path": mpath, "volume": p["music"]["volume"]}
+        final = os.path.join(work, "final.mp4")
+        video2.overlay_stage(joined, p, layer_src, final, end, ass=ass, fontsdir=fontsdir, music=music)
+        _note(iid, step=len(segs) + 2)
         thumb = os.path.join(work, "thumb.jpg")
-        _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{min(1.0, length / 3):.2f}", "-i", final, "-frames:v", "1",
+        _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{min(1.0, end / 3):.2f}", "-i", final, "-frames:v", "1",
               "-vf", "scale=640:-2", thumb])
         with open(thumb, "rb") as f:
             tb = f.read()
         size = os.path.getsize(final)
         studio.replace_file(iid, final, it["title"] + ".mp4", "video/mp4", tb, by=by, log=False)
         with db.conn() as c:
-            c.execute("UPDATE studio_items SET duration=?, width=?, height=? WHERE id=?", (round(length, 2), w, h, iid))
-        studio.event(iid, "rendered", by, comment=f"{length:.0f} s · {size / 1048576:.1f} MB")
-        _note(iid, state="done", step=n, error="", finished=time.time(), length=round(length, 1))
+            c.execute("UPDATE studio_items SET duration=?, width=?, height=? WHERE id=?", (round(end, 2), W, H, iid))
+        studio.event(iid, "rendered", by, comment=f"{end:.0f} s · {size / 1048576:.1f} MB")
+        _note(iid, state="done", step=steps, error="", finished=time.time(), length=round(end, 1))
     except Exception as e:
-        msg = str(e) if isinstance(e, VideoError) else f"Something went wrong making the video: {e}"
-        _note(iid, state="error", error=msg[:400])
+        msg = str(e) if isinstance(e, (VideoError, video2.V2Error)) else f"Something went wrong making the video: {e}"
+        _note(iid, state="error", error=msg[:500])
     finally:
         for t in temps:
             try:
@@ -596,20 +526,21 @@ def group_words(words, max_words=6, max_len=2.8):
 
 
 def transcribe(iid):
-    """Captions for the whole cut, timed to the edit (trims and speed included)."""
+    """Captions for the whole edit (main track), timed to it: trims, speed and transitions included."""
     _need_ffmpeg()
     p = project(iid)
-    caps, t0 = [], 0.0
-    for c in p["clips"]:
-        ln = clip_len(c)
-        if c.get("still") or (c.get("volume") or 0) <= 0:
-            t0 += ln
+    caps = []
+    for sg in video2.layout(p)["segs"]:
+        c = sg["c"]
+        if sg["kind"] != "clip" or c.get("still") or (c.get("volume") or 0) <= 0:
             continue
+        t0, ln = sg["start"], sg["len"]
         src_it = studio.item(c["item"])
+        if not src_it:
+            continue
         src, temp = source_path(src_it)
         try:
             if not probe(src)["audio"]:
-                t0 += ln
                 continue
             fd, mp3 = tempfile.mkstemp(suffix=".mp3", dir=studio._dir("tmp"))
             os.close(fd)
@@ -631,5 +562,4 @@ def transcribe(iid):
             a, b = t0 + g["start"] / sp, t0 + g["end"] / sp
             if a < t0 + ln:
                 caps.append({"start": round(a, 2), "end": round(min(b, t0 + ln), 2), "text": g["text"]})
-        t0 += ln
     return caps

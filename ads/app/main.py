@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -1936,7 +1936,8 @@ def connections(request: Request):
                 sp_root=studio.sp_root(), sp_drive=bool(studio.sp_drive()), sp_status=studio.sp_status(),
                 studio_counts=studio.counts(), canva_cfg=canva.settings(), canva_on=canva.connected(),
                 canva_user=canva.user(), canva_redirect=_canva_redirect(request),
-                post_key=social.key_source(), post_url=social.base_url(), post_default_url=social.DEFAULT_URL)
+                post_key=social.key_source(), post_url=social.base_url(), post_default_url=social.DEFAULT_URL,
+                stock_keys=stock.keys())
 
 
 @app.post("/connections/refresh")
@@ -4897,7 +4898,10 @@ def studio_video_page(request: Request, iid: int):
                 folder=studio.folder(it["folder_id"]), look=look, speeds=studio_video.SPEEDS,
                 ffmpeg_ok=studio_video.ffmpeg_ok(), captions_ok=studio_video.captions_ready(),
                 uploads_folder=studio.add_folder(pid, "Video uploads", "Studio video") if can_edit_now(request) else None,
-                pid=pid, render=studio_video.status(iid), max_total=studio_video.MAX_TOTAL)
+                pid=pid, render=studio_video.status(iid), max_total=studio_video.MAX_TOTAL,
+                transitions=video2.TRANSITIONS, presets=[(k, v[0], v[1]) for k, v in video2.PRESETS.items()],
+                motions=video2.MOTIONS, anim_in=video2.ANIM_IN, anim_out=video2.ANIM_OUT, bg_modes=video2.BG_MODES,
+                fonts=video2.FONTS, bg_ok=bgremove.available(), stock_keys=stock.keys())
 
 
 def can_edit_now(request):
@@ -4913,12 +4917,24 @@ def studio_video_project(request: Request, iid: int):
         p = studio_video.project(iid)
     except studio_video.VideoError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
-    titles = {}
-    for c in p["clips"] + ([p["music"]] if p.get("music") else []):
-        it = studio.item(c["item"])
-        if it:
-            titles[it["id"]] = {"title": it["title"], "kind": it["kind"], "duration": it["duration"], "w": it["width"], "h": it["height"]}
-    return JSONResponse({"project": p, "items": titles}, headers={"Cache-Control": "no-store"})
+    ids = {c["item"] for c in p["main"]} | {L["item"] for L in p["layers"] if L.get("item")}
+    ids |= {c["bg"]["item"] for c in p["main"] if (c.get("bg") or {}).get("item")}
+    if p.get("music"):
+        ids.add(p["music"]["item"])
+    return JSONResponse({"project": p, "items": {i: _media_row(studio.item(i)) for i in ids if studio.item(i)}},
+                        headers={"Cache-Control": "no-store"})
+
+
+def _media_row(it):
+    """What the video editor needs to know about a library file."""
+    row = {"id": it["id"], "title": it["title"], "kind": "image" if it["kind"] in ("image", "design") else it["kind"],
+           "duration": it["duration"], "w": it["width"], "h": it["height"], "thumb": f"/studio/t/{it['id']}",
+           "src": f"/studio/media/{it['id']}", "source": it.get("source")}
+    if it["kind"] == "video":
+        bs = bgremove.status(it["id"])
+        row["mask"] = f"/studio/mask/{it['id']}" if bs.get("state") == "ready" else None
+        row["mask_state"] = bs.get("state")
+    return row
 
 
 @app.post("/studio/video/{iid}/project")
@@ -4944,14 +4960,11 @@ def studio_video_media(request: Request, pid: str = ""):
     b = _brand_in(pid)
     out = {"videos": [], "pictures": [], "sounds": []}
     for it in studio.items(b if b is not None else studio.MCDP, limit=300):
-        row = {"id": it["id"], "title": it["title"], "thumb": f"/studio/t/{it['id']}", "duration": it["duration"],
-               "w": it["width"], "h": it["height"], "src": f"/studio/f/{it['id']}"}
         if it["kind"] == "video" and not studio_video.is_project(it):
-            out["videos"].append(row)
+            out["videos"].append(_media_row(it))
         elif it["kind"] in ("image", "design"):
-            out["pictures"].append(row)
-        elif it["kind"] == "audio":
-            out["sounds"].append(row)
+            out["pictures"].append(_media_row(it))
+    out["sounds"] = stock.music_library()
     return out
 
 
@@ -4966,14 +4979,20 @@ async def studio_video_info(request: Request, item_id: int):
 
 
 @app.post("/studio/video/{iid}/render")
-def studio_video_render(request: Request, iid: int):
+async def studio_video_render(request: Request, iid: int):
     if not authed(request):
         return JSONResponse({"error": "Sign in again."}, status_code=401)
     if not _video(iid):
         return JSONResponse({"error": "That video project is gone."}, status_code=404)
     if not studio_video.ffmpeg_ok():
         return JSONResponse({"error": "The video tools aren't installed on the server yet. Run the hub update on the NAS."}, status_code=422)
-    started = studio_video.render(iid, actor(request))
+    texts = {}
+    if "multipart/form-data" in request.headers.get("content-type", ""):
+        form = await request.form()
+        for k, v in form.multi_items():
+            if k.startswith("text_") and hasattr(v, "read"):
+                texts[re.sub(r"[^a-zA-Z0-9_-]", "", k[5:])[:24]] = await v.read(20 * 1024 * 1024)
+    started = studio_video.render(iid, actor(request), texts)
     return {**studio_video.status(iid), "started": started}
 
 
@@ -5009,3 +5028,143 @@ def studio_video_outro(request: Request, iid: int, text: str = ""):
     data = studio_video.outro_png(it["practice_id"] if it["practice_id"] not in (None, studio.MCDP) else None,
                                   int(w * k), int(h * k), text[:60])
     return Response(data, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+# ---------- Studio video v2: media for the editor, background removal, stock video and music ----------
+@app.get("/studio/media/{iid}")
+async def studio_media_stream(request: Request, iid: int):
+    """A library file from the hub's own address (so the editor can draw and colour it), with seeking."""
+    from fastapi.responses import FileResponse, StreamingResponse
+    if not authed(request):
+        return Response(status_code=401)
+    it = studio.item(iid)
+    if not it:
+        return Response(status_code=404)
+    p = studio.local_path(it)
+    if p:
+        return FileResponse(p, media_type=it["mime"] or None, headers={"Cache-Control": "private, max-age=3600"})
+    try:
+        url = await asyncio.to_thread(studio.download_url, it)
+    except Exception:
+        url = None
+    if not url:
+        return Response(status_code=503)
+    import urllib.request as _u
+    hdr = {"Range": request.headers["range"]} if request.headers.get("range") else {}
+
+    def opener():
+        return _u.urlopen(_u.Request(url, headers=hdr), timeout=60)
+    try:
+        upstream = await asyncio.to_thread(opener)
+    except Exception:
+        return Response(status_code=503)
+
+    def body():
+        try:
+            while True:
+                chunk = upstream.read(256 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            upstream.close()
+    keep = {k: v for k, v in upstream.headers.items() if k.lower() in ("content-length", "content-range", "accept-ranges")}
+    keep.setdefault("Accept-Ranges", "bytes")
+    return StreamingResponse(body(), status_code=upstream.status, media_type=it["mime"] or "application/octet-stream",
+                             headers={**keep, "Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/studio/mask/{item_id}")
+def studio_mask_file(request: Request, item_id: int):
+    from fastapi.responses import FileResponse
+    if not authed(request):
+        return Response(status_code=401)
+    p = bgremove.mask_path(item_id)
+    return FileResponse(p, media_type="video/mp4", headers={"Cache-Control": "private, max-age=3600"}) if p else Response(status_code=404)
+
+
+@app.post("/studio/bg/{item_id}")
+def studio_bg_start(request: Request, item_id: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    try:
+        bgremove.start(item_id)
+    except bgremove.BGError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {**bgremove.status(item_id), "mask": f"/studio/mask/{item_id}" if bgremove.mask_path(item_id) else None}
+
+
+@app.get("/studio/bg/{item_id}")
+def studio_bg_status(request: Request, item_id: int):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    return {**bgremove.status(item_id), "mask": f"/studio/mask/{item_id}" if bgremove.mask_path(item_id) else None,
+            "available": bgremove.available()}
+
+
+@app.get("/studio/stock/videos")
+async def studio_stock_videos(request: Request, q: str = "", page: int = 1, o: str = ""):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    try:
+        return await asyncio.to_thread(stock.pixabay_search, q, o, page)
+    except stock.StockError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+
+
+@app.post("/studio/stock/videos/{hit_id}")
+async def studio_stock_video_add(request: Request, hit_id: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    pid = _brand_in(j.get("pid"))
+    try:
+        iid = await asyncio.to_thread(stock.pixabay_import, hit_id, j.get("q") or "", j.get("page") or 1,
+                                      pid if pid is not None else studio.MCDP, actor(request))
+    except (stock.StockError, studio.StudioError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return _media_row(studio.item(iid))
+
+
+@app.get("/studio/stock/music")
+async def studio_stock_music(request: Request, q: str = "", page: int = 1):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    try:
+        return await asyncio.to_thread(stock.freesound_search, q, page)
+    except stock.StockError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+
+
+@app.post("/studio/stock/music/{sound_id}")
+async def studio_stock_music_add(request: Request, sound_id: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    try:
+        iid = await asyncio.to_thread(stock.freesound_import, sound_id, j.get("q") or "", j.get("page") or 1, actor(request))
+    except (stock.StockError, studio.StudioError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    it = studio.item(iid)
+    return {"id": iid, "title": it["title"], "duration": it["duration"], "src": f"/studio/media/{iid}", "notes": it["notes"]}
+
+
+@app.get("/studio/music")
+def studio_music_list(request: Request, q: str = ""):
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    return {"tracks": stock.music_library(q), "folder": stock.music_folder()}
+
+
+@app.post("/connections/stock")
+def connections_stock(request: Request, pixabay_key: str = Form(""), freesound_key: str = Form(""), clear: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if clear in ("pixabay", "freesound"):
+        stock.save_keys(**{clear: ""})
+        flash(request, "Key removed.")
+    else:
+        stock.save_keys(pixabay=pixabay_key if pixabay_key.strip() else None,
+                        freesound=freesound_key if freesound_key.strip() else None)
+        flash(request, "Saved. Stock video and music search use these in the video editor.")
+    return RedirectResponse("/connections#stock", status_code=303)

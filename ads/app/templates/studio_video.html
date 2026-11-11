@@ -3,6 +3,8 @@
 {% block bodyclass %}ed-body{% endblock %}
 {% block mainclass %}ed-main{% endblock %}
 {% block content %}
+{% for f in fonts if f != 'DejaVu Sans' %}<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={{ f|replace(' ', '+') }}{% if f not in ('Bebas Neue', 'Pacifico') %}:wght@400;700{% endif %}&display=swap">
+{% endfor %}
 <div class="ed vd" id="vd">
   <header class="ed-top">
     <a class="ed-back" href="/studio/i/{{ it.id }}" title="Back to the file">←</a>
@@ -15,6 +17,8 @@
     <span class="small muted ed-saved" data-saved aria-live="polite"></span>
     <span class="ed-spacer"></span>
     {% if can_edit %}
+    <button class="ed-icon" type="button" data-undo title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+    <button class="ed-icon" type="button" data-redo title="Redo (Ctrl+Y)" aria-label="Redo"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
     <span class="small vd-render-state" data-render-state aria-live="polite"></span>
     <button class="btn btn-small" type="button" data-render {% if not ffmpeg_ok %}disabled title="Run the hub update on the NAS first"{% endif %}>Make the MP4</button>
     <a class="btn btn-quiet btn-small" href="/studio/i/{{ it.id }}#approve">Ask for approval</a>
@@ -23,131 +27,142 @@
   {% if not ffmpeg_ok %}<p class="flash flash-error vd-flash">The video tools aren't on the server yet, so the MP4 can't be made. Run the hub update on the NAS; editing works meanwhile.</p>{% endif %}
 
   <div class="vd-grid">
-    <aside class="ed-panel vd-panel" aria-label="Media and brand">
+    <aside class="ed-panel vd-panel" aria-label="Media, text, music">
       <nav class="vd-tabs" role="tablist">
-        <button type="button" data-vtab="clips" class="on">Clips</button>
-        <button type="button" data-vtab="brand">Brand</button>
-        <button type="button" data-vtab="captions">Captions</button>
+        <button type="button" data-vtab="media" class="on">Media</button>
+        <button type="button" data-vtab="stock">Stock</button>
+        <button type="button" data-vtab="text">Text</button>
         <button type="button" data-vtab="music">Music</button>
+        <button type="button" data-vtab="captions">Captions</button>
+        <button type="button" data-vtab="brand">Brand</button>
       </nav>
-      <section data-vpanel="clips">
+
+      <section data-vpanel="media">
         {% if can_edit %}
         <label class="ed-drop" data-vupload-drop>
           <input type="file" accept="video/*,image/*" multiple class="vh" data-vupload>
-          <strong>Add videos or photos</strong><span class="small muted">or drop them here. Up to 4 GB each; they're kept in {{ brand_name }}'s “Video uploads” folder.</span>
+          <strong>Add videos or photos</strong><span class="small muted">or drop them here. They're kept in {{ brand_name }}'s “Video uploads” folder.</span>
         </label>
         <ul class="vd-uploads" data-vtray></ul>
         {% endif %}
+        <p class="small muted">Drag onto the timeline (the main track, or a layer above it), or use the buttons.</p>
         <h3>Videos</h3><div class="vd-media" data-media="videos"><p class="small muted">Loading…</p></div>
         <h3>Photos and designs</h3><div class="vd-media" data-media="pictures"></div>
       </section>
+
+      <section data-vpanel="stock" hidden>
+        <form class="vd-search" data-stock-form>
+          <label><span class="vh">Search stock video</span><input type="search" name="q" placeholder="smiling family, dentist office, autumn…"></label>
+          <select name="o" aria-label="Shape"><option value="">Any shape</option><option value="tall">Tall</option><option value="wide">Wide</option></select>
+          <button class="btn btn-small" type="submit">Search</button>
+        </form>
+        <div class="vd-media vd-stock" data-stock-results><p class="small muted">Free stock video from Pixabay. Picked videos are saved to {{ brand_name }}'s “Stock video” folder with the credit.</p></div>
+        <p class="small muted vd-credit">Videos from <a href="https://pixabay.com" target="_blank" rel="noopener">Pixabay</a></p>
+      </section>
+
+      <section data-vpanel="text" hidden>
+        <p class="small muted">Adds a text layer at the playhead. Drag it on the video to place it; double-click to type.</p>
+        <div class="vd-textadd">
+          <button type="button" data-addtext="title" class="vd-ta vd-ta-title">Title</button>
+          <button type="button" data-addtext="subtitle" class="vd-ta vd-ta-sub">Subtitle</button>
+          <button type="button" data-addtext="cta" class="vd-ta vd-ta-cta">Call to action</button>
+          <button type="button" data-addtext="name" class="vd-ta vd-ta-name">Name tag</button>
+          <button type="button" data-addtext="plain" class="vd-ta">Plain text</button>
+        </div>
+      </section>
+
+      <section data-vpanel="music" hidden>
+        <div data-music-now></div>
+        <label class="ed-range">Music volume<input type="range" min="0" max="100" data-music-vol></label>
+        <h3>Shared music</h3>
+        <label><span class="vh">Filter shared music</span><input type="search" placeholder="Find in shared music" data-music-filter></label>
+        <ul class="vd-tracks" data-music-lib></ul>
+        {% if can_edit %}
+        <label class="ed-drop vd-music-drop" data-music-drop>
+          <input type="file" accept="audio/*" multiple class="vh" data-music-upload>
+          <strong>Add music</strong><span class="small muted">Drop MP3s here (e.g. from Pixabay). They're shared with every brand.</span>
+        </label>
+        <button type="button" class="btn btn-small btn-quiet" data-pixabay-music>Find music on Pixabay ↗</button>
+        <p class="small muted">Opens Pixabay's music search beside the editor. Download a track there, then drop it above.</p>
+        {% endif %}
+        <h3>Search Freesound</h3>
+        <form class="vd-search" data-fs-form>
+          <label><span class="vh">Search music</span><input type="search" name="q" placeholder="upbeat acoustic, calm piano…"></label>
+          <button class="btn btn-small" type="submit">Search</button>
+        </form>
+        <ul class="vd-tracks" data-fs-results><li class="small muted">Music and sounds that are free for any use (Creative Commons 0).</li></ul>
+      </section>
+
+      <section data-vpanel="captions" hidden>
+        {% if can_edit %}
+        <button type="button" class="btn btn-small" data-auto-captions {% if not captions_ok %}disabled{% endif %}>Write captions from the speech</button>
+        <p class="small muted">{% if captions_ok %}Listens to the main track (after your trims) and writes timed captions; replaces any already here.{% else %}Needs the video tools and the Cloudflare AI connection on the server (the one that makes AI pictures).{% endif %}</p>
+        <button type="button" class="btn btn-small btn-quiet" data-add-caption>+ Add a caption at the playhead</button>
+        {% endif %}
+        <h3>Style</h3>
+        <label class="check vd-check"><input type="radio" name="capstyle" value="box"> Bold, in a {{ brand_name }}-coloured box</label>
+        <label class="check vd-check"><input type="radio" name="capstyle" value="plain"> White with an outline</label>
+        <label class="check vd-check"><input type="radio" name="cappos" value="low"> Low (clear of Instagram's buttons)</label>
+        <label class="check vd-check"><input type="radio" name="cappos" value="middle"> In the middle</label>
+        <ol class="vd-caplist" data-caplist></ol>
+      </section>
+
       <section data-vpanel="brand" hidden>
         <h3>End card</h3>
         <label class="check vd-check"><input type="checkbox" data-outro-on> Finish with {{ brand_name }}'s end card</label>
         <label>Words on it<input data-outro-text maxlength="60" placeholder="Book a visit"></label>
         <label class="ed-range">Seconds<input type="range" min="1" max="6" step="0.5" data-outro-dur><span data-outro-dur-v></span></label>
         <img class="vd-outro-preview" data-outro-img alt="End card preview">
-        <h3>Name tag</h3>
-        <p class="small muted">A lower-third with a name and role, e.g. when the doctor is speaking.</p>
-        <button type="button" class="btn btn-small btn-quiet" data-add-lower>+ Add a name tag at the playhead</button>
-        <h3>Caption style</h3>
-        <label class="check vd-check"><input type="radio" name="capstyle" value="box"> Bold, in a {{ brand_name }}-coloured box</label>
-        <label class="check vd-check"><input type="radio" name="capstyle" value="plain"> White with an outline</label>
-        <label class="check vd-check"><input type="radio" name="cappos" value="low"> Low on the screen (clear of Instagram's buttons)</label>
-        <label class="check vd-check"><input type="radio" name="cappos" value="middle"> In the middle</label>
-      </section>
-      <section data-vpanel="captions" hidden>
-        {% if can_edit %}
-        <button type="button" class="btn btn-small" data-auto-captions {% if not captions_ok %}disabled{% endif %}>Write captions from the speech</button>
-        <p class="small muted">{% if captions_ok %}Listens to the clips (after your trims) and writes timed captions; replaces any already here. Check names and spellings.{% else %}Needs the video tools and the Cloudflare AI connection on the server (the one that makes AI pictures).{% endif %}</p>
-        <button type="button" class="btn btn-small btn-quiet" data-add-caption>+ Add a caption at the playhead</button>
-        {% endif %}
-        <ol class="vd-caplist" data-caplist></ol>
-      </section>
-      <section data-vpanel="music" hidden>
-        <p class="small muted">Music from the library (a sound or a video's audio), played under the clips and faded out at the end. Use only music the practice has the rights to.</p>
-        <div data-music-now></div>
-        <label class="ed-range">Music volume<input type="range" min="0" max="100" data-music-vol></label>
-        <div class="vd-media" data-media="sounds"></div>
-        <p class="small muted">To add a song, upload the MP3 to the library (Studio → + Add files), then pick it here.</p>
       </section>
     </aside>
 
     <section class="vd-stage" aria-label="Preview">
       <div class="vd-screen-wrap" data-screen-wrap>
         <div class="vd-screen" data-screen>
-          <video data-pv playsinline preload="auto"></video>
-          <img data-pi alt="" hidden>
-          <img data-po alt="" hidden>
+          <canvas data-cv></canvas>
           <div class="vd-lower" data-plower hidden><strong></strong><span></span></div>
           <div class="vd-cap" data-pcap hidden><span></span></div>
-          <p class="vd-empty" data-pempty>Add clips from the left to start.</p>
+          <div class="vd-sel" data-selbox hidden>
+            <span class="vd-hd" data-hd="nw"></span><span class="vd-hd" data-hd="ne"></span><span class="vd-hd" data-hd="sw"></span><span class="vd-hd" data-hd="se"></span>
+            <span class="vd-hd vd-hd-e" data-hd="e"></span><span class="vd-hd vd-hd-w" data-hd="w"></span><span class="vd-hd vd-hd-n" data-hd="n"></span><span class="vd-hd vd-hd-s" data-hd="s"></span>
+            <span class="vd-rot" data-hd="rot" title="Rotate"></span>
+          </div>
+          <textarea class="vd-typing" data-typing hidden aria-label="Text"></textarea>
+          <p class="vd-empty" data-pempty>Drag clips onto the timeline, or click + Main on a clip, to start.</p>
         </div>
       </div>
       <div class="vd-controls">
         <button type="button" class="vd-play" data-play aria-label="Play"><svg viewBox="0 0 24 24" width="16" height="16" fill="#fff"><path d="M7 4v16l13-8z"/></svg></button>
         <span class="vd-time" data-time>0:00.0 / 0:00.0</span>
         {% if can_edit %}<span class="ed-sep"></span>
-        <button type="button" class="btn btn-small btn-quiet" data-split>Split at the playhead</button>{% endif %}
+        <button type="button" class="btn btn-small btn-quiet" data-split title="S">Split</button>
+        <button type="button" class="btn btn-small btn-quiet" data-crop-btn title="Crop what's selected">Crop</button>
+        <button type="button" class="btn btn-small btn-quiet" data-dup title="Ctrl+D">Duplicate</button>
+        <button type="button" class="linklike danger small" data-del>Delete</button>{% endif %}
         <span class="ed-spacer"></span>
         <span class="small muted" data-limit></span>
+        <label class="vd-zoom small">Zoom<input type="range" min="15" max="220" value="60" data-tlzoom></label>
       </div>
       <div class="vd-timeline" data-timeline>
-        <div class="vd-ruler" data-ruler></div>
-        <div class="vd-track"><span class="vd-tlabel">Video</span><div class="vd-lane" data-lane="clips"></div></div>
-        <div class="vd-track"><span class="vd-tlabel">Captions</span><div class="vd-lane" data-lane="captions"></div></div>
-        <div class="vd-track"><span class="vd-tlabel">Graphics</span><div class="vd-lane" data-lane="graphics"></div></div>
-        <div class="vd-track"><span class="vd-tlabel">Music</span><div class="vd-lane" data-lane="music"></div></div>
-        <div class="vd-head" data-head></div>
+        <div class="vd-tl-labels" data-tl-labels></div>
+        <div class="vd-tl-scroll" data-tl-scroll>
+          <div class="vd-tl-inner" data-tl-inner>
+            <div class="vd-ruler" data-ruler></div>
+            <div data-rows></div>
+            <div class="vd-head" data-head><span></span></div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <aside class="ed-props vd-props" aria-label="Selected">
-      <section data-sel-none><h2>Selected</h2><p class="small muted">Click a clip, caption or name tag on the timeline to change it.</p></section>
-      <section data-sel-clip hidden>
-        <h2 data-sel-title>Clip</h2>
-        <div data-clip-video>
-          <label>Starts at <span class="muted small">(seconds into the clip)</span><input type="number" step="0.1" min="0" data-cin class="ed-num"></label>
-          <label>Ends at<input type="number" step="0.1" min="0" data-cout class="ed-num"></label>
-          <p class="small muted" data-clip-src></p>
-          <label>Speed<select data-cspeed>{% for s in speeds %}<option value="{{ s }}">{{ s }}×</option>{% endfor %}</select></label>
-          <label class="ed-range">Volume<input type="range" min="0" max="150" data-cvol><span data-cvol-v></span></label>
-        </div>
-        <div data-clip-still hidden>
-          <label>Shows for <span class="muted small">(seconds)</span><input type="number" step="0.5" min="0.5" max="30" data-cdur class="ed-num"></label>
-        </div>
-        <fieldset class="vd-fitpick"><legend>Framing</legend>
-          <label class="check vd-check"><input type="radio" name="cfit" value="fill"> Fill the screen (crops the edges)</label>
-          <label class="check vd-check"><input type="radio" name="cfit" value="fit"> Show all of it (soft blurred edges)</label>
-        </fieldset>
-        <div class="btn-row">
-          <button type="button" class="btn btn-small btn-quiet" data-cmove="-1">← Earlier</button>
-          <button type="button" class="btn btn-small btn-quiet" data-cmove="1">Later →</button>
-          <button type="button" class="linklike danger" data-cdel>Remove</button>
-        </div>
-      </section>
-      <section data-sel-cap hidden>
-        <h2>Caption</h2>
-        <label>Words<textarea rows="2" maxlength="160" data-captext></textarea></label>
-        <div class="st-share-grid"><label>From<input type="number" step="0.1" min="0" data-capa class="ed-num"></label><label>To<input type="number" step="0.1" min="0" data-capb class="ed-num"></label></div>
-        <button type="button" class="linklike danger" data-capdel>Remove</button>
-      </section>
-      <section data-sel-lower hidden>
-        <h2>Name tag</h2>
-        <label>Name<input maxlength="80" data-ltext placeholder="Dr. Amy Schulz"></label>
-        <label>Role <span class="muted small">(optional)</span><input maxlength="80" data-lsub placeholder="Orthodontist"></label>
-        <div class="st-share-grid"><label>From<input type="number" step="0.1" min="0" data-la class="ed-num"></label><label>To<input type="number" step="0.1" min="0" data-lb class="ed-num"></label></div>
-        <button type="button" class="linklike danger" data-ldel>Remove</button>
-      </section>
-      <section class="vd-help small muted">
-        <p><strong>Tips.</strong> Space plays and pauses. Drag the ends of a clip on the timeline to trim it. The preview is a quick look; “Make the MP4” builds the finished video at full quality, with the captions, name tags, end card and music, and puts it in the library.</p>
-      </section>
-    </aside>
+    <aside class="ed-props vd-props" aria-label="Selected" data-props><p class="small muted">Click something on the video or the timeline to change it.</p></aside>
   </div>
 </div>
 <script type="application/json" id="vd-config">{{ {
   "iid": it.id, "pid": pid, "canEdit": can_edit, "brand": brand_name, "primary": look.primary, "accent": look.accent,
-  "uploadsFolder": uploads_folder, "render": render, "maxTotal": max_total, "chunk": 8388608
+  "uploadsFolder": uploads_folder, "render": render, "maxTotal": max_total, "chunk": 8388608,
+  "transitions": transitions, "presets": presets, "motions": motions, "animIn": anim_in, "animOut": anim_out,
+  "bgModes": bg_modes, "speeds": speeds, "fonts": fonts, "bgOk": bg_ok, "stock": stock_keys
 }|tojson }}</script>
 <script src="/static/studio-video.js?v={{ static_v }}"></script>
 {% endblock %}

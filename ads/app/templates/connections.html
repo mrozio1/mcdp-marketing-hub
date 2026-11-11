@@ -182,6 +182,24 @@
   </details>
 </section>
 
+<section class="panel conn section-gap" id="stock">
+  <h2>Stock video and music <span class="muted small">· searched inside the video editor</span></h2>
+  <p class="small">Both keys are free. Without them the editor's Stock and Music searches are switched off; the shared Music folder still works.</p>
+  <form method="post" action="/connections/stock" class="stack">
+    <label><span>Pixabay key <span class="muted small">(stock video; {{ 'saved' if stock_keys.pixabay else 'not set' }})</span></span>
+      <input name="pixabay_key" type="password" autocomplete="off" placeholder="{{ 'Paste a new key only to replace it' if stock_keys.pixabay else '' }}"></label>
+    <label><span>Freesound key <span class="muted small">(music and sounds, free for any use; {{ 'saved' if stock_keys.freesound else 'not set' }})</span></span>
+      <input name="freesound_key" type="password" autocomplete="off" placeholder="{{ 'Paste a new key only to replace it' if stock_keys.freesound else '' }}"></label>
+    <button class="btn btn-quiet" type="submit">Save</button>
+  </form>
+  <details class="how">
+    <summary>Where do I get these?</summary>
+    <p><strong>Pixabay:</strong> sign in at pixabay.com, open <strong>pixabay.com/api/docs</strong>, and copy the key shown under “Parameters” (it's filled in once you're signed in).</p>
+    <p><strong>Freesound:</strong> sign in at freesound.org, open <strong>freesound.org/apiv2/apply</strong>, create credentials (any name, e.g. “MCDP Hub”), and copy the <strong>Client secret/API key</strong>.</p>
+    <p>Pixabay's API doesn't include music, so tracks from pixabay.com/music are downloaded there and dropped into the editor's Music panel, which saves them to the shared Music folder for every brand.</p>
+  </details>
+</section>
+
 <section class="panel conn section-gap" id="canva">
   <h2>Canva <span class="muted small">· import designs into the Studio</span></h2>
   {% if canva_on %}

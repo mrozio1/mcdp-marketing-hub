@@ -69,9 +69,10 @@ def test_create_and_open(env):
     assert "studio-video.js" in page and "Make the MP4" in page and "Debond day reel" in page
     assert "Edit the video" in ed.get(f"/studio/i/{iid}").text
     j = ed.get(f"/studio/video/{iid}/project").json()
-    assert j["project"]["clips"] == [] and j["project"]["outro"]["on"] is True
+    assert j["project"]["main"] == [] and j["project"]["outro"]["on"] is True
     m = ed.get(f"/studio/video-media?pid={pid}").json()
     assert {x["id"] for x in m["videos"]} == {ids["clip"], ids["silent"]} and m["sounds"][0]["id"] == ids["song"]
+    assert m["videos"][0]["src"].startswith("/studio/media/")
     assert iid not in {x["id"] for x in m["videos"]}                                    # projects aren't clips
     info = ed.get(f"/studio/video-info/{ids['clip']}").json()
     assert info["duration"] == pytest.approx(4, abs=0.1) and info["audio"] and info["w"] == 640
@@ -80,59 +81,98 @@ def test_create_and_open(env):
 
 def test_edit_rules(env):
     ed, v, ids, iid = env["ed"], env["v"], env["ids"], env["iid"]
-    proj = {"clips": [{"item": ids["clip"], "in": 0.5, "out": 3.5, "speed": 1.4, "volume": 3},
-                      {"item": ids["photo"], "out": 2, "in": 9, "speed": 2},
-                      {"item": 999999, "in": 0, "out": 2}],
-            "captions": [{"start": 0.2, "end": 1.5, "text": "  Braces   off! "}, {"start": 1, "end": 2, "text": ""}],
-            "lowers": [{"start": 1, "end": 3, "text": "Dr. Schulz", "sub": "Orthodontist"}],
+    proj = {"main": [{"id": "a", "item": ids["clip"], "in": 0.5, "out": 3.5, "speed": 1.4, "volume": 3,
+                      "filter": {"preset": "warm", "brightness": 5}, "trans": {"type": "fade", "dur": 0.5}},
+                     {"id": "b", "item": ids["photo"], "out": 2, "in": 9, "speed": 2, "trans": {"type": "slideleft", "dur": 9},
+                      "motion": "zoomin", "crop": {"l": 0.8, "r": 0.5}},
+                     {"item": 999999, "in": 0, "out": 2}],
+            "layers": [{"id": "t1", "kind": "text", "text": "Free consults", "start": 1, "dur": 50, "x": 100, "y": 200,
+                        "w": 600, "h": 120, "anim": {"in": "pop", "out": "nope"}, "font": "Comic Sans"},
+                       {"id": "x", "kind": "text", "text": "   "}, {"kind": "image", "item": ids["photo"], "start": 99}],
+            "captions": [{"start": 0.2, "end": 1.5, "text": "  Braces   off! "}],
             "outro": {"on": True, "dur": 20, "text": "Book a free consult"}, "music": {"item": ids["song"], "volume": 0.3},
             "style": {"captions": "plain", "position": "weird"}, "w": 99, "h": 99}
     r = ed.post(f"/studio/video/{iid}/project", json={"project": proj})
     assert r.status_code == 200, r.text
     p = r.json()["project"]
-    assert (p["w"], p["h"]) == (1080, 1920)                                              # size can't be changed by the edit
-    assert p["clips"] == [{"item": ids["clip"], "in": 0.5, "out": 3.5, "speed": 1.5, "volume": 2.0, "fit": "fill"},
-                          {"item": ids["photo"], "in": 0, "out": 2.0, "speed": 1, "volume": 0, "still": True, "fit": "fit"}]
-    assert p["captions"] == [{"start": 0.2, "end": 1.5, "text": "Braces off!"}]
-    assert p["outro"] == {"on": True, "dur": 8.0, "text": "Book a free consult"} and p["style"] == {"captions": "plain", "position": "low"}
-    assert r.json()["total"] == pytest.approx(3 / 1.5 + 2 + 8)
-    long = {"clips": [{"item": ids["photo"], "out": 30}] * 7}
+    assert (p["w"], p["h"], p["v"]) == (1080, 1920, 2)
+    a, b = p["main"]
+    assert a["speed"] == 1.5 and a["volume"] == 2.0 and a["filter"]["preset"] == "warm" and a["filter"]["brightness"] == 1
+    assert a["trans"]["type"] == "none"                                   # nothing before the first clip
+    assert b["still"] and b["out"] == 2.0 and b["motion"] == "zoomin" and b["trans"] == {"type": "slideleft", "dur": 2.0}
+    assert b["crop"]["l"] == 0.8 and b["crop"]["l"] + b["crop"]["r"] <= 0.9
+    lay = v.video2.layout(p)
+    # clip a: 2 s; photo b: 2 s overlapping by 1 s (half the shorter); outro 8 s with a 0.4 s fade
+    assert [s_["start"] for s_ in lay["segs"]] == [0, 1.0, 2.6] and lay["end"] == 10.6
+    assert len(p["layers"]) == 1 and p["layers"][0]["font"] == "DejaVu Sans" and p["layers"][0]["anim"] == {"in": "pop", "out": "none"}
+    assert p["layers"][0]["dur"] == pytest.approx(9.6)                    # can't run past the end
+    assert r.json()["total"] == pytest.approx(10.6)
+    long = {"main": [{"item": ids["photo"], "out": 30}] * 7}
     assert "under 3 minutes" in ed.post(f"/studio/video/{iid}/project", json={"project": long}).json()["error"]
+
+
+def test_version1_projects_open(env):
+    v, ids = env["v"], env["ids"]
+    old = {"type": "video", "w": 1080, "h": 1920, "clips": [{"item": ids["clip"], "in": 0, "out": 2, "speed": 1, "volume": 1}],
+           "captions": [], "lowers": [], "outro": {"on": False, "dur": 2, "text": ""}, "music": None, "style": {}}
+    p = v.video2.clean(old, 1080, 1920)
+    assert len(p["main"]) == 1 and p["main"][0]["item"] == ids["clip"] and p["main"][0]["fit"] == "fill"
+
+
+def test_grade_matches_presets(env):
+    g = env["v"].video2.grade({"preset": "none"})
+    assert g["neutral"] and env["v"].video2.grade_filter({}) == ""
+    bw = env["v"].video2.grade({"preset": "bw"})
+    row = bw["matrix"][0]
+    assert bw["matrix"][0] == bw["matrix"][1] == bw["matrix"][2] and abs(sum(row) - 1) < 1e-3
+    f = env["v"].video2.grade_filter({"preset": "film"})
+    assert "colorchannelmixer" in f and "lutrgb" in f and "vignette" in f
 
 
 def test_render(env):
     v, studio, ids, iid = env["v"], env["studio"], env["ids"], env["iid"]
-    v.save_project(iid, {"clips": [{"item": ids["clip"], "in": 0.5, "out": 3.5, "speed": 1.5, "volume": 1},
-                                   {"item": ids["silent"], "in": 0, "out": 2, "speed": 1, "volume": 1, "fit": "fit"},
-                                   {"item": ids["photo"], "out": 1.5}],
-                         "captions": [{"start": 0.2, "end": 1.5, "text": "Braces off, smiles on"}],
-                         "lowers": [{"start": 0.5, "end": 2.5, "text": "Dr. Schulz", "sub": "Orthodontist"}],
-                         "outro": {"on": True, "dur": 2, "text": "Book a visit"},
-                         "music": {"item": ids["song"], "volume": 0.3}, "style": {"captions": "box", "position": "low"}})
-    v._render(iid, "Amber")
+    v.save_project(iid, {
+        "main": [{"item": ids["clip"], "in": 0.5, "out": 3.5, "speed": 1.5, "volume": 1, "filter": {"preset": "vivid"}},
+                 {"item": ids["silent"], "in": 0, "out": 2, "speed": 1, "volume": 1, "fit": "fit", "trans": {"type": "wipeleft", "dur": 0.5},
+                  "bg": {"mode": "color", "color": "#224466"}},
+                 {"item": ids["photo"], "out": 1.5, "motion": "zoomin", "crop": {"l": 0.1, "t": 0.1}, "trans": {"type": "none"}}],
+        "layers": [{"kind": "text", "text": "Free consults\nall November", "start": 0.5, "dur": 3, "x": 140, "y": 300,
+                    "w": 800, "h": 260, "size": 80, "fill": "#0F7471", "anim": {"in": "pop", "out": "fade"}, "rot": -4},
+                   {"kind": "video", "item": ids["silent"], "in": 0, "out": 2, "speed": 1, "volume": 0, "start": 1, "track": 2,
+                    "x": 600, "y": 1300, "w": 360, "h": 640, "anim": {"in": "slideleft"}, "opacity": 0.9, "filter": {"preset": "bw"}},
+                   {"kind": "image", "item": ids["photo"], "dur": 2, "start": 3, "x": 60, "y": 60, "w": 300, "h": 225,
+                    "crop": {"r": 0.2}, "anim": {"in": "slideup"}}],
+        "captions": [{"start": 0.2, "end": 1.5, "text": "Braces off, smiles on"}],
+        "lowers": [{"start": 0.5, "end": 2.5, "text": "Dr. Schulz", "sub": "Orthodontist"}],
+        "outro": {"on": True, "dur": 2, "text": "Book a visit", "trans": {"type": "fadeblack", "dur": 0.4}},
+        "music": {"item": ids["song"], "volume": 0.3}, "style": {"captions": "box", "position": "low"}})
+    expect = v.video2.layout(v.project(iid))["end"]
+    v._render(iid, "Amber", {})
     st = v.status(iid)
     assert st["state"] == "done", st
     it = studio.item(iid)
     pr = v.probe(studio.local_path(it))
     assert (pr["w"], pr["h"]) == (1080, 1920) and pr["audio"]
-    assert pr["duration"] == pytest.approx(2 + 2 + 1.5 + 2, abs=0.25)
-    assert it["duration"] == pytest.approx(7.5, abs=0.1) and it["has_thumb"]
-    assert any(e["kind"] == "rendered" for e in studio.events(iid))
-    r = env["ed"].get(f"/studio/f/{iid}", headers={"Range": "bytes=0-99"})
-    assert r.status_code == 206
+    assert pr["duration"] == pytest.approx(expect, abs=0.2) and expect == pytest.approx(2 + 2 - 0.5 + 1.5 + 2 - 0.4, abs=0.01)
+    assert it["has_thumb"] and any(e["kind"] == "rendered" for e in studio.events(iid))
+    env["rendered"] = studio.local_path(it)
     # the end card is a picture in the brand's colours
     png = v.outro_png(env["pid"], 540, 960, "Book a visit")
     from PIL import Image
-    im = Image.open(io.BytesIO(png))
-    assert im.size == (540, 960)
+    assert Image.open(io.BytesIO(png)).size == (540, 960)
     assert env["ed"].get(f"/studio/video/{iid}/outro.png?text=Hi").headers["content-type"] == "image/png"
 
 
-def test_render_through_the_page(env):
+def test_render_through_the_page_with_text_pictures(env):
     ed, v, iid = env["ed"], env["v"], env["iid"]
-    r = ed.post(f"/studio/video/{iid}/render")
+    from PIL import Image
+    p = v.project(iid)
+    tid = p["layers"][0]["id"]
+    buf = io.BytesIO()
+    Image.new("RGBA", (800, 260), (255, 0, 0, 200)).save(buf, "PNG")
+    r = ed.post(f"/studio/video/{iid}/render", files={f"text_{tid}": ("t.png", buf.getvalue(), "image/png")})
     assert r.json()["started"] is True
-    for _ in range(300):
+    for _ in range(600):
         s = ed.get(f"/studio/video/{iid}/render").json()
         if s.get("state") in ("done", "error"):
             break
@@ -154,8 +194,8 @@ def test_ass_and_words(env):
 
 def test_captions_from_speech(env, monkeypatch):
     ed, v, ids, iid = env["ed"], env["v"], env["ids"], env["iid"]
-    v.save_project(iid, {"clips": [{"item": ids["photo"], "out": 2},
-                                   {"item": ids["clip"], "in": 1, "out": 3, "speed": 2, "volume": 1}],
+    v.save_project(iid, {"main": [{"item": ids["photo"], "out": 2},
+                                  {"item": ids["clip"], "in": 1, "out": 3, "speed": 2, "volume": 1}],
                          "outro": {"on": False, "dur": 2, "text": ""}})
     sent = []
 
