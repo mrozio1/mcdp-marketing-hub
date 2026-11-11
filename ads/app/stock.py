@@ -201,4 +201,4 @@ def music_library(q=""):
     """Every sound in the shared Music folder (and any brand's), newest first, filtered by words."""
     rows = [it for it in studio.items(all_brands=True, q=q, limit=500) if it["kind"] == "audio"]
     return [{"id": it["id"], "title": it["title"], "duration": it["duration"], "notes": it["notes"][:200],
-             "source": it["source"], "src": f"/studio/f/{it['id']}"} for it in rows]
+             "source": it["source"], "src": f"/studio/media/{it['id']}"} for it in rows]

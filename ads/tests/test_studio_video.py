@@ -66,7 +66,7 @@ def test_create_and_open(env):
     assert it["kind"] == "video" and v.is_project(it) and (it["width"], it["height"]) == (1080, 1920)
     assert v.probe(studio.local_path(it))["duration"] == pytest.approx(1, abs=0.2)      # a placeholder until it's made
     page = ed.get(f"/studio/video/{iid}").text
-    assert "studio-video.js" in page and "Make the MP4" in page and "Debond day reel" in page
+    assert "studio-video.js" in page and "Export" in page and "Debond day reel" in page
     assert "Edit the video" in ed.get(f"/studio/i/{iid}").text
     j = ed.get(f"/studio/video/{iid}/project").json()
     assert j["project"]["main"] == [] and j["project"]["outro"]["on"] is True
@@ -213,3 +213,21 @@ def test_captions_from_speech(env, monkeypatch):
     monkeypatch.setattr(v, "_cf", lambda: ("", ""))
     r = ed.post(f"/studio/video/{iid}/captions")
     assert r.status_code == 422 and "Cloudflare" in r.json()["error"]
+
+
+def test_ratio_change_keeps_layers_in_place(env):
+    v, ed, ids = env["v"], env["ed"], env["ids"]
+    iid = v.create_project(env["pid"], None, "story", "Ratio", "Amber", [ids["clip"]])
+    p = v.project(iid)
+    p["layers"] = [{"id": "t1", "kind": "text", "track": 1, "start": 0, "dur": 2, "text": "Hi", "x": 140, "y": 860, "w": 800, "h": 200,
+                    "size": 80, "rot": 0, "opacity": 1}]
+    v.save_project(iid, p)
+    r = ed.post(f"/studio/video/{iid}/ratio", json={"size": "square"})
+    assert r.status_code == 200, r.text
+    q = v.project(iid)
+    assert (q["w"], q["h"]) == (1080, 1080)
+    L = q["layers"][0]
+    assert abs(L["x"] + L["w"] / 2 - 540) < 2 and abs(L["y"] + L["h"] / 2 - 540) < 2
+    assert L["w"] < 800 and L["size"] < 80
+    assert env["studio"].item(iid)["height"] == 1080
+    assert ed.post(f"/studio/video/{iid}/ratio", json={"size": "huge"}).status_code == 422

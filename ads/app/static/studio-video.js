@@ -16,6 +16,46 @@
   const TRANS = Object.fromEntries(C.transitions);
 
   let P = null, items = {}, sel = null, t = 0, playing = false, cropMode = false;
+  const mq = window.matchMedia("(max-width: 760px)");
+  let M = mq.matches;                       // phone layout: centre playhead, bottom toolbar, sheets
+  const ICON = {
+    media: '<path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.5 1.5A3.5 3.5 0 0 1 17.5 18"/><path d="M12 12v8M9 15l3-3 3 3"/>',
+    stock: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+    audio: '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+    text: '<path d="M5 7V5h14v2M12 5v14M9 19h6"/>',
+    captions: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 11h4M13 11h4M7 14h10"/>',
+    effects: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/>',
+    transitions: '<path d="M4 5l8 7-8 7zM20 5l-8 7 8 7z"/>',
+    filters: '<circle cx="12" cy="8.5" r="4.5"/><circle cx="8.5" cy="14.5" r="4.5"/><circle cx="15.5" cy="14.5" r="4.5"/>',
+    brand: '<path d="M4 20h16M6 20V9l6-5 6 5v11M10 20v-5h4v5"/>',
+    ratio: '<rect x="4" y="6" width="16" height="12" rx="1" stroke-dasharray="3 2"/>',
+    split: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M20 4L8 16M14.5 14.5L20 20M8 8l4 4"/>',
+    del: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
+    dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>',
+    crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14"/>',
+    volume: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>',
+    mute: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/>',
+    speed: '<path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="M12 13l4-4"/>',
+    anim: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+    edit: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+    bg: '<circle cx="12" cy="9" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/><path d="M3 3h3M18 3h3M3 3v3M21 3v3" />',
+    up: '<path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4" opacity=".45"/><path d="M12 22v-5" />',
+    down: '<path d="M12 12l8 4-8 4-8-4z"/><path d="M4 8l8-4 8 4" opacity=".45"/><path d="M12 2v5"/>',
+    back: '<path d="M15 5l-7 7 7 7"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    typing: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+    undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+    redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/>',
+    zin: '<circle cx="11" cy="11" r="7"/><path d="M8 11h6M11 8v6M20 20l-4-4"/>',
+    zout: '<circle cx="11" cy="11" r="7"/><path d="M8 11h6M20 20l-4-4"/>',
+    fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+    play: '<path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/>',
+    pause: '<path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor" stroke="none"/>',
+  };
+  const ico = (k, s = 20) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k] || ""}</svg>`;
+  [["[data-split]", "split"], ["[data-del]", "del"], ["[data-dup]", "dup"], ["[data-crop-btn]", "crop"], ["[data-undo]", "undo"], ["[data-redo]", "redo"],
+   ["[data-zoom-in]", "zin"], ["[data-zoom-out]", "zout"], ["[data-zoom-fit]", "fit"], ["[data-play]", "play"]]
+    .forEach(([q, k]) => { const b = document.querySelector(q); if (b) b.innerHTML = ico(k, q === "[data-play]" ? 18 : 19); });
   let hist = [], hi = -1;
 
   // ================================================================ timing (same as video2.layout)
@@ -97,7 +137,8 @@
   const maskEl = (key, id) => { const it = items[id]; return it && it.mask ? media("m:" + key, it.mask, "video") : null; };
   let outroImg = null;
   function loadOutro() { outroImg = new Image(); outroImg.onload = () => requestDraw(); outroImg.src = `/studio/video/${C.iid}/outro.png?text=${encodeURIComponent(P.outro.text)}&t=${Date.now()}`; }
-  const music = new Audio(); music.preload = "auto";
+  const music = new Audio(); music.preload = "auto"; let musicFresh = true;
+  music.addEventListener("error", () => { if (music.dataset.src) say("The music file couldn't be loaded for the preview"); });
 
   // ================================================================ the preview canvas
   const cv = $("[data-cv]"), ctx = cv.getContext("2d");
@@ -116,6 +157,7 @@
     requestDraw(); placeSel();
   }
   window.addEventListener("resize", () => P && fit());
+  mq.addEventListener("change", () => { M = mq.matches; if (!P) return; closeSheets(); cv.width = 0; fit(); drawTimeline(); props(); followHead(true); });
   if (window.ResizeObserver) new ResizeObserver(() => P && fit()).observe(wrap);
   const S = () => K * DPR;                 // design px -> canvas px
 
@@ -307,7 +349,7 @@
     }
     [...P.layers].sort((a, b) => a.track - b.track || a.start - b.start).forEach(drawLayer);
     overlays();
-    $("[data-time]").textContent = `${fmt(t)} / ${fmt(lay.end)}`;
+    $("[data-time]").textContent = fmt(t); $("[data-time-total]").textContent = fmt(lay.end);
     placeHead();
   }
 
@@ -344,10 +386,15 @@
       else { if (!el.paused) el.pause(); if (drift > 0.04) el.currentTime = w.local; }
     });
     if (P.music && items[P.music.item]) {
-      if (music.dataset.src !== items[P.music.item].src) { music.src = items[P.music.item].src; music.dataset.src = music.src; }
+      const msrc = items[P.music.item].src;
+      if (music.dataset.src !== msrc) { music.src = msrc; music.dataset.src = msrc; music.loop = true; music.load(); }
       const end = total(); music.volume = clamp(P.music.volume * clamp((end - t) / 1.5, 0, 1), 0, 1);
-      if (playing) { const d = music.duration || 0, want = d ? t % d : t; if (Math.abs(music.currentTime - want) > 0.4) music.currentTime = want; if (music.paused) music.play().catch(() => {}); }
-      else if (!music.paused) music.pause();
+      if (playing) {
+        const d = isFinite(music.duration) && music.duration > 0 ? music.duration : 0, want = d ? t % d : t;
+        if (!music.seeking && music.readyState >= 1 && (musicFresh || Math.abs(music.currentTime - want) > 0.8)) { try { music.currentTime = want; } catch (e) {} }
+        musicFresh = false;
+        if (music.paused) music.play().catch(err => say(err && err.name === "NotAllowedError" ? "Tap play again to hear the music" : "The music couldn't play"));
+      } else if (!music.paused) music.pause();
     } else if (!music.paused) music.pause();
   }
   let clock0 = 0, t0 = 0;
@@ -355,27 +402,31 @@
     if (!playing) return;
     t = t0 + (performance.now() - clock0) / 1000;
     if (t >= total()) { t = total(); stop(); }
-    syncMedia(); draw(); placeSel();
+    syncMedia(); draw(); placeSel(); followHead();
     if (playing) requestAnimationFrame(loop);
   }
   function play() {
     if (!P.main.length) return;
     if (t >= total() - 0.05) t = 0;
-    playing = true; t0 = t; clock0 = performance.now(); hideTyping();
-    $("[data-play]").innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#fff"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
+    playing = true; t0 = t; clock0 = performance.now(); hideTyping(); musicFresh = true;
+    $("[data-play]").innerHTML = ico("pause", 18);
     syncMedia(); requestAnimationFrame(loop);
   }
   function stop() {
     playing = false; pool.forEach(el => { if (el.tagName === "VIDEO") el.pause(); }); music.pause();
-    $("[data-play]").innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="#fff"><path d="M7 4v16l13-8z"/></svg>';
+    $("[data-play]").innerHTML = ico("play", 18);
     syncMedia(); requestDraw();
   }
-  function seek(nt) { t = clamp(nt, 0, total()); if (playing) { t0 = t; clock0 = performance.now(); } syncMedia(); requestDraw(); placeSel(); }
+  function seek(nt, fromScroll) {
+    t = clamp(nt, 0, total()); musicFresh = true;
+    if (playing) { t0 = t; clock0 = performance.now(); }
+    syncMedia(); requestDraw(); placeSel(); if (!fromScroll) followHead();
+  }
   $("[data-play]").addEventListener("click", () => playing ? stop() : play());
 
   // ================================================================ saving and undo
   let saveT, saving = Promise.resolve();
-  const say = m => { $("[data-saved]").textContent = m; };
+  const say = m => { $("[data-saved]").textContent = m; const sm = $("[data-saved-m]"); if (sm) sm.textContent = m; };
   function commit(opts = {}) {
     if (!C.canEdit) return;
     const snap = JSON.stringify(P);
@@ -442,13 +493,13 @@
     try {
       const it = await ensureItem(id), c = newMain(it);
       if (at === undefined || at >= P.main.length) P.main.push(c); else P.main.splice(at, 0, c);
-      sel = { kind: "main", id: c.id }; commit(); seek(layout().segs.find(s => s.c.id === c.id).start + 0.01);
+      sel = { kind: "main", id: c.id }; if (M) closeSheets(); commit(); seek(layout().segs.find(s => s.c.id === c.id).start + 0.01);
     } catch (e) { say(e.message); }
   }
   async function addLayer(id, start, track) {
     try {
       const it = await ensureItem(id), L = newLayer(it, start ?? t, track);
-      P.layers.push(L); sel = { kind: "layer", id: L.id }; commit(); seek(L.start + 0.01);
+      P.layers.push(L); sel = { kind: "layer", id: L.id }; if (M) closeSheets(); commit(); seek(L.start + 0.01);
     } catch (e) { say(e.message); }
   }
   const TEXT_PRESETS = {
@@ -475,7 +526,7 @@
       const pr = TEXT_PRESETS[kind], L = mk(pr, pr.y, kind === "cta" ? P.w * 0.62 : P.w * 0.84);
       P.layers.push(L); sel = { kind: "layer", id: L.id };
     }
-    commit(); requestDraw();
+    if (M) closeSheets(); commit(); requestDraw();
   }
   $$("[data-addtext]").forEach(b => b.addEventListener("click", () => { if (!P.main.length) return say("Add a clip to the main track first."); addText(b.dataset.addtext); }));
 
@@ -504,6 +555,7 @@
     selbox.style.left = `${(g.x) * K}px`; selbox.style.top = `${g.y * K}px`; selbox.style.width = `${g.w * K}px`; selbox.style.height = `${g.h * K}px`;
     selbox.style.transform = `rotate(${g.rot}deg)`;
     selbox.classList.toggle("vd-cropping", cropMode); selbox.classList.toggle("vd-main", g.kind === "main");
+    selbox.classList.toggle("vd-small", !cropMode && (g.w * K < 120 || g.h * K < 70));
     selbox.querySelector("[data-hd=rot]").hidden = g.kind !== "layer" || cropMode;
   }
   function hitLayer(px, py) {
@@ -537,6 +589,7 @@
     const box0 = c ? mainBox(orig, sw, sh) : null;
     let moved = false;
     const mv = ev => {
+      if (pinch || ev.pointerId !== e.pointerId) return;
       const [x, y] = toDesign(ev), dx = x - x0, dy = y - y0; moved = moved || Math.abs(dx) + Math.abs(dy) > 1;
       if (cropMode && how !== "move") return cropDrag(how, dx, dy, orig, L, c, sw, sh);
       if (L) {
@@ -555,6 +608,34 @@
     };
     const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); if (moved) commit(); };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+  }
+  const scrPts = new Map(); let pinch = null;
+  screen.addEventListener("pointerdown", e => {
+    scrPts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (scrPts.size === 2 && C.canEdit && (curLayer() || curMain())) {
+      const [a, b] = [...scrPts.values()];
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, ang: Math.atan2(b[1] - a[1], b[0] - a[0]), o: JSON.parse(JSON.stringify(curLayer() || curMain())) };
+    }
+  }, true);
+  window.addEventListener("pointermove", e => {
+    if (!scrPts.has(e.pointerId)) return; scrPts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (!pinch || scrPts.size < 2) return;
+    const [a, b] = [...scrPts.values()], k = (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1) / pinch.d, o = pinch.o;
+    const L = curLayer(), c = curMain();
+    if (L) {
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2; L.w = Math.max(20, o.w * k); L.h = Math.max(20, o.h * k); L.x = cx - L.w / 2; L.y = cy - L.h / 2;
+      if (L.kind === "text") L.size = Math.max(10, Math.round(o.size * k));
+      L.rot = +(o.rot + (Math.atan2(b[1] - a[1], b[0] - a[0]) - pinch.ang) * 180 / Math.PI).toFixed(1);
+    } else if (c) c.zoom = clamp(o.zoom * k, 0.3, 5);
+    requestDraw(); placeSel();
+  });
+  const scrUp = e => { if (!scrPts.delete(e.pointerId)) return; if (pinch && scrPts.size < 2) { pinch = null; commit(); } };
+  window.addEventListener("pointerup", scrUp); window.addEventListener("pointercancel", scrUp);
+  function tapEmpty(e) {
+    const x0 = e.clientX, y0 = e.clientY;
+    const up = ev => { window.removeEventListener("pointerup", up);
+      if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 10 && sel) { sel = null; cropMode = false; drawTimeline(); props(); placeSel(); } };
+    window.addEventListener("pointerup", up);
   }
   function snapX(x, w) { const c = x + w / 2; return Math.abs(c - P.w / 2) < 8 / K ? P.w / 2 - w / 2 : x; }
   function snapY(y, h) { const c = y + h / 2; return Math.abs(c - P.h / 2) < 8 / K ? P.h / 2 - h / 2 : y; }
@@ -611,28 +692,71 @@
 
   // ================================================================ timeline
   const tl = $("[data-timeline]"), rowsEl = $("[data-rows]"), inner = $("[data-tl-inner]"), scrollEl = $("[data-tl-scroll]"), labelsEl = $("[data-tl-labels]");
-  let PPS = 60;
+  let PPS = 60, OFF = 0;                       // OFF: on phones the timeline starts half a screen in, under the centre playhead
+  const X = sec => OFF + sec * PPS;
   const zoomIn = $("[data-tlzoom]");
-  zoomIn.addEventListener("input", () => { PPS = +zoomIn.value; drawTimeline(); });
+  const setZoom = v => { PPS = clamp(v, 15, 220); zoomIn.value = PPS; drawTimeline(); followHead(true); };
+  zoomIn.addEventListener("input", () => setZoom(+zoomIn.value));
+  const zb = (q, f) => { const b = $(q); if (b) b.addEventListener("click", f); };
+  zb("[data-zoom-in]", () => setZoom(PPS * 1.35)); zb("[data-zoom-out]", () => setZoom(PPS / 1.35));
+  zb("[data-zoom-fit]", () => setZoom((scrollEl.clientWidth - 30 - OFF * 2) / Math.max(5, total() + 1)));
+  // phones: the playhead stays in the middle and the timeline scrolls under it
+  let scrollSet = -1;
+  function followHead(force) {
+    if (!M) return;
+    const want = Math.round(t * PPS);
+    if (force || Math.abs(scrollEl.scrollLeft - want) > 0.5) { scrollSet = want; scrollEl.scrollLeft = want; }
+  }
+  scrollEl.addEventListener("scroll", () => {
+    if (!M) return;
+    if (Math.abs(scrollEl.scrollLeft - scrollSet) <= 1) return;
+    scrollSet = -1; if (playing) stop();
+    seek(scrollEl.scrollLeft / PPS, true);
+  }, { passive: true });
+  // pinch the timeline to zoom (phones and trackpads)
+  const tlPts = new Map(); let tlPinch = null;
+  scrollEl.addEventListener("pointerdown", e => { if (e.pointerType === "touch") tlPts.set(e.pointerId, e.clientX); });
+  scrollEl.addEventListener("pointermove", e => {
+    if (!tlPts.has(e.pointerId)) return; tlPts.set(e.pointerId, e.clientX);
+    if (tlPts.size === 2) { const [a, b] = [...tlPts.values()], d = Math.abs(a - b) || 1; if (!tlPinch) tlPinch = { d, pps: PPS }; else setZoom(tlPinch.pps * d / tlPinch.d); }
+  });
+  const tlUp = e => { tlPts.delete(e.pointerId); if (tlPts.size < 2) tlPinch = null; };
+  scrollEl.addEventListener("pointerup", tlUp); scrollEl.addEventListener("pointercancel", tlUp);
+  scrollEl.addEventListener("wheel", e => { if (e.ctrlKey) { e.preventDefault(); setZoom(PPS * (e.deltaY < 0 ? 1.12 : 1 / 1.12)); } }, { passive: false });
   function rowsSpec() {
     const maxT = Math.max(0, ...P.layers.map(L => L.track));
-    const rows = [{ kind: "new", track: maxT + 1, label: "+ Layer" }];
-    for (let tr = maxT; tr >= 1; tr--) rows.push({ kind: "layer", track: tr, label: `Layer ${tr}` });
-    rows.push({ kind: "main", label: "Main" }, { kind: "captions", label: "Captions" }, { kind: "music", label: "Music" });
+    const rows = [{ kind: "new", track: maxT + 1, label: "New layer", icon: "plus" }];
+    for (let tr = maxT; tr >= 1; tr--) {
+      const kinds = new Set(P.layers.filter(L => L.track === tr).map(L => L.kind));
+      rows.push({ kind: "layer", track: tr, label: `Layer ${tr}`, icon: kinds.size === 1 && kinds.has("text") ? "text" : "stock" });
+    }
+    rows.push({ kind: "main", label: "Main", icon: mainMuted() ? "mute" : "volume" }, { kind: "captions", label: "Captions", icon: "captions" },
+              { kind: "music", label: "Music", icon: "audio" });
     return rows;
+  }
+  const mainMuted = () => P.main.length > 0 && P.main.every(c => c.still || !c.volume);
+  const savedVol = {};
+  function toggleMainMute() {
+    const mute = !mainMuted();
+    P.main.forEach(c => { if (c.still) return; if (mute) { savedVol[c.id] = c.volume || 1; c.volume = 0; } else c.volume = savedVol[c.id] || 1; });
+    commit(); say(mute ? "Clip sound off" : "Clip sound on");
   }
   function blockLabel(L) { return L.kind === "text" ? `T  ${L.text.split("\n")[0]}` : (items[L.item] || {}).title || L.kind; }
   function drawTimeline() {
     if (!P) return;
-    const lay = layout(), end = lay.end, width = Math.max(scrollEl.clientWidth - 4, (end + 4) * PPS);
+    OFF = M ? Math.round(scrollEl.clientWidth / 2) : 0;
+    const lay = layout(), end = lay.end, width = M ? OFF * 2 + end * PPS : Math.max(scrollEl.clientWidth - 4, (end + 4) * PPS);
     inner.style.width = `${width}px`;
     const ruler = $("[data-ruler]"); ruler.innerHTML = "";
     const step = PPS > 90 ? 1 : PPS > 40 ? 2 : PPS > 20 ? 5 : 10;
-    for (let s = 0; s * PPS < width; s += step) { const m = document.createElement("span"); m.style.left = `${s * PPS}px`; m.textContent = fmt(s).replace(/\.0$/, ""); ruler.appendChild(m); }
+    for (let s = 0; X(s) < width - (M ? OFF : 0) + 1; s += step) { const m = document.createElement("span"); m.style.left = `${X(s)}px`; m.textContent = fmt(s).replace(/\.0$/, ""); ruler.appendChild(m); }
     rowsEl.innerHTML = ""; labelsEl.innerHTML = `<div class="vd-lab-ruler"></div>`;
     rowsSpec().forEach(r => {
       const row = document.createElement("div"); row.className = `vd-row vd-row-${r.kind}`; row.dataset.kind = r.kind; if (r.track) row.dataset.track = r.track;
-      const lab = document.createElement("div"); lab.className = `vd-lab vd-lab-${r.kind}`; lab.textContent = r.label; labelsEl.appendChild(lab);
+      const lab = document.createElement(r.kind === "main" && C.canEdit ? "button" : "div"); lab.className = `vd-lab vd-lab-${r.kind}`;
+      lab.innerHTML = `${ico(r.icon, 16)}<span>${esc(r.label)}</span>`;
+      if (r.kind === "main" && C.canEdit) { lab.type = "button"; lab.title = mainMuted() ? "Turn the clips' sound on" : "Turn the clips' sound off"; lab.addEventListener("click", toggleMainMute); }
+      labelsEl.appendChild(lab);
       if (r.kind === "main") {
         lay.segs.forEach((s, i) => {
           const b = block(row, s.start, s.end, s.kind === "outro" ? "End card" : ((items[s.c.item] || {}).title || "Clip"),
@@ -641,7 +765,7 @@
           else b.dataset.outro = "1";
           if (i > 0) {
             const tr = document.createElement("button"); tr.type = "button"; tr.className = `vd-tr${s.d ? " on" : ""}`;
-            tr.style.left = `${(s.start + s.d / 2) * PPS}px`; tr.title = s.d ? `${TRANS[s.trans]} (${s.d.toFixed(1)} s)` : "Add a transition";
+            tr.style.left = `${X(s.start + s.d / 2)}px`; tr.title = s.d ? `${TRANS[s.trans]} (${s.d.toFixed(1)} s)` : "Add a transition";
             tr.innerHTML = s.d ? "⧓" : "+"; tr.dataset.trans = s.kind === "outro" ? "outro" : s.c.id;
             if (sel && sel.kind === "trans" && sel.id === tr.dataset.trans) tr.classList.add("sel");
             row.appendChild(tr);
@@ -658,22 +782,28 @@
         P.lowers.forEach((c, i) => { const b = block(row, c.start, c.end, c.text, "vd-b-lower", sel && sel.kind === "lower" && sel.i === i); b.dataset.lower = i; });
       } else if (r.kind === "music" && P.music && items[P.music.item]) {
         const b = block(row, 0, end, `♪ ${items[P.music.item].title}`, "vd-b-music", sel && sel.kind === "music"); b.dataset.music = 1;
-      } else if (r.kind === "new") row.innerHTML = `<span class="vd-new-hint">Drop here for a new layer</span>`;
+      } else if (r.kind === "new") row.innerHTML = `<span class="vd-new-hint" style="left:${OFF + 8}px">${M ? "" : "Drop here for a new layer"}</span>`;
+      if ((r.kind === "music" && !(P.music && items[P.music.item])) || (r.kind === "captions" && !P.captions.length && !P.lowers.length)) {
+        const add = document.createElement("button"); add.type = "button"; add.className = "vd-addrow"; add.style.left = `${X(0)}px`;
+        add.dataset.open = r.kind === "music" ? "audio" : "captions";
+        add.innerHTML = `${ico("plus", 14)} ${r.kind === "music" ? "Add music" : "Add captions"}`; row.appendChild(add);
+      }
       rowsEl.appendChild(row);
     });
     const tot = end;
-    $("[data-size]").textContent = `${P.w} × ${P.h}`;
+    const rt = (C.ratios || []).find(x => x[2] === P.w && x[3] === P.h);
+    $("[data-size]").textContent = M ? (rt ? { story: "9:16", square: "1:1", portrait: "4:5", wide: "16:9" }[rt[0]] : "Ratio") : `${rt ? rt[1] : "Ratio"} · ${P.w}×${P.h}`;
     $("[data-limit]").textContent = tot > 90 ? `${Math.round(tot)} s: Reels longer than 90 s may be cut short` : tot > 60 && P.h > P.w ? `${Math.round(tot)} s (Stories show 60 s at a time)` : "";
     placeHead(); capList();
   }
   function block(row, a, b, label, cls, on) {
     const d = document.createElement("div");
-    d.className = `vd-block ${cls}${on ? " on" : ""}`; d.style.left = `${a * PPS}px`; d.style.width = `${Math.max(6, (b - a) * PPS - 2)}px`;
+    d.className = `vd-block ${cls}${on ? " on" : ""}`; d.style.left = `${X(a)}px`; d.style.width = `${Math.max(6, (b - a) * PPS - 2)}px`;
     d.innerHTML = `<span>${esc(label)}</span>`; row.appendChild(d); return d;
   }
   function addHandles(b) { if (!C.canEdit) return; ["l", "r"].forEach(s => { const h = document.createElement("span"); h.className = `vd-handle vd-h${s}`; h.dataset.edge = s; b.appendChild(h); }); }
-  function placeHead() { const h = $("[data-head]"); if (h) h.style.left = `${t * PPS}px`; }
-  const timeAt = ev => { const r = inner.getBoundingClientRect(); return Math.max(0, (ev.clientX - r.left) / PPS); };
+  function placeHead() { const h = $("[data-head]"); if (h) h.style.left = `${X(t)}px`; }
+  const timeAt = ev => { const r = inner.getBoundingClientRect(); return Math.max(0, (ev.clientX - r.left - OFF) / PPS); };
   function snapT(v, skip) {
     const lay = layout(), cand = [0, t, lay.end, ...lay.segs.flatMap(s => [s.start, s.end])];
     P.layers.forEach(L => { if (L.id !== skip) cand.push(L.start, L.start + layerLen(L)); });
@@ -681,11 +811,27 @@
     cand.forEach(c => { if (Math.abs(c - v) < bd) { bd = Math.abs(c - v); best = c; } });
     return best;
   }
+  rowsEl.addEventListener("click", e => { const a = e.target.closest("[data-open]"); if (a) { e.stopPropagation(); openTab(a.dataset.open); } });
   rowsEl.addEventListener("pointerdown", e => {
+    if (e.target.closest("[data-open]")) return;
     const tr = e.target.closest(".vd-tr");
-    if (tr) { sel = { kind: "trans", id: tr.dataset.trans }; drawTimeline(); props(); return; }
+    if (tr) { sel = { kind: "trans", id: tr.dataset.trans }; drawTimeline(); props(); openTab("transitions"); return; }
     const b = e.target.closest(".vd-block");
-    if (!b) { stop(); seek(timeAt(e)); sel = null; drawTimeline(); props(); placeSel(); return; }
+    const touch = e.pointerType === "touch";
+    if (!b) {
+      if (touch) { tapEmpty(e); return; }          // on phones a drag on empty timeline scrolls; a tap clears the selection
+      stop(); seek(timeAt(e)); sel = null; drawTimeline(); props(); placeSel(); return;
+    }
+    // on phones, the first tap selects; once selected, a block can be dragged and its ends trimmed
+    if (touch && !b.classList.contains("on") && (b.dataset.main || b.dataset.layer)) {
+      const x0 = e.clientX, y0 = e.clientY;
+      const up = ev => { window.removeEventListener("pointerup", up);
+        if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 10) {
+          sel = b.dataset.main ? { kind: "main", id: b.dataset.main } : { kind: "layer", id: b.dataset.layer };
+          drawTimeline(); props(); placeSel();
+        } };
+      window.addEventListener("pointerup", up); return;
+    }
     if (b.dataset.cap !== undefined) { sel = { kind: "cap", i: +b.dataset.cap }; seek(P.captions[sel.i].start); drawTimeline(); props(); return; }
     if (b.dataset.lower !== undefined) { sel = { kind: "lower", i: +b.dataset.lower }; seek(P.lowers[sel.i].start); drawTimeline(); props(); return; }
     if (b.dataset.music) { sel = { kind: "music" }; drawTimeline(); props(); return; }
@@ -711,7 +857,7 @@
         insertAt = segs.filter(s => s.c.id !== id && (s.start + s.end) / 2 < at).length;
         if (!ghost) { ghost = document.createElement("div"); ghost.className = "vd-ghost"; b.parentElement.appendChild(ghost); b.classList.add("vd-dragging"); }
         const others = segs.filter(s => s.c.id !== id); const gx = insertAt < others.length ? others[insertAt].start : (others.length ? others[others.length - 1].end : 0);
-        ghost.style.left = `${gx * PPS - 2}px`;
+        ghost.style.left = `${X(gx) - 2}px`;
         b.style.transform = `translateX(${ev.clientX - x0}px)`;
         return;
       }
@@ -778,7 +924,8 @@
   screen.addEventListener("drop", e => { const id = +e.dataTransfer.getData("text/x-mcdp-item"); if (!id) return; e.preventDefault(); P.main.length ? addLayer(id, t) : addMain(id); });
 
   // ================================================================ the properties panel
-  const propsEl = $("[data-props]");
+  const propsEl = $("[data-props]"), fxEl = $("[data-fx]"), trEl = $("[data-trp]"), fiEl = $("[data-fip]");
+  const jump = (...b) => `<div class="vd-jump">${b.map(([k, ic, l]) => `<button type="button" data-open="${k}">${ico(ic, 16)} ${l}</button>`).join("")}</div>`;
   const opt = (pairs, v) => pairs.map(([k, l]) => `<option value="${k}"${String(k) === String(v) ? " selected" : ""}>${esc(l)}</option>`).join("");
   const rng = (name, label, v, min, max, step = 1) => `<label class="ed-range">${label}<input type="range" data-p="${name}" min="${min}" max="${max}" step="${step}" value="${v}"><span>${v}</span></label>`;
   function filterBlock(f, thumb) {
@@ -788,8 +935,8 @@
       ${rng("f.saturation", "Saturation", Math.round(f.saturation * 100), -100, 100)}${rng("f.warmth", "Warmth", Math.round(f.warmth * 100), -100, 100)}
       ${rng("f.vignette", "Vignette", Math.round(f.vignette * 100), 0, 100)}`;
   }
-  function presetThumbs(src) {
-    const im = new Image(); im.onload = () => $$("[data-pthumb]", propsEl).forEach(c => {
+  function presetThumbs(src, root = fiEl) {
+    const im = new Image(); im.onload = () => $$("[data-pthumb]", root).forEach(c => {
       const x = c.getContext("2d", { willReadFrequently: true }), s = Math.max(64 / im.width, 64 / im.height);
       x.drawImage(im, (64 - im.width * s) / 2, (64 - im.height * s) / 2, im.width * s, im.height * s); applyGrade(c, grade({ preset: c.dataset.pthumb }));
     }); im.src = src;
@@ -804,26 +951,25 @@
         ${still ? `<label>Shows for <span class="muted small">(seconds)</span><input type="number" step="0.5" min="0.5" max="30" data-p="out" value="${c.out}" class="ed-num"></label>` :
           `<div class="st-share-grid"><label>Starts at<input type="number" step="0.1" min="0" data-p="in" value="${c.in}" class="ed-num"></label><label>Ends at<input type="number" step="0.1" data-p="out" value="${c.out}" class="ed-num"></label></div>
           <p class="small muted">The clip is ${fmt(it.duration)} long. Drag its ends on the timeline to trim.</p>
-          <label>Speed<select data-p="speed">${opt(C.speeds.map(s => [s, s + "×"]), c.speed)}</select></label>
-          ${rng("volume", "Volume", Math.round(c.volume * 100), 0, 150)}`}
+          <label data-sec="speed">Speed<select data-p="speed">${opt(C.speeds.map(s => [s, s + "×"]), c.speed)}</select></label>
+          <div data-sec="volume">${rng("volume", "Volume", Math.round(c.volume * 100), 0, 150)}</div>`}
+        ${jump(["filters", "filters", "Filters"], ["effects", "effects", "Motion"], ...(P.main.indexOf(c) > 0 ? [["transitions", "transitions", "Transition in"]] : []))}
         <h3>Framing</h3>
         <div class="vd-seg"><button type="button" data-fit="fill" class="${c.fit === "fill" ? "on" : ""}">Fill the screen</button><button type="button" data-fit="fit" class="${c.fit === "fit" ? "on" : ""}">Show all of it</button></div>
         ${rng("zoom", "Zoom", Math.round(c.zoom * 100), 30, 300)}
         <p class="small muted">Drag the clip on the video to move it; drag a corner to zoom. <button type="button" class="linklike" data-reset-pos>Centre it</button> · <button type="button" class="linklike" data-crop-go>Crop</button>${c.crop.l + c.crop.t + c.crop.r + c.crop.b > 0 ? ` · <button type="button" class="linklike" data-uncrop>Undo the crop</button>` : ""}</p>
-        <label>Motion<select data-p="motion">${opt(C.motions, c.motion)}</select></label>
-        <h3>Background</h3>
+        <h3 data-sec="bg">Background</h3>
         ${!still ? `<label class="check vd-check"><input type="checkbox" data-cut ${c.bg.cut ? "checked" : ""} ${bs === "ready" ? "" : (C.bgOk ? "" : "disabled")}> Remove the background (keeps the person)</label>
           <p class="small muted" data-bgstate>${bs === "ready" ? "" : bs === "running" ? "Finding the person… this takes a few minutes; you can keep editing." : bs === "error" ? esc(it.mask_error || "That didn't work for this clip.") : C.bgOk ? "Works on the NAS for free; takes a few minutes the first time for each clip." : "Needs the hub update on the NAS."}</p>` : ""}
         <label>Behind it<select data-p="bg.mode">${opt(C.bgModes, c.bg.mode)}</select></label>
         ${c.bg.mode === "color" ? `<label class="ed-range">Colour<input type="color" data-p="bg.color" value="${c.bg.color}"></label>` : ""}
         ${c.bg.mode === "photo" ? `<label>Photo<select data-p="bg.item"><option value="">Pick a photo…</option>${(mediaList.pictures || []).map(m => `<option value="${m.id}"${m.id === c.bg.item ? " selected" : ""}>${esc(m.title)}</option>`).join("")}</select></label>` : ""}
         <p class="small muted">Shows where the clip doesn't cover the screen${!still ? ", or behind the person once the background is removed" : ""}.</p>
-        ${filterBlock(c.filter)}
         <div class="btn-row"><button type="button" class="linklike danger" data-delsel>Remove the clip</button></div>`;
-      presetThumbs(it.thumb);
     } else if (L) {
       const it = items[L.item] || {}, text = L.kind === "text", bs = L.kind === "video" ? bgState(L.item) : null;
-      propsEl.innerHTML = `<h2>${text ? "Text" : esc(it.title || "Layer")}</h2>
+      propsEl.innerHTML = `<h2 data-sec="top">${text ? "Text" : esc(it.title || "Layer")}</h2>
+        ${jump(...(text ? [] : [["filters", "filters", "Filters"]]), ["effects", "anim", "Animations"])}
         ${text ? `<label>Words<textarea rows="3" data-p="text">${esc(L.text)}</textarea></label>
           <label>Font<select data-p="font">${opt(C.fonts.map(f => [f, f]), L.font)}</select></label>
           <div class="st-share-grid"><label>Size<input type="number" min="10" max="400" data-p="size" value="${L.size}" class="ed-num"></label>
@@ -840,18 +986,12 @@
           ${L.kind !== "video" ? `<label>For (seconds)<input type="number" step="0.1" min="0.3" data-p="dur" value="${L.dur}" class="ed-num"></label>` : "<span></span>"}</div>
         ${rng("opacity", "Opacity", Math.round(L.opacity * 100), 0, 100)}
         ${rng("rot", "Rotation", Math.round(L.rot), -180, 180)}
-        <div class="st-share-grid"><label>Comes in<select data-p="anim.in">${opt(C.animIn, L.anim.in)}</select></label><label>Goes out<select data-p="anim.out">${opt(C.animOut, L.anim.out)}</select></label></div>
         <div class="btn-row"><button type="button" class="btn btn-small btn-quiet" data-layerup>Bring forward</button><button type="button" class="btn btn-small btn-quiet" data-layerdown>Send back</button>
           <button type="button" class="btn btn-small btn-quiet" data-center>Centre</button></div>
-        ${!text ? filterBlock(L.filter) : ""}
         <div class="btn-row"><button type="button" class="linklike danger" data-delsel>Remove the layer</button></div>`;
-      if (!text) presetThumbs(it.thumb);
     } else if (sel && sel.kind === "trans") {
-      const c = sel.id === "outro" ? P.outro : P.main.find(x => x.id === sel.id); if (!c) { sel = null; return props(); }
-      c.trans = c.trans || { type: "none", dur: 0.5 };
-      propsEl.innerHTML = `<h2>Transition</h2><div class="vd-trans">${C.transitions.map(([k, l]) =>
-        `<button type="button" data-tr="${k}" class="${c.trans.type === k ? "on" : ""}"><span class="vd-tri vd-tri-${k}"></span>${esc(l)}</button>`).join("")}</div>
-        ${rng("tdur", "Length (seconds)", c.trans.dur, 0.2, 2, 0.1)}<p class="small muted">The clips overlap by this much, so the video gets a little shorter.</p>`;
+      if (!trTarget()) { sel = null; return props(); }
+      propsEl.innerHTML = `<h2>Transition</h2>${trPicker()}`;
     } else if (sel && sel.kind === "cap") {
       const c = P.captions[sel.i]; if (!c) { sel = null; return props(); }
       propsEl.innerHTML = `<h2>Caption</h2><label>Words<textarea rows="2" maxlength="160" data-cp="text">${esc(c.text)}</textarea></label>
@@ -862,17 +1002,49 @@
       propsEl.innerHTML = `<h2>Name tag</h2><label>Name<input data-lp="text" value="${esc(c.text)}"></label><label>Role<input data-lp="sub" value="${esc(c.sub || "")}"></label>
         <div class="st-share-grid"><label>From<input type="number" step="0.1" data-lp="start" value="${c.start}" class="ed-num"></label><label>To<input type="number" step="0.1" data-lp="end" value="${c.end}" class="ed-num"></label></div>
         <button type="button" class="linklike danger" data-lowdel>Remove</button>`;
-    } else if (sel && sel.kind === "music") { openTab("music"); propsEl.innerHTML = `<h2>Music</h2><p class="small muted">Change the music and its volume in the Music panel.</p>`; }
-    else if (sel && sel.kind === "outro") { openTab("brand"); propsEl.innerHTML = `<h2>End card</h2><p class="small muted">Change it in the Brand panel. Click the ⧓ before it on the timeline to change how it comes in.</p>`; }
+    } else if (sel && sel.kind === "music") {
+      propsEl.innerHTML = `<h2>Music</h2><p><strong>${esc((items[P.music.item] || {}).title || "")}</strong></p>
+        <label class="ed-range" data-sec="volume">Volume<input type="range" min="0" max="150" data-mvol value="${Math.round(P.music.volume * 100)}"><span>${Math.round(P.music.volume * 100)}%</span></label>
+        ${jump(["audio", "audio", "Change the music"])}<button type="button" class="linklike danger" data-delsel>Remove the music</button>`;
+    } else if (sel && sel.kind === "outro") propsEl.innerHTML = `<h2>End card</h2>${jump(["brand", "brand", "Change the end card"], ["transitions", "transitions", "How it comes in"])}`;
     else propsEl.innerHTML = `<h2>Edit</h2><ul class="small muted vd-tips"><li>Drag clips from the left onto the timeline: the <strong>Main</strong> track plays in order, layers go on top.</li>
       <li>Click something on the video to move, resize, rotate or crop it.</li><li>Drag the ends of anything on the timeline to trim it; drag a layer up or down to change what's on top.</li>
       <li>Click <strong>+</strong> between two clips for a transition.</li><li>Space plays; S splits at the playhead; Delete removes; Ctrl+Z undoes.</li></ul>`;
-    $$("input[type=range][data-p]", propsEl).forEach(r => r.addEventListener("input", () => { r.nextElementSibling && (r.nextElementSibling.textContent = r.value); }));
+    toolPanels(); mtools();
+    [propsEl, fxEl, trEl, fiEl].forEach(root => $$("input[type=range][data-p]", root).forEach(r => r.addEventListener("input", () => { r.nextElementSibling && (r.nextElementSibling.textContent = r.value); })));
+  }
+  // ---- the Effects, Transitions and Filters panels act on what's selected
+  function trTarget() {
+    if (sel && sel.kind === "trans") return sel.id === "outro" ? (P.outro.on ? P.outro : null) : P.main.find(x => x.id === sel.id) || null;
+    if (sel && sel.kind === "outro") return P.outro;
+    const c = curMain(); return c && P.main.indexOf(c) > 0 ? c : null;
+  }
+  function trPicker() {
+    const c = trTarget(); c.trans = c.trans || { type: "none", dur: 0.5 };
+    return `<div class="vd-trans">${C.transitions.map(([k, l]) =>
+      `<button type="button" data-tr="${k}" class="${c.trans.type === k ? "on" : ""}"><span class="vd-tri vd-tri-${k}"></span>${esc(l)}</button>`).join("")}</div>
+      ${rng("tdur", "Length (seconds)", c.trans.dur, 0.2, 2, 0.1)}
+      <p class="small muted">The clips overlap by this much, so the video gets a little shorter.</p>
+      ${P.main.length > 2 ? `<button type="button" class="btn btn-small btn-quiet" data-trall>Use on every cut</button>` : ""}`;
+  }
+  const none = m => `<p class="small muted vd-none">${m}</p>`;
+  const tiles = (attr, list, cur) => `<div class="vd-fx">${list.map(([k, l]) => `<button type="button" ${attr}="${k}" class="${k === cur ? "on" : ""}"><span class="vd-fxi vd-fxi-${k}"></span>${esc(l)}</button>`).join("")}</div>`;
+  function toolPanels() {
+    const c = curMain(), L = curLayer(), fT = c || (L && L.kind !== "text" ? L : null);
+    fiEl.innerHTML = fT ? `<p class="small muted">For: <strong>${esc((items[fT.item] || {}).title || "this clip")}</strong></p>${filterBlock(fT.filter)}`
+                        : none("Select a clip or picture on the timeline, then pick a look.");
+    if (fT) presetThumbs((items[fT.item] || {}).thumb, fiEl);
+    fxEl.innerHTML = c ? `<h3>Motion</h3>${tiles("data-motion", C.motions, c.motion)}<p class="small muted">A slow push or pan across the clip, like a Ken Burns effect.</p>`
+      : L ? `<h3>Comes in</h3>${tiles("data-ain", C.animIn, L.anim.in)}<h3>Goes out</h3>${tiles("data-aout", C.animOut, L.anim.out)}`
+      : none("Select a clip (for motion) or a layer or text (for animations) on the timeline.");
+    trEl.innerHTML = trTarget() ? `<p class="small muted">Into: <strong>${esc(sel && (sel.id === "outro" || sel.kind === "outro") ? "the end card" : (items[trTarget().item] || {}).title || "this clip")}</strong></p>${trPicker()}`
+      : none(P.main.length > 1 || P.outro.on ? "Tap the + between two clips on the timeline, or select the second clip." : "Add a second clip first; transitions go between clips.");
   }
   function setPath(o, path, v) { const ks = path.split("."); let x = o; ks.slice(0, -1).forEach(k => { x = x[k]; }); x[ks[ks.length - 1]] = v; }
-  propsEl.addEventListener("input", e => {
+  const onInput = e => {
     const el = e.target, c = curMain(), L = curLayer(), target = c || L;
-    if (el.dataset.p && target) {
+    if (el.hasAttribute("data-mvol") && P.music) { P.music.volume = el.value / 100; el.nextElementSibling.textContent = `${el.value}%`; syncMedia(); commit({ quiet: true }); musicNow(); return; }
+    if (el.dataset.p && el.dataset.p !== "tdur" && target) {
       let v = el.type === "range" || el.type === "number" ? parseFloat(el.value) : el.value, p = el.dataset.p;
       if (p.startsWith("f.")) { target.filter[p.slice(2)] = v / 100; requestDraw(); return; }
       if (p === "volume" || p === "opacity" || p === "zoom") v = v / 100;
@@ -888,16 +1060,19 @@
       if (el.type !== "range" && el.tagName !== "TEXTAREA") commit(); else commit({ quiet: true });
       return;
     }
-    if (sel && sel.kind === "trans" && el.dataset.p === "tdur") {
-      const c2 = sel.id === "outro" ? P.outro : P.main.find(x => x.id === sel.id); c2.trans.dur = parseFloat(el.value); commit({ quiet: true }); drawTimeline();
-    }
+    if (el.dataset.p === "tdur" && trTarget()) { trTarget().trans.dur = parseFloat(el.value); commit({ quiet: true }); drawTimeline(); }
     if (el.dataset.cp !== undefined) { const cc = P.captions[sel.i]; cc[el.dataset.cp] = el.dataset.cp === "text" ? el.value : parseFloat(el.value); commit({ quiet: true }); drawTimeline(); }
     if (el.dataset.lp !== undefined) { const cc = P.lowers[sel.i]; cc[el.dataset.lp] = ["text", "sub"].includes(el.dataset.lp) ? el.value : parseFloat(el.value); commit({ quiet: true }); drawTimeline(); }
-  });
-  propsEl.addEventListener("change", e => { if (e.target.type === "range" || e.target.tagName === "TEXTAREA") commit(); });
-  propsEl.addEventListener("click", async e => {
+  };
+  const onChange = e => { if (e.target.type === "range" || e.target.tagName === "TEXTAREA") commit(); };
+  const onClick = async e => {
     const b = e.target.closest("button, input[data-cut]"); if (!b) return;
     const c = curMain(), L = curLayer(), target = c || L;
+    if (b.dataset.open) { openTab(b.dataset.open); return; }
+    if (b.dataset.motion && c) { c.motion = b.dataset.motion; commit(); const s_ = layout().segs.find(x => x.c === c); if (s_) preview(s_.start, s_.len); return; }
+    if ((b.dataset.ain || b.dataset.aout) && L) { if (b.dataset.ain) L.anim.in = b.dataset.ain; else L.anim.out = b.dataset.aout; commit();
+      preview(b.dataset.ain ? L.start : Math.max(L.start, L.start + layerLen(L) - 1), b.dataset.ain ? 1 : 1.1); return; }
+    if (b.hasAttribute("data-trall")) { const src = trTarget(); if (!src) return; P.main.forEach((x, i) => { if (i > 0) x.trans = { ...src.trans }; }); commit(); say("Used on every cut"); return; }
     if (b.dataset.preset && target) { target.filter.preset = b.dataset.preset; commit(); return; }
     if (b.dataset.fit && c) { c.fit = b.dataset.fit; c.zoom = 1; c.dx = c.dy = 0; commit(); return; }
     if (b.dataset.align && L) { L.align = b.dataset.align; commit(); return; }
@@ -910,8 +1085,8 @@
     if (b.hasAttribute("data-layerup") && L) { L.track += 1; compactTracks(); commit(); return; }
     if (b.hasAttribute("data-layerdown") && L) { if (L.track > 1) L.track -= 1; else P.layers.forEach(x => { if (x !== L) x.track += 1; }); compactTracks(); commit(); return; }
     if (b.hasAttribute("data-delsel")) { delSel(); return; }
-    if (b.dataset.tr && sel && sel.kind === "trans") { const c2 = sel.id === "outro" ? P.outro : P.main.find(x => x.id === sel.id); c2.trans.type = b.dataset.tr;
-      commit(); const s = layout().segs.find(s_ => (sel.id === "outro" ? s_.kind === "outro" : s_.c.id === sel.id)); if (s) { seek(Math.max(0, s.start - 0.4)); } return; }
+    if (b.dataset.tr && trTarget()) { const c2 = trTarget(); c2.trans.type = b.dataset.tr; commit();
+      const s = layout().segs.find(s_ => s_.c === c2 || (c2 === P.outro && s_.kind === "outro")); if (s) preview(Math.max(0, s.start - 0.5), s.d + 1); return; }
     if (b.hasAttribute("data-capdel")) { P.captions.splice(sel.i, 1); sel = null; commit(); return; }
     if (b.hasAttribute("data-lowdel")) { P.lowers.splice(sel.i, 1); sel = null; commit(); return; }
     if (b.matches("input[data-cut]") && target) {
@@ -920,7 +1095,11 @@
       if (c) c.bg.cut = b.checked; else L.cut = b.checked;
       commit({ quiet: true }); requestDraw();
     }
-  });
+  };
+  [propsEl, fxEl, trEl, fiEl].forEach(r => { r.addEventListener("input", onInput); r.addEventListener("change", onChange); r.addEventListener("click", onClick); });
+  // play a short stretch so the effect just picked can be seen
+  let prevT;
+  function preview(from, len) { clearTimeout(prevT); stop(); seek(from); play(); prevT = setTimeout(() => { if (playing) stop(); }, (len + 0.3) * 1000); }
   const bgPolls = {};
   async function startBg(id) {
     const r = await fetch(`/studio/bg/${id}`, { method: "POST", headers: { Accept: "application/json" } }); const j = await r.json();
@@ -946,6 +1125,7 @@
     else if (sel.kind === "cap") P.captions.splice(sel.i, 1);
     else if (sel.kind === "lower") P.lowers.splice(sel.i, 1);
     else if (sel.kind === "music") P.music = null;
+    else if (sel.kind === "trans" && trTarget()) { trTarget().trans = { type: "none", dur: 0.5 }; sel = null; commit(); return; }
     else return;
     sel = null; cropMode = false; commit(); seek(Math.min(t, total()));
   }
@@ -965,7 +1145,10 @@
     P.main.splice(i + 1, 0, b); sel = { kind: "main", id: b.id }; commit();
   }
   function duplicate() {
-    const L = curLayer(); if (!L) return;
+    const L = curLayer(), c = curMain();
+    if (c) { const b = JSON.parse(JSON.stringify(c)); b.id = uid(); b.trans = { type: "none", dur: 0.5 }; P.main.splice(P.main.indexOf(c) + 1, 0, b);
+      sel = { kind: "main", id: b.id }; commit(); return; }
+    if (!L) return;
     const b = JSON.parse(JSON.stringify(L)); b.id = uid(); b.x += 30; b.y += 30; b.track = nextTrack(b.start, layerLen(b));
     P.layers.push(b); sel = { kind: "layer", id: b.id }; commit();
   }
@@ -990,8 +1173,81 @@
   });
 
   // ================================================================ side panels
-  function openTab(k) { $$("[data-vtab]").forEach(b => b.classList.toggle("on", b.dataset.vtab === k)); $$("[data-vpanel]").forEach(p => { p.hidden = p.dataset.vpanel !== k; }); }
-  $$("[data-vtab]").forEach(b => b.addEventListener("click", () => openTab(b.dataset.vtab)));
+  const TABS = [["media", "Media"], ["stock", "Stock"], ["audio", "Audio"], ["text", "Text"], ["captions", "Captions"], ["effects", "Effects"],
+                ["transitions", "Transitions"], ["filters", "Filters"], ["brand", "Brand kit"]];
+  const TITLE = Object.fromEntries(TABS);
+  const vdRoot = $("#vd"), grid = $(".vd-grid"), panelEl = $("[data-panel]"), propsSheet = $(".vd-props");
+  let tab = "media";
+  $("[data-rail]").innerHTML = TABS.map(([k, l]) => `<button type="button" data-vtab="${k}" title="${l}">${ico(k, 22)}<span>${l}</span></button>`).join("");
+  function openTab(k, fromRail) {
+    if (fromRail && !M && k === tab && !grid.classList.contains("vd-collapsed")) { grid.classList.add("vd-collapsed"); $$("[data-vtab]").forEach(b => b.classList.remove("on")); return fit(); }
+    tab = k; grid.classList.remove("vd-collapsed");
+    $$("[data-vtab]").forEach(b => b.classList.toggle("on", b.dataset.vtab === k));
+    $$("[data-vpanel]").forEach(p => { p.hidden = p.dataset.vpanel !== k; });
+    $("[data-panel-title]").textContent = TITLE[k] || "";
+    if (M) { propsSheet.classList.remove("open"); panelEl.classList.add("open"); vdRoot.classList.add("vd-sheeted"); panelEl.querySelector(".vd-panel-body").scrollTop = 0; }
+    fit();
+  }
+  $$("[data-vtab]").forEach(b => b.addEventListener("click", () => openTab(b.dataset.vtab, true)));
+  function openProps(sec) {
+    if (M) { panelEl.classList.remove("open"); propsSheet.classList.add("open"); vdRoot.classList.add("vd-sheeted"); }
+    const el = sec && $(`[data-sec="${sec}"]`, propsEl);
+    if (el) setTimeout(() => el.scrollIntoView({ block: "start", behavior: "smooth" }), M ? 250 : 0);
+  }
+  function closeSheets() { panelEl.classList.remove("open"); propsSheet.classList.remove("open"); vdRoot.classList.remove("vd-sheeted"); }
+  $$("[data-close-sheet]").forEach(b => b.addEventListener("click", closeSheets));
+  // the phone toolbar along the bottom changes with what's selected (like CapCut's)
+  const mtEl = $("[data-mtools]");
+  function mtools() {
+    if (!mtEl) return;
+    const c = curMain(), L = curLayer(), T = (k, i, l) => [k, i, l];
+    let list;
+    if (!C.canEdit) list = [T("tab:captions", "captions", "Captions"), T("tab:brand", "brand", "Brand kit")];
+    else if (c) list = [T("back", "back", ""), T("split", "split", "Split"), ...(c.still ? [] : [T("prop:volume", "volume", "Volume"), T("prop:speed", "speed", "Speed")]),
+      T("tab:filters", "filters", "Filters"), T("tab:effects", "effects", "Motion"), ...(P.main.indexOf(c) > 0 ? [T("tab:transitions", "transitions", "Transition")] : []),
+      T("crop", "crop", "Crop"), T("prop:bg", "bg", "Background"), T("prop:", "edit", "More"), T("dup", "dup", "Duplicate"), T("del", "del", "Delete")];
+    else if (L) list = [T("back", "back", ""), ...(L.kind === "text" ? [T("type", "typing", "Edit text"), T("prop:top", "text", "Style")] : [T("prop:top", "edit", "Edit")]),
+      T("split", "split", "Split"), T("tab:effects", "anim", "Animations"), ...(L.kind !== "text" ? [T("tab:filters", "filters", "Filters"), T("crop", "crop", "Crop")] : []),
+      ...(L.kind === "video" ? [T("prop:volume", "volume", "Volume")] : []), T("fwd", "up", "Forward"), T("bwd", "down", "Back"), T("dup", "dup", "Duplicate"), T("del", "del", "Delete")];
+    else if (sel && sel.kind === "trans") list = [T("back", "back", ""), T("tab:transitions", "transitions", "Change"), T("del", "del", "Remove")];
+    else if (sel && sel.kind === "outro") list = [T("back", "back", ""), T("tab:brand", "brand", "End card"), T("tab:transitions", "transitions", "Transition")];
+    else if (sel && sel.kind === "music") list = [T("back", "back", ""), T("prop:volume", "volume", "Volume"), T("tab:audio", "audio", "Replace"), T("del", "del", "Delete")];
+    else if (sel) list = [T("back", "back", ""), T("prop:", "edit", "Edit"), T("del", "del", "Delete")];
+    else list = [T("tab:media", "media", "Media"), T("tab:audio", "audio", "Audio"), T("tab:text", "text", "Text"), T("tab:captions", "captions", "Captions"),
+      T("tab:effects", "effects", "Effects"), T("tab:transitions", "transitions", "Transitions"), T("tab:filters", "filters", "Filters"), T("tab:stock", "stock", "Stock"),
+      T("ratio", "ratio", "Ratio"), T("tab:brand", "brand", "Brand kit")];
+    mtEl.classList.toggle("vd-mt-sel", !!sel);
+    mtEl.innerHTML = list.map(([k, i, l]) => `<button type="button" data-mt="${k}" class="${k === "back" ? "vd-mt-back" : ""}" ${k === "back" ? 'aria-label="Done"' : ""}>${ico(i, 22)}${l ? `<span>${l}</span>` : ""}</button>`).join("");
+  }
+  if (mtEl) mtEl.addEventListener("click", e => {
+    const b = e.target.closest("[data-mt]"); if (!b) return;
+    const k = b.dataset.mt, L = curLayer();
+    if (k === "back") { sel = null; cropMode = false; cropBtn && cropBtn.classList.remove("on"); closeSheets(); drawTimeline(); props(); placeSel(); }
+    else if (k.startsWith("tab:")) openTab(k.slice(4));
+    else if (k.startsWith("prop:")) openProps(k.slice(5));
+    else if (k === "split") split(); else if (k === "dup") duplicate(); else if (k === "del") delSel();
+    else if (k === "crop") cropBtn && cropBtn.click();
+    else if (k === "type" && L) showTyping(L);
+    else if (k === "fwd" && L) { L.track += 1; compactTracks(); commit(); }
+    else if (k === "bwd" && L) { if (L.track > 1) L.track -= 1; else P.layers.forEach(x => { if (x !== L) x.track += 1; }); compactTracks(); commit(); }
+    else if (k === "ratio") { ratioMenu.hidden = false; }
+  });
+  // the shape of the video
+  const ratioBtn = $("[data-ratio-btn]"), ratioMenu = $("[data-ratio-menu]");
+  ratioBtn.addEventListener("click", e => { e.stopPropagation(); ratioMenu.hidden = !ratioMenu.hidden; });
+  document.addEventListener("click", e => { if (!e.target.closest(".vd-ratio") && !e.target.closest("[data-mt=ratio]")) ratioMenu.hidden = true; });
+  ratioMenu.addEventListener("click", async e => {
+    const b = e.target.closest("[data-ratio]"); if (!b) return;
+    ratioMenu.hidden = true;
+    if (+b.dataset.w === P.w && +b.dataset.h === P.h) return;
+    await save();
+    try {
+      const r = await fetch(`/studio/video/${C.iid}/ratio`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ size: b.dataset.ratio }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || "It didn't change.");
+      P = j.project; hist.push(JSON.stringify(P)); hi = hist.length - 1;
+      cv.width = 0; fit(); loadOutro(); drawTimeline(); props(); requestDraw(); say(`Now ${b.textContent.trim().replace(/\s+/g, " ")}`);
+    } catch (err) { say(err.message); }
+  });
   let mediaList = {}, mediaIndex = {};
   function tile(m, opts = {}) {
     const b = document.createElement("div"); b.className = "vd-m"; b.title = m.title; b.draggable = C.canEdit;
@@ -1051,7 +1307,7 @@
     return li;
   }
   function useMusic(tk) { items[tk.id] = { id: tk.id, title: tk.title, kind: "audio", src: tk.src || `/studio/media/${tk.id}`, duration: tk.duration };
-    P.music = { item: tk.id, volume: P.music ? P.music.volume : 0.25 }; commit(); musicNow(); audioPrev.pause(); }
+    P.music = { item: tk.id, volume: P.music ? P.music.volume : 0.7 }; musicFresh = true; commit(); musicNow(); audioPrev.pause(); say(`Music: ${tk.title}`); }
   let musicAll = [];
   function musicLib(list) {
     musicAll = list || musicAll; const ul = $("[data-music-lib]"), q = ($("[data-music-filter]").value || "").toLowerCase(); ul.innerHTML = "";
@@ -1068,10 +1324,10 @@
       now.innerHTML = `<p><strong></strong> <button type="button" class="linklike danger small">Remove</button></p>`;
       now.querySelector("strong").textContent = `♪ ${items[P.music.item].title}`;
       now.querySelector("button").addEventListener("click", () => { P.music = null; commit(); musicNow(); });
-      vol.value = Math.round(P.music.volume * 100); vol.disabled = false;
-    } else { now.innerHTML = `<p class="small muted">No music yet.</p>`; vol.disabled = true; }
+      vol.value = Math.round(P.music.volume * 100); vol.disabled = false; $("[data-music-vol-v]").textContent = `${vol.value}%`;
+    } else { now.innerHTML = `<p class="small muted">No music yet. Pick a track below.</p>`; vol.disabled = true; $("[data-music-vol-v]").textContent = ""; }
   }
-  $("[data-music-vol]").addEventListener("input", e => { if (P.music) P.music.volume = e.target.value / 100; });
+  $("[data-music-vol]").addEventListener("input", e => { if (P.music) { P.music.volume = e.target.value / 100; $("[data-music-vol-v]").textContent = `${e.target.value}%`; syncMedia(); } });
   $("[data-music-vol]").addEventListener("change", () => commit({ quiet: true }));
   const fsForm = $("[data-fs-form]");
   fsForm.addEventListener("submit", async e => {
@@ -1198,7 +1454,8 @@
     Object.values(items).forEach(it => { if (it.mask_state === "running") pollBg(it.id); });
     loadMedia();
     if (C.render && C.render.state === "running") pollRender(); else renderState(C.render || {});
-    PPS = Math.max(15, Math.min(220, (scrollEl.clientWidth - 40) / Math.max(10, total() + 2))); zoomIn.value = PPS; drawTimeline();
+    PPS = M ? 45 : Math.max(15, Math.min(220, (scrollEl.clientWidth - 40) / Math.max(10, total() + 2))); zoomIn.value = PPS; drawTimeline();
+    openTab(M ? "media" : "media"); if (M) closeSheets(); followHead(true);
     say("");
   })();
 })();

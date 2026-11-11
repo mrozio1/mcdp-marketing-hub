@@ -4901,7 +4901,8 @@ def studio_video_page(request: Request, iid: int):
                 pid=pid, render=studio_video.status(iid), max_total=studio_video.MAX_TOTAL,
                 transitions=video2.TRANSITIONS, presets=[(k, v[0], v[1]) for k, v in video2.PRESETS.items()],
                 motions=video2.MOTIONS, anim_in=video2.ANIM_IN, anim_out=video2.ANIM_OUT, bg_modes=video2.BG_MODES,
-                fonts=video2.FONTS, bg_ok=bgremove.available(), stock_keys=stock.keys())
+                fonts=video2.FONTS, bg_ok=bgremove.available(), stock_keys=stock.keys(),
+                ratios=[(k, l, w, h) for k, l, w, h in studio_video.SIZES])
 
 
 def can_edit_now(request):
@@ -4951,6 +4952,20 @@ async def studio_video_save(request: Request, iid: int):
     except (studio_video.VideoError, studio.StudioError) as e:
         return JSONResponse({"error": str(e)}, status_code=422)
     return {"ok": True, "project": p, "total": round(studio_video.total(p), 2)}
+
+
+@app.post("/studio/video/{iid}/ratio")
+async def studio_video_ratio(request: Request, iid: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    if not _video(iid):
+        return JSONResponse({"error": "That video project is gone."}, status_code=404)
+    j = await request.json()
+    try:
+        p = await asyncio.to_thread(studio_video.set_ratio, iid, j.get("size") or "", actor(request))
+    except studio_video.VideoError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return {"ok": True, "project": p}
 
 
 @app.get("/studio/video-media")

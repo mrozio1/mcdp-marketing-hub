@@ -219,6 +219,35 @@ def save_project(iid, p, by=""):
     return p
 
 
+def set_ratio(iid, size_key, by=""):
+    """Change a project's shape (Reel, square, portrait, wide), keeping layers where they were on the screen."""
+    size = SIZE.get(size_key)
+    if not size:
+        raise VideoError("Pick a size.")
+    p = project(iid)
+    W1, H1, W2, H2 = p["w"], p["h"], size["w"], size["h"]
+    k = min(W2 / W1, H2 / H1)
+    for L in p["layers"]:
+        cx, cy = (L["x"] + L["w"] / 2) / W1 * W2, (L["y"] + L["h"] / 2) / H1 * H2
+        L["w"], L["h"] = L["w"] * k, L["h"] * k
+        if L.get("size"):
+            L["size"] = max(10, round(L["size"] * k))
+        L["x"], L["y"] = cx - L["w"] / 2, cy - L["h"] / 2
+    p["w"], p["h"] = W2, H2
+    try:
+        p = video2.clean(p, W2, H2)
+    except video2.V2Error as e:
+        raise VideoError(str(e))
+    tmp = studio.design_path(iid) + ".new"
+    with open(tmp, "w") as f:
+        json.dump(p, f)
+    os.replace(tmp, studio.design_path(iid))
+    with db.conn() as c:
+        c.execute("UPDATE studio_items SET width=?, height=?, size_key=?, updated_at=? WHERE id=?",
+                  (W2, H2, "video_" + size_key, db.now(), iid))
+    return p
+
+
 # ------------------------------------------------------------------ the brand outro
 def _font(size, bold=True):
     from PIL import ImageFont
