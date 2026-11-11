@@ -1272,20 +1272,75 @@
     });
     musicLib(mediaList.sounds || []);
   }
-  // stock video (Pixabay)
-  let stockQ = { q: "", page: 1 };
+  // stock video (Pixabay). The hub searches for the team; if Pixabay's firewall turns the NAS away, this browser asks
+  // Pixabay's API itself (with the team's key) and, if needed, downloads the picked video and uploads it to the library.
+  let stockQ = { q: "", page: 1 }, pxKey = null;
+  const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  function pxHit(h) {                       // same choice of file as the hub makes (app/stock.py pixabay_hit)
+    const v = h.videos || {}; let best = null;
+    for (const size of ["large", "medium", "small"]) { const f = v[size] || {}; if (f.url && f.width > 0 && f.width <= 1920) { best = { url: f.url, w: f.width, h: f.height }; break; } }
+    if (!best) return null;
+    const tiny = v.tiny || v.small || {};
+    return { id: h.id, duration: h.duration, tags: h.tags || "", user: h.user || "", page: h.pageURL || "", thumb: (v.medium || {}).thumbnail || tiny.thumbnail || "", preview: tiny.url || "", file: best, raw: h };
+  }
+  async function browserSearch(q) {
+    const ck = `px:${q.toLowerCase()}`, hit = lsGet(ck);
+    if (hit && hit.at > Date.now() - 24 * 3600e3) return hit.data;           // Pixabay asks for searches to be kept 24 hours
+    if (pxKey === null) { const r = await fetch("/studio/stock/browser-key"); pxKey = r.ok ? (await r.json()).pixabay : ""; }
+    if (!pxKey) throw new Error("Stock video search needs a free Pixabay key on Connections → Stock and music.");
+    let r;
+    try { r = await fetch(`https://pixabay.com/api/videos/?${new URLSearchParams({ key: pxKey, q, safesearch: "true", per_page: 30, video_type: "film" })}`); }
+    catch (e) { throw new Error("Couldn't reach Pixabay from this browser either. Check the internet connection, or an ad blocker that stops pixabay.com."); }
+    if (r.status === 400 || r.status === 401) throw new Error("Pixabay says the key isn't right. Copy it again from your Pixabay account and paste it on Connections → Stock and music.");
+    if (r.status === 429) throw new Error("Too many searches in a minute; wait a moment and try again.");
+    if (!r.ok) throw new Error(`Pixabay didn't answer the search (HTTP ${r.status}).`);
+    const j = await r.json(), data = { hits: (j.hits || []).map(pxHit).filter(Boolean), total: j.totalHits || 0 };
+    lsSet(ck, { at: Date.now(), data });
+    return data;
+  }
+  async function stockSearch(q, o) {
+    let data;
+    if (!lsGet("pxDirect")) {
+      const r = await fetch(`/studio/stock/videos?${new URLSearchParams({ q, o })}`), j = await r.json();
+      if (r.ok) return j;
+      if (!j.blocked) throw new Error(j.error);
+      lsSet("pxDirect", true);                    // remember: this hub's NAS is turned away, go straight from the browser
+    }
+    data = await browserSearch(q);
+    if (o === "tall") data = { ...data, hits: data.hits.filter(x => x.file.h > x.file.w) };
+    if (o === "wide") data = { ...data, hits: data.hits.filter(x => x.file.w >= x.file.h) };
+    return data;
+  }
+  async function stockImport(h) {
+    say("Bringing it in from Pixabay…");
+    const body = { q: stockQ.q, page: 1, pid: C.pid, hit: h.raw || null };
+    const rr = await fetch(`/studio/stock/videos/${h.id}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
+    let jj = await rr.json();
+    if (!rr.ok && jj.blocked && h.raw) {
+      // the NAS can't download it either: this browser fetches the file and uploads it like any other video
+      say("Downloading from Pixabay…");
+      let blob;
+      try { const fr = await fetch(h.file.url); if (!fr.ok) throw new Error(`HTTP ${fr.status}`); blob = await fr.blob(); }
+      catch (e) { say("Pixabay wouldn't let the video be downloaded here. Open it on Pixabay, download it, and add it under Media."); window.open(h.page, "_blank", "noopener"); return null; }
+      const name = `${(h.tags.split(",")[0] || "Stock video").trim()}.mp4`;
+      const id = await upload(new File([blob], name, { type: "video/mp4" }), C.pid, jj.folder, $("[data-vtray]"));
+      if (!id) { say("The upload didn't finish; try again."); return null; }
+      const ar = await fetch(`/studio/stock/videos/${h.id}/attach`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ item: id, hit: h.raw }) });
+      jj = await ar.json(); if (!ar.ok) { say(jj.error); return null; }
+    } else if (!rr.ok) { say(jj.error); return null; }
+    items[jj.id] = jj; mediaIndex[jj.id] = jj; say(""); loadMedia(); return jj.id;
+  }
   $("[data-stock-form]").addEventListener("submit", async e => {
     e.preventDefault(); const f = e.target, box = $("[data-stock-results]");
     stockQ = { q: f.q.value.trim(), page: 1 }; box.innerHTML = `<p class="small muted">Searching…</p>`;
-    const r = await fetch(`/studio/stock/videos?${new URLSearchParams({ q: stockQ.q, o: f.o.value })}`); const j = await r.json();
+    let j;
+    try { j = await stockSearch(stockQ.q, f.o.value); }
+    catch (err) { box.innerHTML = `<p class="small st-err">${esc(err.message)}</p>`; return; }
     box.innerHTML = "";
-    if (!r.ok) { box.innerHTML = `<p class="small st-err">${esc(j.error)}</p>`; return; }
     if (!j.hits.length) { box.innerHTML = `<p class="small muted">Nothing found; try other words.</p>`; return; }
     j.hits.forEach(h => {
-      const tl_ = tile({ id: "px" + h.id, title: h.tags.split(",")[0] || "Stock video", thumb: h.thumb, duration: h.duration }, {
-        importer: async () => { say("Bringing it in from Pixabay…");
-          const rr = await fetch(`/studio/stock/videos/${h.id}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ q: stockQ.q, page: 1, pid: C.pid }) });
-          const jj = await rr.json(); if (!rr.ok) { say(jj.error); return null; } items[jj.id] = jj; mediaIndex[jj.id] = jj; say(""); loadMedia(); return jj.id; } });
+      const tl_ = tile({ id: "px" + h.id, title: h.tags.split(",")[0] || "Stock video", thumb: h.thumb, duration: h.duration }, { importer: () => stockImport(h) });
       tl_.draggable = false;
       if (h.preview) { const v = document.createElement("video"); v.muted = true; v.loop = true; v.playsInline = true; v.className = "vd-m-pv"; v.src = h.preview; tl_.insertBefore(v, tl_.firstChild);
         tl_.addEventListener("mouseenter", () => v.play().catch(() => {})); tl_.addEventListener("mouseleave", () => v.pause()); }

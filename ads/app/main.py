@@ -5124,7 +5124,27 @@ async def studio_stock_videos(request: Request, q: str = "", page: int = 1, o: s
     try:
         return await asyncio.to_thread(stock.pixabay_search, q, o, page)
     except stock.StockError as e:
+        return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
+
+
+@app.get("/studio/stock/browser-key")
+def studio_stock_browser_key(request: Request):
+    """When Pixabay's firewall turns the NAS away, the editor searches from the person's browser with the team's key."""
+    if not authed(request) or not can_edit_now(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    return JSONResponse({"pixabay": stock._tidy_key(db.get_setting("pixabay_key")) or ""}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/studio/stock/videos/{hit_id}/attach")
+async def studio_stock_video_attach(request: Request, hit_id: int):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    try:
+        iid = await asyncio.to_thread(stock.pixabay_attach, int(j.get("item") or 0), j.get("hit"), actor(request))
+    except (stock.StockError, studio.StudioError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=422)
+    return _media_row(studio.item(iid))
 
 
 @app.post("/studio/stock/videos/{hit_id}")
@@ -5135,8 +5155,11 @@ async def studio_stock_video_add(request: Request, hit_id: int):
     pid = _brand_in(j.get("pid"))
     try:
         iid = await asyncio.to_thread(stock.pixabay_import, hit_id, j.get("q") or "", j.get("page") or 1,
-                                      pid if pid is not None else studio.MCDP, actor(request))
-    except (stock.StockError, studio.StudioError) as e:
+                                      pid if pid is not None else studio.MCDP, actor(request), j.get("hit"))
+    except stock.StockError as e:
+        return JSONResponse({"error": str(e), "blocked": e.blocked,
+                             "folder": stock.stock_folder(pid if pid is not None else studio.MCDP) if e.blocked else None}, status_code=422)
+    except studio.StudioError as e:
         return JSONResponse({"error": str(e)}, status_code=422)
     return _media_row(studio.item(iid))
 

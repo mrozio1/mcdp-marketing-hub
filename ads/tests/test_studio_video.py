@@ -231,3 +231,28 @@ def test_ratio_change_keeps_layers_in_place(env):
     assert L["w"] < 800 and L["size"] < 80
     assert env["studio"].item(iid)["height"] == 1080
     assert ed.post(f"/studio/video/{iid}/ratio", json={"size": "huge"}).status_code == 422
+
+
+def test_stock_video_through_the_browser(env, monkeypatch, tmp_path):
+    from app import stock
+    main, ed, studio, pid = env["main"], env["ed"], env["studio"], env["pid"]
+    env["db"].set_setting("pixabay_key", "123-abc")
+    raw = {"id": 777, "tags": "fireplace, cozy", "user": "ann", "pageURL": "https://pixabay.com/videos/fireplace-777/", "duration": 4,
+           "videos": {"large": {"url": "https://cdn.pixabay.com/video/f_large.mp4", "width": 640, "height": 360}}}
+    assert ed.get("/studio/stock/browser-key").json()["pixabay"] == "123-abc"
+
+    def blocked(*a, **k):
+        raise stock.StockError("firewall", blocked=True)
+    monkeypatch.setattr(stock, "_download", blocked)
+    r = ed.post("/studio/stock/videos/777", json={"q": "fireplace", "pid": pid, "hit": raw})
+    assert r.status_code == 422 and r.json()["blocked"] and r.json()["folder"]
+    # the browser uploads it, then the hub adds the credit
+    up = str(tmp_path / "f.mp4"); shutil.copyfile(studio.local_path(studio.item(env["ids"]["clip"])), up)
+    iid = studio.add_file(up, "Fireplace.mp4", pid, r.json()["folder"], by="Amber", mime="video/mp4")
+    a = ed.post("/studio/stock/videos/777/attach", json={"item": iid, "hit": raw})
+    assert a.status_code == 200 and a.json()["id"] == iid
+    it = studio.item(iid)
+    assert "Pixabay" in it["title"] and "ann" in it["notes"] and it["canva_id"] == "pixabay:777"
+    # asking again gives the same library file, without downloading
+    r2 = ed.post("/studio/stock/videos/777", json={"q": "fireplace", "pid": pid, "hit": raw})
+    assert r2.status_code == 200 and r2.json()["id"] == iid

@@ -31,7 +31,9 @@ MAX_DL = 400 * 1024 * 1024
 
 
 class StockError(RuntimeError):
-    pass
+    def __init__(self, msg, blocked=False):
+        super().__init__(msg)
+        self.blocked = blocked          # the service's firewall turned the hub away: the browser can do it instead
 
 
 def keys():
@@ -88,8 +90,7 @@ def _explain(code, body, service):
         return StockError(f"{service} says the key isn't right (HTTP {code}). Copy it again from your {service} account and paste it "
                           f"on Connections → Stock and music.")
     if _blocked(code, body):
-        return StockError(f"{service}'s firewall turned the hub away (HTTP {code}), so this isn't the key. Try again in a few "
-                          f"minutes; if it keeps happening, tell Claude this message.")
+        return StockError(f"{service}'s firewall turned the hub away (HTTP {code}), so this isn't the key.", blocked=True)
     return StockError(f"{service} didn't answer the search (HTTP {code}): {re.sub(r'<[^>]+>', ' ', b).strip()[:160]}")
 
 
@@ -101,7 +102,7 @@ def _get(url, timeout=30, service="The service"):
     except urllib.error.HTTPError as e:
         code, body = e.code, e.read().decode(errors="replace")
     except urllib.error.URLError as e:
-        raise StockError(f"Couldn't reach {service}: {e.reason}")
+        raise StockError(f"Couldn't reach {service}: {e.reason}", blocked=True)
     if _blocked(code, body):
         got = _curl(url, timeout)
         if got:
@@ -138,27 +139,45 @@ def pixabay_search(q, orientation="", page=1):
     def fetch():
         params = {"key": key, "q": q, "safesearch": "true", "per_page": 30, "page": page, "video_type": "film"}
         got = _get(PIXABAY + "?" + urllib.parse.urlencode(params), service="Pixabay")
-        out = []
-        for h in got.get("hits", []):
-            vids = h.get("videos") or {}
-            best = None
-            for size in ("large", "medium", "small"):
-                v = vids.get(size) or {}
-                if v.get("url") and (v.get("width") or 0) <= 1920:
-                    best = {"url": v["url"], "w": v.get("width"), "h": v.get("height"), "size": v.get("size")}
-                    break
-            if not best:
-                continue
-            tiny = vids.get("tiny") or vids.get("small") or {}
-            out.append({"id": h.get("id"), "duration": h.get("duration"), "tags": h.get("tags", ""), "user": h.get("user", ""),
-                        "page": h.get("pageURL", ""), "thumb": (vids.get("medium") or {}).get("thumbnail") or tiny.get("thumbnail", ""),
-                        "preview": tiny.get("url", ""), "file": best})
-        return {"hits": out, "total": got.get("totalHits", 0)}
+        return {"hits": [x for x in map(pixabay_hit, got.get("hits", [])) if x], "total": got.get("totalHits", 0)}
     data = _cache(f"pxv_{q}_{page}", fetch)
     if orientation in ("tall", "wide"):
         data = {**data, "hits": [x for x in data["hits"] if (x["file"]["h"] or 0) > (x["file"]["w"] or 0)] if orientation == "tall"
                 else [x for x in data["hits"] if (x["file"]["w"] or 0) >= (x["file"]["h"] or 0)]}
     return data
+
+
+def _pixabay_url(u):
+    """Only Pixabay's own addresses are fetched for a hit (a browser-sent hit can't point the hub elsewhere)."""
+    try:
+        pu = urllib.parse.urlparse(str(u or ""))
+    except ValueError:
+        return ""
+    host = (pu.hostname or "").lower()
+    return str(u) if pu.scheme == "https" and (host == "pixabay.com" or host.endswith(".pixabay.com")) else ""
+
+
+def pixabay_hit(h):
+    """One video from Pixabay's API answer, as the editor uses it: the largest file up to 1920 wide, a still and a preview."""
+    if not isinstance(h, dict):
+        return None
+    vids = h.get("videos") or {}
+    best = None
+    for size in ("large", "medium", "small"):
+        v = vids.get(size) or {}
+        if _pixabay_url(v.get("url")) and 0 < int(v.get("width") or 0) <= 1920:
+            best = {"url": v["url"], "w": int(v.get("width") or 0), "h": int(v.get("height") or 0), "size": v.get("size")}
+            break
+    if not best:
+        return None
+    tiny = vids.get("tiny") or vids.get("small") or {}
+    try:
+        hid = int(h.get("id"))
+    except (TypeError, ValueError):
+        return None
+    return {"id": hid, "duration": h.get("duration"), "tags": str(h.get("tags", ""))[:300], "user": str(h.get("user", ""))[:100],
+            "page": _pixabay_url(h.get("pageURL")), "thumb": _pixabay_url((vids.get("medium") or {}).get("thumbnail") or tiny.get("thumbnail")),
+            "preview": _pixabay_url(tiny.get("url")), "file": best}
 
 
 def _download(url, suffix):
@@ -183,30 +202,66 @@ def _download(url, suffix):
         if got and got[0] == 200 and os.path.getsize(path) <= MAX_DL:
             return path
         os.remove(path)
-        raise StockError(f"Couldn't download it (HTTP {e.code}).")
+        raise StockError(f"Couldn't download it (HTTP {e.code}).", blocked=e.code in (403, 503))
+    except urllib.error.URLError as e:
+        os.remove(path)
+        raise StockError(f"Couldn't download it: {e.reason}", blocked=True)
     except Exception as e:
         os.remove(path)
         raise StockError(f"Couldn't download it: {e}")
     return path
 
 
-def pixabay_import(hit_id, q, page, pid, by=""):
-    """Save a Pixabay video into the brand's 'Stock video' folder (once) and return its library id."""
+def stock_folder(pid):
+    return studio.add_folder(pid, "Stock video", "Pixabay")
+
+
+def _have(hit_id):
     with db.conn() as c:
         r = c.execute("SELECT id FROM studio_items WHERE canva_id=? AND trashed_at IS NULL", (f"pixabay:{int(hit_id)}",)).fetchone()
-    if r:
-        return r[0]
-    data = pixabay_search(q, "", page)
-    hit = next((h for h in data["hits"] if str(h["id"]) == str(hit_id)), None)
+    return r[0] if r else None
+
+
+def _credit(iid, hit, by):
+    title = (hit["tags"].split(",")[0].strip() or "Stock video").capitalize()
+    studio.update(iid, by, title=f"{title} (Pixabay)",
+                  notes=f"Video by {hit['user']} on Pixabay ({hit['page']}). Free to use under the Pixabay Content License.")
+    with db.conn() as c:
+        c.execute("UPDATE studio_items SET source='pixabay', canva_id=?, canva_url=? WHERE id=?", (f"pixabay:{hit['id']}", hit["page"], iid))
+
+
+def pixabay_import(hit_id, q, page, pid, by="", raw=None):
+    """Save a Pixabay video into the brand's 'Stock video' folder (once) and return its library id.
+    raw: the hit as the browser got it from Pixabay, when the hub itself is turned away by Pixabay's firewall."""
+    have = _have(hit_id)
+    if have:
+        return have
+    hit = pixabay_hit(raw) if raw else None
+    if not hit or str(hit["id"]) != str(hit_id):
+        data = pixabay_search(q, "", page)
+        hit = next((h for h in data["hits"] if str(h["id"]) == str(hit_id)), None)
     if not hit:
         raise StockError("That video is no longer in the search results; search again.")
     path = _download(hit["file"]["url"], ".mp4")
     title = (hit["tags"].split(",")[0].strip() or "Stock video").capitalize()
-    iid = studio.add_file(path, f"{title}.mp4", pid, studio.add_folder(pid, "Stock video", "Pixabay"), by=by,
+    iid = studio.add_file(path, f"{title}.mp4", pid, stock_folder(pid), by=by,
                           mime="video/mp4", title=f"{title} (Pixabay)", source="pixabay", width=hit["file"]["w"],
                           height=hit["file"]["h"], duration=hit["duration"], canva={"id": f"pixabay:{int(hit_id)}", "url": hit["page"]})
-    studio.update(iid, by, notes=f"Video by {hit['user']} on Pixabay ({hit['page']}). Free to use under the Pixabay Content License.")
+    _credit(iid, hit, by)
     return iid
+
+
+def pixabay_attach(item_id, raw, by=""):
+    """A Pixabay video the browser downloaded and uploaded itself: give it the credit and remember where it came from."""
+    hit = pixabay_hit(raw)
+    if not hit:
+        raise StockError("That doesn't look like a Pixabay video.")
+    have = _have(hit["id"])
+    if have and have != item_id:
+        studio.trash(item_id, by)
+        return have
+    _credit(item_id, hit, by)
+    return item_id
 
 
 # ------------------------------------------------------------------ music: Freesound (CC0) and the shared Music folder
