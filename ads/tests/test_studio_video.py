@@ -321,3 +321,27 @@ def test_sideways_phone_video_renders_tall(env, tmp_path):
     iid = v.create_project(pid, None, "story", "Sideways", "Amber", [iid_src])
     v._render(iid, "Amber", {})
     assert v.status(iid)["state"] == "done", v.status(iid)
+
+
+def test_text_animations_fonts_and_styles(env):
+    v, ids = env["v"], env["ids"]
+    iid = v.create_project(env["pid"], None, "story", "Text", "Amber", [ids["clip"]])
+    p = v.project(iid)
+    base = {"kind": "text", "track": 1, "x": 100, "y": 300, "w": 800, "h": 200, "size": 90, "color": "#FFFFFF", "font": "Anton"}
+    p["layers"] = [
+        {**base, "id": "a", "start": 0, "dur": 3, "text": "Hello there", "stroke": "#111111", "strokew": 0.07, "shadow": True, "caps": True,
+         "anim": {"in": "typewriter", "out": "wipe", "loop": "wiggle", "din": 0.8, "dout": 0.5}},
+        {**base, "id": "b", "start": 0.5, "dur": 2.5, "text": "Bounce", "font": "Not a font", "y": 900,
+         "anim": {"in": "bounce", "out": "popout", "loop": "pulse", "din": 9, "dout": 0.4}},
+        {**base, "id": "c", "start": 1, "dur": 2, "text": "Drop", "y": 1300, "rot": 8,
+         "anim": {"in": "drop", "out": "slideleft", "loop": "blink"}},
+        {**base, "id": "d", "start": 1, "dur": 2, "text": "Spin", "y": 1600, "anim": {"in": "spin", "out": "zoomout", "loop": "bob"}},
+    ]
+    v.save_project(iid, p)
+    q = v.project(iid)
+    a, b = q["layers"][0], q["layers"][1]
+    assert a["anim"] == {"in": "typewriter", "out": "wipe", "loop": "wiggle", "din": 0.8, "dout": 0.5}
+    assert a["stroke"] == "#111111" and a["shadow"] and a["caps"] and a["font"] == "Anton"
+    assert b["font"] == "DejaVu Sans" and b["anim"]["din"] == 3                     # unknown font falls back; lengths are kept in range
+    v._render(iid, "Amber", {})
+    assert v.status(iid)["state"] == "done", v.status(iid)

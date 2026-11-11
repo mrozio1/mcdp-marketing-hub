@@ -3,7 +3,8 @@
 {% block bodyclass %}ed-body{% endblock %}
 {% block mainclass %}ed-main{% endblock %}
 {% block content %}
-{% for f in fonts if f != 'DejaVu Sans' %}<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={{ f|replace(' ', '+') }}{% if f not in ('Bebas Neue', 'Pacifico') %}:wght@400;700{% endif %}&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+{% for f in fonts if f != 'DejaVu Sans' %}<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={{ f|replace(' ', '+') }}{% if f not in font_single %}:wght@400;700{% endif %}&display=swap">
 {% endfor %}
 <div class="ed vd" id="vd">
   <header class="ed-top vd-top">
@@ -76,13 +77,15 @@
       </section>
 
       <section data-vpanel="text" hidden>
-        <p class="small muted">Adds text at the playhead. Drag it on the video to place it; double-click (or tap Edit text) to type.</p>
+        <p class="small muted">Adds text at the playhead. Drag it on the video to place it; double-click (or tap Edit text) to type. Pick its font and animation in its panel.</p>
         <div class="vd-textadd">
           <button type="button" data-addtext="title" class="vd-ta vd-ta-title">Title</button>
           <button type="button" data-addtext="subtitle" class="vd-ta vd-ta-sub">Subtitle</button>
           <button type="button" data-addtext="cta" class="vd-ta vd-ta-cta">Call to action</button>
           <button type="button" data-addtext="name" class="vd-ta vd-ta-name">Name tag</button>
           <button type="button" data-addtext="plain" class="vd-ta">Plain text</button>
+          <button type="button" data-addtext="outline" class="vd-ta vd-ta-outline">BIG NEWS</button>
+          <button type="button" data-addtext="shadow" class="vd-ta vd-ta-shadow">Smile more</button>
         </div>
       </section>
 
@@ -188,7 +191,7 @@
 <script type="application/json" id="vd-config">{{ {
   "iid": it.id, "pid": pid, "canEdit": can_edit, "brand": brand_name, "primary": look.primary, "accent": look.accent,
   "uploadsFolder": uploads_folder, "render": render, "maxTotal": max_total, "chunk": 8388608,
-  "transitions": transitions, "presets": presets, "motions": motions, "animIn": anim_in, "animOut": anim_out,
+  "transitions": transitions, "presets": presets, "motions": motions, "animIn": anim_in, "animOut": anim_out, "animLoop": anim_loop, "fontGroups": font_groups,
   "bgModes": bg_modes, "speeds": speeds, "fonts": fonts, "bgOk": bg_ok, "stock": stock_keys, "ratios": ratios,
   "effects": effects, "fxGroups": fx_groups, "fxScopes": fx_scopes, "transFx": trans_fx, "sprites": sprites, "spriteFx": sprite_fx
 }|tojson }}</script>

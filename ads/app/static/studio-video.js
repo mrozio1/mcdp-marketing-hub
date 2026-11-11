@@ -380,7 +380,7 @@
   function textLines(x, L) {
     const pad = L.size * 0.3, maxw = Math.max(10, L.w - pad * 2), out = [];
     x.font = `${L.bold ? 700 : 400} ${L.size}px "${L.font}", "DejaVu Sans", sans-serif`;
-    String(L.text).split("\n").forEach(par => {
+    String(L.caps ? String(L.text).toUpperCase() : L.text).split("\n").forEach(par => {
       let line = "";
       par.split(/\s+/).forEach(wd => {
         const tryl = line ? line + " " + wd : wd;
@@ -399,22 +399,58 @@
     x.fillStyle = L.color; x.textBaseline = "top"; x.textAlign = L.align === "left" ? "left" : L.align === "right" ? "right" : "center";
     let y = (L.h - lh * lines.length) / 2 + (lh - L.size) / 2;
     const tx = L.align === "left" ? pad : L.align === "right" ? L.w - pad : L.w / 2;
-    lines.forEach(line => { x.fillText(line, tx, y); y += lh; });
+    const sw = L.stroke ? Math.max(1, L.size * (L.strokew || 0.08)) : 0;
+    lines.forEach(line => {
+      if (L.shadow) { x.save(); x.fillStyle = "rgba(0,0,0,0.55)"; const o = Math.max(2, L.size * 0.06);
+        if (sw) { x.lineJoin = "round"; x.lineWidth = sw * 2; x.strokeStyle = "rgba(0,0,0,0.55)"; x.strokeText(line, tx + o, y + o); }
+        x.fillText(line, tx + o, y + o); x.restore(); }
+      if (sw) { x.lineJoin = "round"; x.lineWidth = sw * 2; x.strokeStyle = L.stroke; x.strokeText(line, tx, y); }
+      x.fillText(line, tx, y); y += lh;
+    });
   }
   function fitTextBox(L) {
     const x = tmp.getContext("2d");
     const n = textLines(x, L).length;
     L.h = Math.round(Math.max(L.size * 1.3, n * L.size * 1.2 + L.size * 0.5));
   }
-  function anim(L, tl) {
-    const len = layerLen(L); let a = L.opacity, sc = 1, dx = 0, dy = 0;
-    const pin = clamp(tl / ANIM_T, 0, 1);
-    if (L.anim.in !== "none") a *= pin;
-    if (L.anim.in === "pop") sc = Math.min(1, 0.7 + 0.3 * tl / ANIM_T);
-    if (L.anim.in === "slideleft") dx = Math.max(0, 1 - tl / ANIM_T) * P.w * 0.25;
-    if (L.anim.in === "slideup") dy = Math.max(0, 1 - tl / ANIM_T) * P.h * 0.12;
-    if (L.anim.out === "fade") a *= clamp((len - tl) / ANIM_T, 0, 1);
-    return { a, sc, dx, dy };
+  // the same arithmetic as video2.anim_exprs (in, out and loop, with their own lengths)
+  const NO_FADE = ["none", "wipe", "typewriter"];
+  function animTimes(A, len) {
+    let din = A.in !== "none" ? (A.din || ANIM_T) : 0, dout = A.out !== "none" ? (A.dout || ANIM_T) : 0;
+    if (din + dout > len * 0.9 && din + dout > 0) { const k = len * 0.9 / (din + dout); din *= k; dout *= k; }
+    return [A.in !== "none" ? Math.max(din, 0.01) : 0, A.out !== "none" ? Math.max(dout, 0.01) : 0];
+  }
+  function anim(L, tl, len = layerLen(L)) {
+    const A = L.anim, [din, dout] = animTimes(A, len);
+    const pi = din ? clamp(tl / din, 0, 1) : 1, po = dout ? clamp((tl - (len - dout)) / dout, 0, 1) : 0;
+    const E = p => 1 - Math.pow(1 - p, 3), BK = p => 1 + 2.70158 * Math.pow(p - 1, 3) + 1.70158 * Math.pow(p - 1, 2), Q = p => p * p;
+    let a = L.opacity, sc = 1, dx = 0, dy = 0, rot = 0, revealL = 0, revealR = 1;
+    const W = P.w, H = P.h, i = A.in, o = A.out, lp = A.loop || "none";
+    if (!NO_FADE.includes(i)) a *= pi;
+    if (!NO_FADE.includes(o)) a *= 1 - po;
+    if (i === "pop") sc *= 0.7 + 0.3 * E(pi);
+    if (i === "bounce") sc *= Math.max(0.02, BK(pi));
+    if (i === "zoomin") sc *= 1.6 - 0.6 * E(pi);
+    if (i === "spin") { sc *= 0.5 + 0.5 * E(pi); rot += -1.5708 * (1 - E(pi)); }
+    if (i === "slideup") dy += (1 - E(pi)) * H * 0.12;
+    if (i === "slidedown") dy += -(1 - E(pi)) * H * 0.12;
+    if (i === "slideleft") dx += (1 - E(pi)) * W * 0.25;
+    if (i === "slideright") dx += -(1 - E(pi)) * W * 0.25;
+    if (i === "drop") dy += -(1 - BK(pi)) * H * 0.2;
+    if (o === "popout") sc *= 1 - 0.7 * Q(po);
+    if (o === "zoomout") sc *= 1 + 0.5 * Q(po);
+    if (o === "slideup") dy += -Q(po) * H * 0.12;
+    if (o === "slidedown") dy += Q(po) * H * 0.12;
+    if (o === "slideleft") dx += -Q(po) * W * 0.25;
+    if (o === "slideright") dx += Q(po) * W * 0.25;
+    if (lp === "pulse") sc *= 1 + 0.06 * Math.sin(2 * Math.PI * tl / 1.2);
+    if (lp === "bob") dy += H * 0.008 * Math.sin(2 * Math.PI * tl / 1.6);
+    if (lp === "wiggle") rot += 0.07 * Math.sin(2 * Math.PI * tl / 0.8);
+    if (lp === "blink" && tl % 0.8 >= 0.55) a = 0;
+    const n = L.kind === "text" ? Math.max(1, String(L.text || "").replace(/[ \n]/g, "").length) : 12;
+    if (i === "wipe") revealR = Math.min(revealR, pi); else if (i === "typewriter") revealR = Math.min(revealR, Math.floor(pi * n) / n);
+    if (o === "wipe") revealL = po; else if (o === "typewriter") revealR = Math.min(revealR, 1 - Math.floor(po * n) / n);
+    return { a, sc, dx, dy, rot, revealL, revealR };
   }
   const lc = off();
   function drawLayer(L) {
@@ -442,8 +478,10 @@
       }
     }
     const an = anim(L, tl);
+    if (an.a <= 0 || an.revealR <= an.revealL) return;
     ctx.save(); ctx.setTransform(S(), 0, 0, S(), 0, 0);
-    ctx.translate(L.x + L.w / 2 + an.dx, L.y + L.h / 2 + an.dy); ctx.rotate(L.rot * Math.PI / 180); ctx.scale(an.sc, an.sc);
+    ctx.translate(L.x + L.w / 2 + an.dx, L.y + L.h / 2 + an.dy); ctx.rotate(L.rot * Math.PI / 180 + an.rot); ctx.scale(an.sc, an.sc);
+    if (an.revealL > 0 || an.revealR < 1) { ctx.beginPath(); ctx.rect(-L.w / 2 + L.w * an.revealL, -L.h / 2, L.w * (an.revealR - an.revealL), L.h); ctx.clip(); }
     ctx.globalAlpha = an.a; ctx.drawImage(lc, -L.w / 2, -L.h / 2, L.w, L.h);
     ctx.restore();
   }
@@ -647,13 +685,16 @@
     subtitle: { text: "A line of detail", size: 54, bold: false, color: "#FFFFFF", fill: "", font: "Public Sans", y: 0.3, anim: "fade" },
     cta: { text: "Book a free consult", size: 60, bold: true, color: "#FFFFFF", fill: C.accent, font: "Montserrat", y: 0.72, anim: "pop" },
     plain: { text: "Text", size: 64, bold: false, color: "#FFFFFF", fill: "", font: "DejaVu Sans", y: 0.45, anim: "none" },
+    outline: { text: "BIG NEWS", size: 110, bold: true, color: "#FFFFFF", fill: "", font: "Anton", y: 0.35, anim: "bounce", stroke: "#111111", strokew: 0.07 },
+    shadow: { text: "Smile more", size: 96, bold: true, color: "#FFFFFF", fill: "", font: "Pacifico", y: 0.4, anim: "typewriter", shadow: true },
   };
   function addText(kind) {
     const start = t, len = Math.max(1, Math.min(4, total() - t || 4));
     const mk = (pr, y, w) => {
       const L = { id: uid(), kind: "text", track: nextTrack(start, len), start: +start.toFixed(2), dur: +len.toFixed(2), text: pr.text, font: pr.font,
                   size: pr.size, color: pr.color, fill: pr.fill, bold: pr.bold, align: "center", x: (P.w - w) / 2, y: P.h * y, w, h: 100,
-                  rot: 0, crop: noCrop(), opacity: 1, filter: defFilter(), anim: { in: pr.anim, out: "fade" } };
+                  rot: 0, crop: noCrop(), opacity: 1, filter: defFilter(), anim: { in: pr.anim, out: "fade", loop: "none", din: 0.5, dout: 0.4 },
+                  stroke: pr.stroke || "", strokew: pr.strokew || 0.08, shadow: !!pr.shadow, caps: false };
       fitTextBox(L); return L;
     };
     if (kind === "name") {
@@ -1254,15 +1295,20 @@
     } else if (L) {
       const it = items[L.item] || {}, text = L.kind === "text", bs = L.kind === "video" ? bgState(L.item) : null;
       propsEl.innerHTML = `<h2 data-sec="top">${text ? "Text" : esc(it.title || "Layer")}</h2>
-        ${jump(...(text ? [] : [["filters", "filters", "Filters"]]), ["effects", "anim", "Animations"])}
+        <div class="vd-jump">${text ? "" : `<button type="button" data-open="filters">${ico("filters", 16)} Filters</button>`}
+          <button type="button" data-gosec="anim">${ico("anim", 16)} Animations</button>${text ? `<button type="button" data-gosec="font">${ico("text", 16)} Fonts</button>` : ""}</div>
         ${text ? `<label>Words<textarea rows="3" data-p="text">${esc(L.text)}</textarea></label>
-          <label>Font<select data-p="font">${opt(C.fonts.map(f => [f, f]), L.font)}</select></label>
+          <h3 data-sec="font">Font</h3>${fontPicker(L.font)}
           <div class="st-share-grid"><label>Size<input type="number" min="10" max="400" data-p="size" value="${L.size}" class="ed-num"></label>
           <label>Bold<select data-p="bold">${opt([[1, "Bold"], [0, "Regular"]], L.bold ? 1 : 0)}</select></label></div>
           <div class="vd-seg">${["left", "center", "right"].map(a => `<button type="button" data-align="${a}" class="${L.align === a ? "on" : ""}">${a === "center" ? "Centre" : a[0].toUpperCase() + a.slice(1)}</button>`).join("")}</div>
           <label class="ed-range">Text colour<input type="color" data-p="color" value="${L.color}"></label>
           <label class="ed-range">Box<input type="color" data-p="fill" value="${L.fill || "#000000"}"><button type="button" class="linklike small" data-nofill>${L.fill ? "No box" : "(none)"}</button></label>
-          <div class="vd-swatches">${[C.primary, C.accent, "#FFFFFF", "#1A1A1A"].map(c_ => `<button type="button" style="background:${c_}" data-swatch="${c_}" title="${c_}"></button>`).join("")}</div>` :
+          <div class="vd-swatches">${[C.primary, C.accent, "#FFFFFF", "#1A1A1A"].map(c_ => `<button type="button" style="background:${c_}" data-swatch="${c_}" title="${c_}"></button>`).join("")}</div>
+          <label class="ed-range">Outline<input type="color" data-p="stroke" value="${L.stroke || "#000000"}"><button type="button" class="linklike small" data-nostroke>${L.stroke ? "No outline" : "(none)"}</button></label>
+          ${L.stroke ? rng("strokew", "Outline thickness", Math.round((L.strokew || 0.08) * 100), 1, 30) : ""}
+          <label class="check vd-check"><input type="checkbox" data-tflag="shadow" ${L.shadow ? "checked" : ""}> Drop shadow</label>
+          <label class="check vd-check"><input type="checkbox" data-tflag="caps" ${L.caps ? "checked" : ""}> ALL CAPITALS</label>` :
           (L.kind === "video" ? `<div class="st-share-grid"><label>Starts at<input type="number" step="0.1" min="0" data-p="in" value="${L.in}" class="ed-num"></label><label>Ends at<input type="number" step="0.1" data-p="out" value="${L.out}" class="ed-num"></label></div>
             <label>Speed<select data-p="speed">${opt(C.speeds.map(s => [s, s + "×"]), L.speed)}</select></label>${rng("volume", "Volume", Math.round(L.volume * 100), 0, 150)}
             <label class="check vd-check"><input type="checkbox" data-cut ${L.cut ? "checked" : ""} ${bs === "ready" || C.bgOk ? "" : "disabled"}> Cut out the person (remove the background)</label>
@@ -1271,6 +1317,7 @@
           ${L.kind !== "video" ? `<label>For (seconds)<input type="number" step="0.1" min="0.3" data-p="dur" value="${L.dur}" class="ed-num"></label>` : "<span></span>"}</div>
         ${rng("opacity", "Opacity", Math.round(L.opacity * 100), 0, 100)}
         ${rng("rot", "Rotation", Math.round(L.rot), -180, 180)}
+        ${animSection(L)}
         <div class="btn-row"><button type="button" class="btn btn-small btn-quiet" data-layerup>Bring forward</button><button type="button" class="btn btn-small btn-quiet" data-layerdown>Send back</button>
           <button type="button" class="btn btn-small btn-quiet" data-center>Centre</button></div>
         <div class="btn-row"><button type="button" class="linklike danger" data-delsel>Remove the layer</button></div>`;
@@ -1308,9 +1355,53 @@
     else propsEl.innerHTML = `<h2>Edit</h2><ul class="small muted vd-tips"><li>Drag clips from the left onto the timeline: the <strong>Main</strong> track plays in order, layers go on top.</li>
       <li>Click something on the video to move, resize, rotate or crop it.</li><li>Drag the ends of anything on the timeline to trim it; drag a layer up or down to change what's on top.</li>
       <li>Click <strong>+</strong> between two clips for a transition.</li><li>Space plays; S splits at the playhead; Delete removes; Ctrl+Z undoes.</li></ul>`;
-    toolPanels(); mtools();
+    toolPanels(); mtools(); animThumbs();
     [propsEl, fxEl, trEl, fiEl].forEach(root => $$("input[type=range][data-p]", root).forEach(r => r.addEventListener("input", () => { r.nextElementSibling && (r.nextElementSibling.textContent = r.value); })));
   }
+  // ---- fonts and animations for text and layers
+  function fontPicker(cur) {
+    return `<div class="vd-fonts">${C.fontGroups.map(([g, fs]) => `<p class="vd-fontg">${esc(g)}</p>${fs.map(f =>
+      `<button type="button" data-font="${esc(f)}" class="${f === cur ? "on" : ""}" style="font-family:'${f}', 'DejaVu Sans', sans-serif">${esc(f)}</button>`).join("")}`).join("")}</div>`;
+  }
+  let animTab = "in";
+  function animSection(L) {
+    const lists = { in: C.animIn, out: C.animOut, loop: C.animLoop }, cur = { in: L.anim.in, out: L.anim.out, loop: L.anim.loop || "none" };
+    const attr = { in: "data-ain", out: "data-aout", loop: "data-aloop" };
+    const durKey = animTab === "in" ? "din" : "dout";
+    return `<h3 data-sec="anim">Animation</h3>
+      <div class="vd-seg vd-animtabs">${[["in", "In"], ["out", "Out"], ["loop", "Loop"]].map(([k, l]) =>
+        `<button type="button" data-animtab="${k}" class="${animTab === k ? "on" : ""}">${l}${cur[k] !== "none" ? " •" : ""}</button>`).join("")}</div>
+      <div class="vd-anims">${lists[animTab].filter(([k]) => L.kind === "text" || k !== "typewriter").map(([k, l]) =>
+        `<button type="button" ${attr[animTab]}="${k}" class="${cur[animTab] === k ? "on" : ""}"><canvas width="64" height="64" data-animthumb="${animTab}:${k}"></canvas><span>${esc(l)}</span></button>`).join("")}</div>
+      ${animTab !== "loop" && cur[animTab] !== "none" ? rng(`anim.${durKey}`, animTab === "in" ? "How long it takes to come in (seconds)" : "How long it takes to go out (seconds)",
+        (L.anim[durKey] || ANIM_T).toFixed(2), 0.15, 3, 0.05) : ""}
+      ${animTab === "loop" ? `<p class="small muted">Keeps moving while it's on screen, between coming in and going out.</p>` : ""}`;
+  }
+  // the little tiles play the animation on an "Aa" while hovered
+  let animThumbRaf = 0;
+  function drawAnimThumb(c, tl) {
+    const [side, k] = c.dataset.animthumb.split(":"), x = c.getContext("2d");
+    const fake = { kind: "text", text: "Aaaa", opacity: 1, anim: { in: "none", out: "none", loop: "none", din: 0.6, dout: 0.6 } };
+    fake.anim[side] = k;
+    const len = 2.2, at = side === "in" ? Math.min(tl, len) : side === "out" ? Math.min(len, 1.0 + tl) : tl;
+    const an = anim(fake, at, len), Ws = P.w, sc_ = 64 / Ws;
+    x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#2B3A4E"; x.fillRect(0, 0, 64, 64);
+    if (an.a <= 0 || an.revealR <= an.revealL) return;
+    x.save(); x.translate(32 + an.dx * sc_, 32 + an.dy * sc_); x.rotate(an.rot); x.scale(an.sc, an.sc);
+    x.beginPath(); x.rect(-22 + 44 * an.revealL, -13, 44 * (an.revealR - an.revealL), 26); x.clip();
+    x.globalAlpha = an.a; x.fillStyle = C.accent; x.beginPath(); x.roundRect ? x.roundRect(-22, -13, 44, 26, 5) : x.rect(-22, -13, 44, 26); x.fill();
+    x.fillStyle = "#fff"; x.font = "700 15px Montserrat, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText("Aa", 0, 1);
+    x.restore();
+  }
+  function animThumbs() { $$("[data-animthumb]", propsEl).forEach(c => drawAnimThumb(c, c.dataset.animthumb.startsWith("out") ? 0 : 5)); }
+  propsEl.addEventListener("pointerover", e => {
+    const b = e.target.closest(".vd-anims button"); if (!b) return;
+    cancelAnimationFrame(animThumbRaf); const c = b.querySelector("canvas"), t0_ = performance.now();
+    const step = () => { if (!c.isConnected) return; drawAnimThumb(c, ((performance.now() - t0_) / 1000) % 2.4); animThumbRaf = requestAnimationFrame(step); };
+    animThumbRaf = requestAnimationFrame(step);
+  });
+  propsEl.addEventListener("pointerout", e => { const b = e.target.closest(".vd-anims button"); if (b && !b.contains(e.relatedTarget)) { cancelAnimationFrame(animThumbRaf); animThumbs(); } });
+
   // ---- the Effects, Transitions and Filters panels act on what's selected
   // live previews on the effect tiles: the current frame with the effect on it (moving while hovered)
   const thumbBase = document.createElement("canvas");
@@ -1362,7 +1453,7 @@
       ${C.fxGroups.map(g => `<h3>${esc(g)}</h3><div class="vd-fxlib">${C.effects.filter(x => x[2] === g).map(([k, l]) =>
         `<button type="button" data-addfx="${k}" draggable="${!M}" class="${F && F.type === k ? "on" : ""}" title="${esc(l)}"><canvas data-fxthumb="${k}"></canvas><span>${esc(l)}</span></button>`).join("")}</div>`).join("")}
       ${c ? `<h3>Clip motion</h3>${tiles("data-motion", C.motions, c.motion)}<p class="small muted">A slow push or pan across this clip.</p>`
-        : L ? `<h3>Layer comes in</h3>${tiles("data-ain", C.animIn, L.anim.in)}<h3>Layer goes out</h3>${tiles("data-aout", C.animOut, L.anim.out)}` : ""}`;
+        : L ? `<p class="small muted">The layer's own animations (in, out and loop) are in its panel. <button type="button" class="linklike" data-gosec="anim">Show them</button></p>` : ""}`;
     fxThumbs();
     trEl.innerHTML = trTarget() ? `<p class="small muted">Into: <strong>${esc(sel && (sel.id === "outro" || sel.kind === "outro") ? "the end card" : (items[trTarget().item] || {}).title || "this clip")}</strong></p>${trPicker()}`
       : none(P.main.length > 1 || P.outro.on ? "Tap the + between two clips on the timeline, or select the second clip." : "Add a second clip first; transitions go between clips.");
@@ -1381,7 +1472,7 @@
     if (el.dataset.p && el.dataset.p !== "tdur" && target) {
       let v = el.type === "range" || el.type === "number" ? parseFloat(el.value) : el.value, p = el.dataset.p;
       if (p.startsWith("f.")) { target.filter[p.slice(2)] = v / 100; requestDraw(); return; }
-      if (p === "volume" || p === "opacity" || p === "zoom") v = v / 100;
+      if (p === "volume" || p === "opacity" || p === "zoom" || p === "strokew") v = v / 100;
       if (p === "speed") v = parseFloat(v);
       if (p === "bold") v = v === "1";
       if (p === "bg.item") v = v ? +v : null;
@@ -1391,16 +1482,16 @@
       if (L && L.kind === "text" && ["text", "size", "font", "bold"].includes(p)) fitTextBox(L);
       if (p === "bg.item" && v) ensureItem(v).then(() => requestDraw());
       requestDraw(); placeSel();
-      if (el.type !== "range" && el.tagName !== "TEXTAREA") commit(); else commit({ quiet: true });
+      if (el.type !== "range" && el.type !== "color" && el.tagName !== "TEXTAREA") commit(); else commit({ quiet: true });
       return;
     }
     if (el.dataset.p === "tdur" && trTarget()) { trTarget().trans.dur = parseFloat(el.value); commit({ quiet: true }); drawTimeline(); }
     if (el.dataset.cp !== undefined) { const cc = P.captions[sel.i]; cc[el.dataset.cp] = el.dataset.cp === "text" ? el.value : parseFloat(el.value); commit({ quiet: true }); drawTimeline(); }
     if (el.dataset.lp !== undefined) { const cc = P.lowers[sel.i]; cc[el.dataset.lp] = ["text", "sub"].includes(el.dataset.lp) ? el.value : parseFloat(el.value); commit({ quiet: true }); drawTimeline(); }
   };
-  const onChange = e => { if (e.target.type === "range" || e.target.tagName === "TEXTAREA") commit(); };
+  const onChange = e => { if (e.target.type === "range" || e.target.type === "color" || e.target.tagName === "TEXTAREA") commit(); };
   const onClick = async e => {
-    const b = e.target.closest("button, input[data-cut]"); if (!b) return;
+    const b = e.target.closest("button, input[data-cut], input[data-tflag]"); if (!b) return;
     const c = curMain(), L = curLayer(), target = c || L;
     if (b.dataset.open) { openTab(b.dataset.open); return; }
     if (b.dataset.addfx) { addFx(b.dataset.addfx); return; }
@@ -1409,8 +1500,16 @@
     if (F && b.hasAttribute("data-fxall")) { F.start = 0; F.dur = +total().toFixed(3); commit(); return; }
     if (F && b.hasAttribute("data-fxfit")) { const sg = layout().segs.find(x => F.start + 0.01 >= x.start && F.start + 0.01 < x.end); if (sg) { F.start = +sg.start.toFixed(3); F.dur = +sg.len.toFixed(3); commit(); } return; }
     if (b.dataset.motion && c) { c.motion = b.dataset.motion; commit(); const s_ = layout().segs.find(x => x.c === c); if (s_) preview(s_.start, s_.len); return; }
-    if ((b.dataset.ain || b.dataset.aout) && L) { if (b.dataset.ain) L.anim.in = b.dataset.ain; else L.anim.out = b.dataset.aout; commit();
-      preview(b.dataset.ain ? L.start : Math.max(L.start, L.start + layerLen(L) - 1), b.dataset.ain ? 1 : 1.1); return; }
+    if (b.dataset.animtab) { animTab = b.dataset.animtab; props(); return; }
+    if (b.dataset.gosec) { openProps(b.dataset.gosec); return; }
+    if (b.dataset.font && L) { L.font = b.dataset.font; fitTextBox(L); document.fonts && document.fonts.load(`${L.bold ? 700 : 400} 40px "${L.font}"`).then(() => { fitTextBox(L); requestDraw(); }).catch(() => {});
+      commit(); return; }
+    if (b.hasAttribute("data-nostroke") && L) { L.stroke = ""; commit(); return; }
+    if ((b.dataset.ain || b.dataset.aout || b.dataset.aloop) && L) {
+      if (b.dataset.ain) L.anim.in = b.dataset.ain; else if (b.dataset.aout) L.anim.out = b.dataset.aout; else L.anim.loop = b.dataset.aloop;
+      const [din, dout] = animTimes(L.anim, layerLen(L)); commit();
+      if (b.dataset.ain) preview(L.start, din + 0.6); else if (b.dataset.aout) preview(Math.max(L.start, L.start + layerLen(L) - dout - 0.5), dout + 0.6);
+      else preview(L.start, Math.min(layerLen(L), 2.5)); return; }
     if (b.hasAttribute("data-trall")) { const src = trTarget(); if (!src) return; P.main.forEach((x, i) => { if (i > 0) x.trans = { ...src.trans }; }); commit(); say("Used on every cut"); return; }
     if (b.dataset.preset && target) { target.filter.preset = b.dataset.preset; commit(); return; }
     if (b.dataset.fit && c) { c.fit = b.dataset.fit; c.zoom = 1; c.dx = c.dy = 0; commit(); return; }
@@ -1428,6 +1527,7 @@
       const s = layout().segs.find(s_ => s_.c === c2 || (c2 === P.outro && s_.kind === "outro")); if (s) preview(Math.max(0, s.start - 0.5), s.d + 1); return; }
     if (b.hasAttribute("data-capdel")) { P.captions.splice(sel.i, 1); sel = null; commit(); return; }
     if (b.hasAttribute("data-lowdel")) { P.lowers.splice(sel.i, 1); sel = null; commit(); return; }
+    if (b.matches("input[data-tflag]") && L) { L[b.dataset.tflag] = b.checked; if (b.dataset.tflag === "caps") fitTextBox(L); commit(); return; }
     if (b.matches("input[data-cut]") && target) {
       const id = target.item;
       if (b.checked && bgState(id) !== "ready") { startBg(id); }
@@ -1553,7 +1653,7 @@
       T("tab:filters", "filters", "Filters"), T("tab:effects", "effects", "Motion"), ...(P.main.indexOf(c) > 0 ? [T("tab:transitions", "transitions", "Transition")] : []),
       T("crop", "crop", "Crop"), T("prop:bg", "bg", "Background"), T("prop:", "edit", "More"), T("dup", "dup", "Duplicate"), T("del", "del", "Delete")];
     else if (L) list = [T("back", "back", ""), ...(L.kind === "text" ? [T("type", "typing", "Edit text"), T("prop:top", "text", "Style")] : [T("prop:top", "edit", "Edit")]),
-      T("split", "split", "Split"), T("tab:effects", "anim", "Animations"), ...(L.kind !== "text" ? [T("tab:filters", "filters", "Filters"), T("crop", "crop", "Crop")] : []),
+      T("split", "split", "Split"), T("prop:anim", "anim", "Animations"), ...(L.kind === "text" ? [T("prop:font", "text", "Fonts")] : []), ...(L.kind !== "text" ? [T("tab:filters", "filters", "Filters"), T("crop", "crop", "Crop")] : []),
       ...(L.kind === "video" ? [T("prop:volume", "volume", "Volume")] : []), T("fwd", "up", "Forward"), T("bwd", "down", "Back"), T("dup", "dup", "Duplicate"), T("del", "del", "Delete")];
     else if (sel && sel.kind === "fx") list = [T("back", "back", ""), T("tab:effects", "effects", "Change"), T("prop:k", "edit", "Strength"),
       T("split", "split", "Split"), T("dup", "dup", "Duplicate"), T("del", "del", "Delete")];

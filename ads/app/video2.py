@@ -57,12 +57,29 @@ PRESETS = {
 ADJUST = ("brightness", "contrast", "saturation", "warmth", "vignette")
 MOTIONS = (("none", "None"), ("zoomin", "Slow zoom in"), ("zoomout", "Slow zoom out"), ("panleft", "Pan left"),
            ("panright", "Pan right"))
-ANIM_IN = (("none", "None"), ("fade", "Fade"), ("pop", "Pop"), ("slideup", "Slide up"), ("slideleft", "Slide in"))
-ANIM_OUT = (("none", "None"), ("fade", "Fade"))
+ANIM_IN = (("none", "None"), ("fade", "Fade"), ("pop", "Pop"), ("bounce", "Bounce"), ("zoomin", "Zoom in"), ("typewriter", "Typewriter"),
+           ("wipe", "Wipe"), ("slideup", "Slide up"), ("slidedown", "Slide down"), ("slideleft", "Slide in"),
+           ("slideright", "From the left"), ("drop", "Drop"), ("spin", "Spin"))
+ANIM_OUT = (("none", "None"), ("fade", "Fade"), ("popout", "Shrink"), ("zoomout", "Grow"), ("typewriter", "Erase"), ("wipe", "Wipe"),
+            ("slideup", "Slide up"), ("slidedown", "Slide down"), ("slideleft", "Slide left"), ("slideright", "Slide right"))
+ANIM_LOOP = (("none", "None"), ("pulse", "Pulse"), ("bob", "Float"), ("wiggle", "Wiggle"), ("blink", "Blink"))
+NO_FADE = ("none", "wipe", "typewriter")
 BG_MODES = (("blur", "Blurred copy"), ("color", "Brand colour"), ("photo", "A photo"), ("black", "Black"))
 SPEEDS = (0.5, 0.75, 1, 1.25, 1.5, 2)
-FONTS = ("DejaVu Sans", "Montserrat", "Poppins", "Inter", "Public Sans", "Lato", "Oswald", "Bebas Neue", "Playfair Display",
-         "Fraunces", "Merriweather", "Pacifico", "Caveat")
+# fonts for text layers (Google Fonts, free for any use), by kind; "single" ones have one weight only
+FONT_GROUPS = (
+    ("Clean", ("DejaVu Sans", "Montserrat", "Poppins", "Inter", "Public Sans", "Lato", "Roboto", "Open Sans", "Nunito", "Raleway",
+               "Work Sans", "DM Sans", "Rubik", "Quicksand", "Josefin Sans", "Space Grotesk", "Comfortaa", "Fredoka")),
+    ("Bold", ("Oswald", "Bebas Neue", "Anton", "Archivo Black", "Barlow Condensed", "Teko", "Alfa Slab One", "Righteous", "Bungee")),
+    ("Classic", ("Playfair Display", "Fraunces", "Merriweather", "Cinzel", "Abril Fatface", "Lora", "Libre Baskerville")),
+    ("Handwritten", ("Pacifico", "Caveat", "Dancing Script", "Great Vibes", "Satisfy", "Kalam", "Permanent Marker",
+                     "Shadows Into Light", "Amatic SC", "Lobster", "Playball")),
+    ("Fun", ("Monoton", "Press Start 2P", "Bangers", "Luckiest Guy", "Chewy")),
+)
+FONTS = tuple(f for _, fs in FONT_GROUPS for f in fs)
+FONT_SINGLE = ("Bebas Neue", "Anton", "Archivo Black", "Alfa Slab One", "Righteous", "Bungee", "Abril Fatface", "Pacifico",
+               "Great Vibes", "Satisfy", "Permanent Marker", "Shadows Into Light", "Lobster", "Playball", "Monoton",
+               "Press Start 2P", "Bangers", "Luckiest Guy", "Chewy")
 ANIM_T = 0.35
 
 
@@ -97,6 +114,60 @@ def _filter(f):
     for k in ADJUST:
         out[k] = round(_num(f.get(k), -1 if k != "vignette" else 0, 1, 0), 2)
     return out
+
+
+def _anim(a):
+    """A layer's animations: how it comes in, goes out and moves in between, and how long in and out take."""
+    return {"in": a.get("in") if a.get("in") in dict(ANIM_IN) else "none",
+            "out": a.get("out") if a.get("out") in dict(ANIM_OUT) else "none",
+            "loop": a.get("loop") if a.get("loop") in dict(ANIM_LOOP) else "none",
+            "din": round(_num(a.get("din"), 0.15, 3, ANIM_T), 2), "dout": round(_num(a.get("dout"), 0.15, 3, ANIM_T), 2)}
+
+
+def anim_times(L, ln):
+    """In and out lengths that fit the layer (they never overlap)."""
+    a = L["anim"]
+    din = a.get("din", ANIM_T) if a["in"] != "none" else 0
+    dout = a.get("dout", ANIM_T) if a["out"] != "none" else 0
+    if din + dout > ln * 0.9 and din + dout > 0:
+        k = ln * 0.9 / (din + dout)
+        din, dout = din * k, dout * k
+    return max(din, 0.01) if a["in"] != "none" else 0, max(dout, 0.01) if a["out"] != "none" else 0
+
+
+def anim_exprs(L, ln, W, H):
+    """The animation as ffmpeg expressions of the layer's own time T (same arithmetic as anim() in studio-video.js):
+    scale, extra turn (radians), x and y offsets; None where nothing moves."""
+    a = L["anim"]
+    din, dout = anim_times(L, ln)
+    pi = f"clip(T/{din:.4f},0,1)" if din else "1"
+    po = f"clip((T-{ln - dout:.4f})/{dout:.4f},0,1)" if dout else "0"
+    E = lambda p: f"(1-pow(1-{p},3))"
+    BK = lambda p: f"(1+2.70158*pow({p}-1,3)+1.70158*pow({p}-1,2))"
+    Q = lambda p: f"pow({p},2)"
+    sc, rot, dx, dy = [], [], [], []
+    i, o, lp = a["in"], a["out"], a.get("loop", "none")
+    if i == "pop": sc.append(f"(0.7+0.3*{E(pi)})")
+    if i == "bounce": sc.append(f"max(0.02,{BK(pi)})")
+    if i == "zoomin": sc.append(f"(1.6-0.6*{E(pi)})")
+    if i == "spin": sc.append(f"(0.5+0.5*{E(pi)})"); rot.append(f"(-1.5708*(1-{E(pi)}))")
+    if i == "slideup": dy.append(f"((1-{E(pi)})*{H * 0.12:.1f})")
+    if i == "slidedown": dy.append(f"(-(1-{E(pi)})*{H * 0.12:.1f})")
+    if i == "slideleft": dx.append(f"((1-{E(pi)})*{W * 0.25:.1f})")
+    if i == "slideright": dx.append(f"(-(1-{E(pi)})*{W * 0.25:.1f})")
+    if i == "drop": dy.append(f"(-(1-{BK(pi)})*{H * 0.2:.1f})")
+    if o == "popout": sc.append(f"(1-0.7*{Q(po)})")
+    if o == "zoomout": sc.append(f"(1+0.5*{Q(po)})")
+    if o == "slideup": dy.append(f"(-{Q(po)}*{H * 0.12:.1f})")
+    if o == "slidedown": dy.append(f"({Q(po)}*{H * 0.12:.1f})")
+    if o == "slideleft": dx.append(f"(-{Q(po)}*{W * 0.25:.1f})")
+    if o == "slideright": dx.append(f"({Q(po)}*{W * 0.25:.1f})")
+    if lp == "pulse": sc.append("(1+0.06*sin(2*PI*T/1.2))")
+    if lp == "bob": dy.append(f"({H * 0.008:.2f}*sin(2*PI*T/1.6))")
+    if lp == "wiggle": rot.append("(0.07*sin(2*PI*T/0.8))")
+    j = lambda xs: "*".join(xs) if xs else None
+    k = lambda xs: "+".join(xs) if xs else None
+    return {"scale": j(sc), "rot": k(rot), "dx": k(dx), "dy": k(dy), "din": din, "dout": dout}
 
 
 def _crop(c):
@@ -191,13 +262,15 @@ def clean(p, w, h):
                 L.update({"text": txt, "font": c.get("font") if c.get("font") in FONTS else "DejaVu Sans",
                           "size": round(_num(c.get("size"), 10, 400, 72)), "color": _color(c.get("color"), "#FFFFFF"),
                           "fill": _color(c.get("fill"), "") if c.get("fill") else "", "bold": bool(c.get("bold", True)),
-                          "align": c.get("align") if c.get("align") in ("left", "center", "right") else "center"})
+                          "align": c.get("align") if c.get("align") in ("left", "center", "right") else "center",
+                          "stroke": _color(c.get("stroke"), "") if c.get("stroke") else "",
+                          "strokew": round(_num(c.get("strokew"), 0.01, 0.3, 0.08), 3), "shadow": bool(c.get("shadow")),
+                          "caps": bool(c.get("caps"))})
         L.update({"x": round(_num(c.get("x"), -w, 2 * w, w * 0.25), 1), "y": round(_num(c.get("y"), -h, 2 * h, h * 0.25), 1),
                   "w": round(_num(c.get("w"), 8, 4 * w, w * 0.5), 1), "h": round(_num(c.get("h"), 8, 4 * h, h * 0.2), 1),
                   "rot": round(_num(c.get("rot"), -360, 360, 0), 2), "crop": _crop(c.get("crop")),
                   "opacity": round(_num(c.get("opacity"), 0, 1, 1), 2), "filter": _filter(c.get("filter")),
-                  "anim": {"in": (c.get("anim") or {}).get("in") if (c.get("anim") or {}).get("in") in dict(ANIM_IN) else "none",
-                           "out": (c.get("anim") or {}).get("out") if (c.get("anim") or {}).get("out") in dict(ANIM_OUT) else "none"}})
+                  "anim": _anim(c.get("anim") or {})})
         out["layers"].append(L)
     for c in (p.get("captions") or [])[:400]:
         t = re.sub(r"\s+", " ", str(c.get("text") or "")).strip()[:160]
@@ -525,13 +598,17 @@ def text_png(L, path):
         font = ImageFont.load_default()
     if L.get("fill"):
         d.rounded_rectangle([0, 0, w - 1, h - 1], radius=int(min(w, h) * 0.12), fill=L["fill"])
-    lines = L["text"].split("\n")
+    lines = (L["text"].upper() if L.get("caps") else L["text"]).split("\n")
     lh = int(L["size"] * 1.2)
     y = (h - lh * len(lines)) / 2
+    sw = max(1, int(L["size"] * L.get("strokew", 0.08))) if L.get("stroke") else 0
     for line in lines:
         tw = d.textlength(line, font=font)
         x = {"left": L["size"] * 0.3, "right": w - tw - L["size"] * 0.3}.get(L.get("align"), (w - tw) / 2)
-        d.text((x, y), line, font=font, fill=L["color"])
+        if L.get("shadow"):
+            off = max(2, int(L["size"] * 0.06))
+            d.text((x + off, y + off), line, font=font, fill=(0, 0, 0, 140), stroke_width=sw, stroke_fill=(0, 0, 0, 140))
+        d.text((x, y), line, font=font, fill=L["color"], stroke_width=sw, stroke_fill=L.get("stroke") or None)
         y += lh
     img.save(path, "PNG")
 
@@ -576,35 +653,68 @@ def overlay_stage(main_mp4, p, layers_src, out, total_len, ass=None, fontsdir=No
             lab_src = f"lsa{idx}"
         lw, lh = even(L["w"]), even(L["h"])
         gf = grade_filter(L.get("filter")) if L["kind"] != "text" else ""
+        ax = anim_exprs(L, ln, W, H)
+        q = lambda e, tvar: "'" + e.replace("T", tvar).replace(",", "\\,") + "'"
         steps = [f"scale={lw}:{lh}"]
         if L["opacity"] < 1:
             steps.append(f"colorchannelmixer=aa={L['opacity']}")
-        if L["anim"]["in"] in ("fade", "slideup", "slideleft", "pop"):
-            steps.append(f"fade=t=in:st=0:d={ANIM_T}:alpha=1")
-        if L["anim"]["out"] == "fade":
-            steps.append(f"fade=t=out:st={max(0, ln - ANIM_T):.3f}:d={ANIM_T}:alpha=1")
-        if abs(L["rot"]) > 0.01:
-            ang = f"{math.radians(L['rot']):.5f}"
-            steps.append(f"rotate=a={ang}:c=none:ow='rotw({ang})':oh='roth({ang})'")
-        steps.append(f"setpts=PTS+{st:.3f}/TB")
-        if L["anim"]["in"] == "pop":
-            steps.append(f"scale=w='ceil(iw*min(1\\,0.7+0.3*(t-{st:.3f})/{ANIM_T})/2)*2':"
-                         f"h='ceil(ih*min(1\\,0.7+0.3*(t-{st:.3f})/{ANIM_T})/2)*2':eval=frame")
         lab = f"l{idx}"
         if gf:
             # grade the colour, keep the transparency
             f.append(f"[{lab_src}]split[gc{idx}][ga{idx}];[ga{idx}]alphaextract[gx{idx}];"
                      f"[gc{idx}]format=rgb24,{gf},format=rgba[gg{idx}];[gg{idx}][gx{idx}]alphamerge[gm{idx}]")
             lab_src = f"gm{idx}"
-        f.append(f"[{lab_src}]{','.join(steps)}[{lab}]")
+        f.append(f"[{lab_src}]{','.join(steps)},fps={FPS},format=rgba,settb=1/{FPS}[lr{idx}]")
+        cur = f"lr{idx}"
+        # typewriter and wipe: revealed (or hidden) from the left, through a transparent picture
+        n_chars = max(1, len((L.get("text") or "").replace(" ", "").replace("\n", ""))) if L["kind"] == "text" else 12
+        for side in ("in", "out"):
+            kind = L["anim"][side]
+            d = ax["din"] if side == "in" else ax["dout"]
+            if kind not in ("wipe", "typewriter") or not d:
+                continue
+            f.append(f"color=c=black@0:s={lw}x{lh}:r={FPS}:d={d + 0.1:.3f},format=rgba,settb=1/{FPS}[bl{side}{idx}]")
+            prog = "(1-P)"
+            if side == "in":
+                cut = f"W*floor({prog}*{n_chars})/{n_chars}" if kind == "typewriter" else f"W*{prog}"
+                expr = f"if(lt(X,{cut}),B,A)"
+                f.append(f"[bl{side}{idx}][{cur}]xfade=transition=custom:duration={d:.3f}:offset=0:expr='{expr.replace(',', chr(92) + ',')}'[rv{side}{idx}]")
+            else:
+                if kind == "typewriter":
+                    expr = f"if(lt(X,W*(1-floor({prog}*{n_chars})/{n_chars})),A,B)"
+                else:
+                    expr = f"if(lt(X,W*{prog}),B,A)"
+                f.append(f"[{cur}][bl{side}{idx}]xfade=transition=custom:duration={d:.3f}:offset={max(0, ln - d):.3f}:"
+                         f"expr='{expr.replace(',', chr(92) + ',')}'[rv{side}{idx}]")
+            cur = f"rv{side}{idx}"
+        steps = []
+        if L["anim"]["in"] not in NO_FADE:
+            steps.append(f"fade=t=in:st=0:d={ax['din']:.3f}:alpha=1")
+        if L["anim"]["out"] not in NO_FADE:
+            steps.append(f"fade=t=out:st={max(0, ln - ax['dout']):.3f}:d={ax['dout']:.3f}:alpha=1")
+        if ax["scale"]:
+            sw_ = q("max(2,ceil(iw*" + ax["scale"] + "/2)*2)", "t")
+            sh_ = q("max(2,ceil(ih*" + ax["scale"] + "/2)*2)", "t")
+            steps.append(f"scale=w={sw_}:h={sh_}:eval=frame")
+        base_rot = math.radians(L["rot"])
+        if ax["rot"]:
+            ang = q(f"{base_rot:.5f}+{ax['rot']}", "t")
+            steps.append(f"rotate=a={ang}:c=none:ow='hypot(iw\\,ih)':oh='hypot(iw\\,ih)'")
+        elif abs(L["rot"]) > 0.01:
+            ang = f"{base_rot:.5f}"
+            steps.append(f"rotate=a={ang}:c=none:ow='rotw({ang})':oh='roth({ang})'")
+        steps.append(f"setpts=PTS+{st:.3f}/TB")
+        f.append(f"[{cur}]{','.join(steps)}[{lab}]")
         cx_, cy_ = L["x"] + L["w"] / 2, L["y"] + L["h"] / 2
-        xe, ye = f"{cx_:.1f}-w/2", f"{cy_:.1f}-h/2"
-        if L["anim"]["in"] == "slideleft":
-            xe += f"+max(0\\,1-(t-{st:.3f})/{ANIM_T})*{W * 0.25:.1f}"
-        if L["anim"]["in"] == "slideup":
-            ye += f"+max(0\\,1-(t-{st:.3f})/{ANIM_T})*{H * 0.12:.1f}"
+        tl_ = f"(t-{st:.3f})"
+        xe = f"{cx_:.1f}-w/2" + (f"+{ax['dx'].replace('T', tl_)}" if ax["dx"] else "")
+        ye = f"{cy_:.1f}-h/2" + (f"+{ax['dy'].replace('T', tl_)}" if ax["dy"] else "")
+        xe, ye = xe.replace(",", "\\,"), ye.replace(",", "\\,")
+        on = f"between(t\\,{st:.3f}\\,{st + ln:.3f})"
+        if L["anim"].get("loop") == "blink":
+            on += f"*lt(mod(t-{st:.3f}\\,0.8)\\,0.55)"
         nb = f"b{idx}"
-        f.append(f"[{base}][{lab}]overlay=x='{xe}':y='{ye}':enable='between(t\\,{st:.3f}\\,{st + ln:.3f})':eof_action=pass[{nb}]")
+        f.append(f"[{base}][{lab}]overlay=x='{xe}':y='{ye}':enable='{on}':eof_action=pass[{nb}]")
         base = nb
         if L["kind"] == "video" and L.get("volume", 0) > 0 and src.get("audio"):
             ms = int(round(st * 1000))

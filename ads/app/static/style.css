@@ -2015,3 +2015,17 @@ button.vd-lab:hover { background: #F2F0EB; }
 .vd-block .vd-handle { position: absolute; top: 0; bottom: 0; padding: 0; z-index: 2; white-space: normal; overflow: visible; text-shadow: none; }
 .vd-block .vd-hl { left: 0; }
 .vd-block .vd-hr { right: 0; left: auto; }
+/* ---- fonts and text animations */
+.vd-fonts { max-height: 260px; overflow-y: auto; border: 1px solid var(--hair); border-radius: 8px; padding: 4px; margin-bottom: 0.7rem; background: #fff; }
+.vd-fonts button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 0.4rem 0.55rem; border-radius: 6px; font-size: 1.05rem; cursor: pointer; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vd-fonts button:hover { background: #F2F0EB; }
+.vd-fonts button.on { background: #E5F1F0; color: var(--teal-deep); box-shadow: inset 3px 0 0 var(--teal); }
+.vd-fontg { margin: 0.4rem 0.5rem 0.1rem; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: #9A948A; }
+.vd-anims { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-bottom: 0.6rem; }
+.vd-anims button { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 2px solid transparent; background: none; border-radius: 9px; padding: 0 0 3px; font: inherit; font-size: 0.66rem; cursor: pointer; color: var(--ink); }
+.vd-anims button.on { border-color: var(--teal); }
+.vd-anims canvas { width: 100%; aspect-ratio: 1; border-radius: 7px; display: block; }
+.vd-anims span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.vd-animtabs { margin-top: 0; }
+.vd-ta-outline { font-family: Anton, sans-serif; font-size: 1.4rem; letter-spacing: 0.02em; -webkit-text-stroke: 1.5px #111; color: #fff; background: #3A4A60; }
+.vd-ta-shadow { font-family: Pacifico, cursive; font-size: 1.2rem; text-shadow: 2px 3px 0 rgba(0,0,0,.5); }
