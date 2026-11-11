@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -4902,7 +4902,9 @@ def studio_video_page(request: Request, iid: int):
                 transitions=video2.TRANSITIONS, presets=[(k, v[0], v[1]) for k, v in video2.PRESETS.items()],
                 motions=video2.MOTIONS, anim_in=video2.ANIM_IN, anim_out=video2.ANIM_OUT, bg_modes=video2.BG_MODES,
                 fonts=video2.FONTS, bg_ok=bgremove.available(), stock_keys=stock.keys(),
-                ratios=[(k, l, w, h) for k, l, w, h in studio_video.SIZES])
+                ratios=[(k, l, w, h) for k, l, w, h in studio_video.SIZES],
+                effects=list(vfx.EFFECTS), fx_groups=list(vfx.GROUPS), fx_scopes=list(vfx.SCOPES), trans_fx=vfx.TRANS_FX,
+                sprites={k: list(v) for k, v in vfx.SPRITES.items()}, sprite_fx={k: list(v) for k, v in vfx.SPRITE_FX.items()})
 
 
 def can_edit_now(request):
@@ -4966,6 +4968,17 @@ async def studio_video_ratio(request: Request, iid: int):
     except studio_video.VideoError as e:
         return JSONResponse({"error": str(e)}, status_code=422)
     return {"ok": True, "project": p}
+
+
+@app.get("/studio/fx/{name}.png")
+def studio_fx_sprite(request: Request, name: str, w: int = 1080, h: int = 1920):
+    """The overlay pictures the snow, hearts, confetti… effects use (the same ones the MP4 gets)."""
+    from fastapi.responses import FileResponse
+    if not authed(request):
+        return Response(status_code=401)
+    if name not in vfx.SPRITES or not (16 <= w <= 4096 and 16 <= h <= 4096):
+        return Response(status_code=404)
+    return FileResponse(vfx.sprite_path(name, w, h), media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/studio/video-media")

@@ -36,7 +36,12 @@ TRANSITIONS = (("none", "None"), ("fade", "Crossfade"), ("fadeblack", "Through b
                ("dissolve", "Dissolve"), ("wipeleft", "Wipe left"), ("wiperight", "Wipe right"), ("wipeup", "Wipe up"),
                ("wipedown", "Wipe down"), ("slideleft", "Slide left"), ("slideright", "Slide right"),
                ("slideup", "Slide up"), ("slidedown", "Slide down"), ("circleopen", "Circle open"),
-               ("circleclose", "Circle close"), ("zoomin", "Zoom in"))
+               ("circleclose", "Circle close"), ("zoomin", "Zoom in"),
+               ("pixelize", "Pixelate"), ("hblur", "Blur"), ("radial", "Clock wipe"), ("fadegrays", "Through grey"),
+               ("horzopen", "Open across"), ("vertopen", "Open sideways"), ("squeezeh", "Squeeze"), ("diagtl", "Diagonal"),
+               ("hlslice", "Slices"),
+               ("glitchcut", "Color glitch"), ("shakecut", "Shake"), ("strobecut", "Strobe"), ("negcut", "Negative"),
+               ("flashcut", "White flash"), ("punch", "Zoom punch"))
 TRANS = dict(TRANSITIONS)
 PRESETS = {
     "none": ("Original", {}),
@@ -112,9 +117,9 @@ def _source(item_id, kinds):
 def migrate(p):
     """A version-1 project (clips in a row) as version 2."""
     if p.get("v") == 2 or "main" in p or "layers" in p:
-        return {**p, "v": 2, "main": p.get("main") or [], "layers": p.get("layers") or []}
+        return {**p, "v": 2, "main": p.get("main") or [], "layers": p.get("layers") or [], "effects": p.get("effects") or []}
     q = {k: p.get(k) for k in ("w", "h", "captions", "lowers", "outro", "music", "style")}
-    q.update(type="video", v=2, layers=[], main=[])
+    q.update(type="video", v=2, layers=[], main=[], effects=[])
     for c in p.get("clips") or []:
         m = dict(c)
         m["id"] = _id(None)
@@ -221,6 +226,10 @@ def clean(p, w, h):
     if end > MAX_TOTAL:
         raise V2Error(f"Keep it under {int(MAX_TOTAL // 60)} minutes (it's {end:.0f} seconds now).")
     out["layers"] = [L for L in out["layers"] if L["start"] < max(end, 0.1)]
+    from . import vfx
+    out["effects"] = vfx.clean(p.get("effects"), end)
+    for e in out["effects"]:
+        e["dur"] = round(min(e["dur"], max(0.2, end - e["start"])), 3)
     for L in out["layers"]:                       # nothing runs past the end of the main track
         room = max(0.1, end - L["start"])
         if layer_len(L) > room:
@@ -452,6 +461,8 @@ def join_main(pieces, segs, out, total_len):
     for k in range(1, len(pieces)):
         s = segs[k]
         typ = s["trans"] if s["d"] > 0 else "fade"
+        if typ in _trans_fx():                 # an effect transition: a crossfade, with the effect over the cut
+            typ = "fade"
         dur = s["d"] if s["d"] > 0 else EPS
         lab = f"v{k}"
         f.append(f"[{last}][{k}:v]xfade=transition={typ}:duration={dur:.4f}:offset={s['start']:.4f}[{lab}]")
@@ -472,6 +483,11 @@ def join_main(pieces, segs, out, total_len):
     args += ["-filter_complex", ";".join(f), "-map", f"[{last}]", "-map", "[a]", "-t", f"{total_len:.3f}",
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", out]
     run(args)
+
+
+def _trans_fx():
+    from . import vfx
+    return vfx.TRANS_FX
 
 
 def text_png(L, path):

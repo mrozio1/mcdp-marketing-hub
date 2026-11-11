@@ -256,3 +256,26 @@ def test_stock_video_through_the_browser(env, monkeypatch, tmp_path):
     # asking again gives the same library file, without downloading
     r2 = ed.post("/studio/stock/videos/777", json={"q": "fireplace", "pid": pid, "hit": raw})
     assert r2.status_code == 200 and r2.json()["id"] == iid
+
+
+def test_effects_track_and_effect_transitions_render(env):
+    v, studio, ids = env["v"], env["studio"], env["ids"]
+    iid = v.create_project(env["pid"], None, "story", "Effects", "Amber", [ids["clip"], ids["silent"]])
+    p = v.project(iid)
+    p["main"][1]["trans"] = {"type": "glitchcut", "dur": 0.6}
+    p["effects"] = [{"id": "a1", "type": "snow", "start": 0.2, "dur": 2, "k": 0.8, "scope": "all", "track": 1},
+                    {"id": "a2", "type": "vhs", "start": 1.0, "dur": 1.5, "k": 0.5, "scope": "main", "track": 2},
+                    {"id": "a3", "type": "shake", "start": 3.0, "dur": 99, "k": 0.5, "scope": "all", "track": 1},
+                    {"id": "zz", "type": "not-an-effect", "start": 0, "dur": 1}]
+    v.save_project(iid, p)
+    q = v.project(iid)
+    assert [e["type"] for e in q["effects"]] == ["snow", "vhs", "shake"]
+    end = v.total(q)
+    assert q["effects"][2]["start"] + q["effects"][2]["dur"] <= end + 0.01            # cut to the end of the video
+    v._render(iid, "Amber", {})
+    st = v.status(iid)
+    assert st["state"] == "done", st
+    it = studio.item(iid)
+    assert v.probe(studio.local_path(it))["duration"] == pytest.approx(end, abs=0.25)
+    from app import vfx
+    assert vfx.from_transitions(__import__("app.video2", fromlist=["layout"]).layout(q)["segs"])[0]["type"] == "glitch"

@@ -443,6 +443,13 @@ def _render(iid, by, texts=None):
             _note(iid, step=k + 1)
         joined = os.path.join(work, "main.mp4")
         video2.join_main(pieces, segs, joined, end)
+        from . import vfx
+        fx_main = [e for e in p.get("effects", []) if e["scope"] == "main"] + vfx.from_transitions(segs)
+        fx_all = [e for e in p.get("effects", []) if e["scope"] == "all"]
+        if fx_main:                                   # effects on the main track only, under the layers
+            joined_fx = os.path.join(work, "main_fx.mp4")
+            vfx.apply(joined, fx_main, joined_fx, W, H, end, run=video2.run)
+            joined = joined_fx
         _note(iid, step=len(segs) + 1)
         layer_src = {}
         for L in p["layers"]:
@@ -471,7 +478,12 @@ def _render(iid, by, texts=None):
             _, mpath = local(p["music"]["item"])
             music = {"path": mpath, "volume": p["music"]["volume"]}
         final = os.path.join(work, "final.mp4")
-        video2.overlay_stage(joined, p, layer_src, final, end, ass=ass, fontsdir=fontsdir, music=music)
+        if fx_all:                                    # effects over everything; captions stay clean on top
+            staged = os.path.join(work, "stage.mp4")
+            video2.overlay_stage(joined, p, layer_src, staged, end, music=music)
+            vfx.apply(staged, fx_all, final, W, H, end, ass=ass, fontsdir=fontsdir, run=video2.run)
+        else:
+            video2.overlay_stage(joined, p, layer_src, final, end, ass=ass, fontsdir=fontsdir, music=music)
         _note(iid, step=len(segs) + 2)
         thumb = os.path.join(work, "thumb.jpg")
         _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{min(1.0, end / 3):.2f}", "-i", final, "-frames:v", "1",

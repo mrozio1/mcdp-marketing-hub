@@ -1987,3 +1987,17 @@ button.vd-lab:hover { background: #F2F0EB; }
   .vd-sheeted .vd-stage { padding-bottom: 48dvh; }
 }
 .vd-sel.vd-small .vd-hd-e, .vd-sel.vd-small .vd-hd-w, .vd-sel.vd-small .vd-hd-n, .vd-sel.vd-small .vd-hd-s { display: none; }
+/* ---- video effects */
+.vd-fxlib { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.vd-fxlib button { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 2px solid transparent; background: none; border-radius: 9px; padding: 0 0 3px; font: inherit; font-size: 0.7rem; cursor: pointer; color: var(--ink); }
+.vd-fxlib button:hover canvas { outline: 2px solid var(--teal); }
+.vd-fxlib button.on { border-color: var(--teal); }
+.vd-fxlib canvas { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 7px; background: #2B3A4E; display: block; }
+.vd-fxlib span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.vd-fxhint { margin-top: 0; }
+.vd-b-fx { background: linear-gradient(90deg, #7B3FE4, #C04BD8); align-items: center; }
+.vd-row-fx { background: #F3EFFA; }
+@media (max-width: 760px) {
+  .vd-fxlib { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .vd-row-fx { background: transparent; }
+}
