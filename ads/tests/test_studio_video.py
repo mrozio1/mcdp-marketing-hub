@@ -104,7 +104,7 @@ def test_edit_rules(env):
     lay = v.video2.layout(p)
     # clip a: 2 s; photo b: 2 s overlapping by 1 s (half the shorter); outro 8 s with a 0.4 s fade
     assert [s_["start"] for s_ in lay["segs"]] == [0, 1.0, 2.6] and lay["end"] == 10.6
-    assert len(p["layers"]) == 1 and p["layers"][0]["font"] == "DejaVu Sans" and p["layers"][0]["anim"] == {"in": "pop", "out": "none"}
+    assert len(p["layers"]) == 1 and p["layers"][0]["font"] == "DejaVu Sans" and p["layers"][0]["anim"] == {"in": "pop", "out": "none", "loop": "none", "din": 0.35, "dout": 0.35}
     assert p["layers"][0]["dur"] == pytest.approx(9.6)                    # can't run past the end
     assert r.json()["total"] == pytest.approx(10.6)
     long = {"main": [{"item": ids["photo"], "out": 30}] * 7}
