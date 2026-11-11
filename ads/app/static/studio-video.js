@@ -125,6 +125,8 @@
     if (kind === "image") { el = new Image(); el.decoding = "async"; el.onload = () => requestDraw(); }
     else {
       el = document.createElement("video"); el.preload = "auto"; el.playsInline = true; el.muted = true;
+      el.setAttribute("playsinline", ""); el.setAttribute("webkit-playsinline", "");
+      el.addEventListener("error", () => { el.dataset.failed = "1"; });
       el.addEventListener("seeked", () => requestDraw()); el.addEventListener("loadeddata", () => requestDraw());
       el.style.display = "none"; document.body.appendChild(el);
     }
@@ -143,7 +145,7 @@
   // ================================================================ the preview canvas
   const cv = $("[data-cv]"), ctx = cv.getContext("2d");
   const screen = $("[data-screen]"), wrap = $("[data-screen-wrap]");
-  let K = 1, DPR = Math.min(2, window.devicePixelRatio || 1);
+  let K = 1, DPR = window.matchMedia("(max-width: 760px)").matches ? 1 : Math.min(2, window.devicePixelRatio || 1);
   const off = () => { const c = document.createElement("canvas"); return c; };
   const offA = off(), offB = off(), tmp = off(), tmp2 = off();
   function fit() {
@@ -157,7 +159,7 @@
     requestDraw(); placeSel();
   }
   window.addEventListener("resize", () => P && fit());
-  mq.addEventListener("change", () => { M = mq.matches; if (!P) return; closeSheets(); cv.width = 0; fit(); drawTimeline(); props(); followHead(true); });
+  mq.addEventListener("change", () => { M = mq.matches; DPR = M ? 1 : Math.min(2, window.devicePixelRatio || 1); if (!P) return; closeSheets(); cv.width = 0; fit(); drawTimeline(); props(); followHead(true); });
   if (window.ResizeObserver) new ResizeObserver(() => P && fit()).observe(wrap);
   const S = () => K * DPR;                 // design px -> canvas px
 
@@ -479,7 +481,7 @@
   function wanted() {
     const lay = layout(), want = [];
     lay.segs.forEach(s => {
-      if (s.kind !== "clip" || s.c.still || t < s.start - 0.5 || t >= s.end) return;
+      if (s.kind !== "clip" || s.c.still || t < s.start - 2 || t >= s.end) return;
       const local = s.c.in + Math.max(0, t - s.start) * s.c.speed;
       let vol = s.c.volume;
       const nx = lay.segs[lay.segs.indexOf(s) + 1];
@@ -489,7 +491,7 @@
       if (s.c.bg.cut) want.push({ key: "m:" + s.c.id, id: s.c.item, mask: true, local, rate: s.c.speed, vol: 0, on: t >= s.start });
     });
     P.layers.forEach(L => {
-      if (L.kind !== "video" || t < L.start - 0.5 || t >= L.start + layerLen(L)) return;
+      if (L.kind !== "video" || t < L.start - 2 || t >= L.start + layerLen(L)) return;
       const local = L.in + Math.max(0, t - L.start) * L.speed;
       want.push({ key: L.id, id: L.item, local, rate: L.speed, vol: L.volume, on: t >= L.start });
       if (L.cut) want.push({ key: "m:" + L.id, id: L.item, mask: true, local, rate: L.speed, vol: 0, on: t >= L.start });
@@ -502,10 +504,13 @@
     want.forEach(w => {
       const el = w.mask ? maskEl(w.key.slice(2), w.id) : itemEl(w.key, w.id);
       if (!el || el.tagName !== "VIDEO") return;
-      el.playbackRate = w.rate; el.muted = !(w.vol > 0) || w.mask; el.volume = clamp(w.vol, 0, 1);
-      const drift = Math.abs(el.currentTime - w.local);
-      if (playing && w.on) { if (drift > 0.3) el.currentTime = w.local; if (el.paused) el.play().catch(() => {}); }
-      else { if (!el.paused) el.pause(); if (drift > 0.04) el.currentTime = w.local; }
+      el.muted = !(w.vol > 0) || w.mask; el.volume = clamp(w.vol, 0, 1);
+      const gap = w.local - el.currentTime, drift = Math.abs(gap);
+      if (playing && w.on) {
+        if (drift > (M ? 0.75 : 0.45) && !el.seeking) { el.currentTime = w.local; el.playbackRate = w.rate; }
+        else el.playbackRate = drift > 0.05 ? w.rate * (1 + clamp(gap * 0.6, -0.12, 0.12)) : w.rate;
+        if (el.paused) el.play().catch(() => {});
+      } else { el.playbackRate = w.rate; if (!el.paused) el.pause(); if (drift > 0.04 && !el.seeking) el.currentTime = w.local; }
     });
     if (P.music && items[P.music.item]) {
       const msrc = items[P.music.item].src;
@@ -519,10 +524,22 @@
       } else if (!music.paused) music.pause();
     } else if (!music.paused) music.pause();
   }
-  let clock0 = 0, t0 = 0;
+  let clock0 = 0, t0 = 0, stallSince = 0;
+  const bufEl = document.createElement("div"); bufEl.className = "vd-buffer"; bufEl.hidden = true; bufEl.innerHTML = "<span></span>Loading…";
+  screen.appendChild(bufEl);
+  function stalled() {
+    return wanted().some(w => { if (!w.on) return false; const el = pool.get(w.key);
+      return el && el.tagName === "VIDEO" && (el.readyState < 3 || el.seeking) && el.dataset.failed !== "1"; });
+  }
   function loop() {
     if (!playing) return;
-    t = t0 + (performance.now() - clock0) / 1000;
+    const now = performance.now();
+    if (stalled()) {
+      if (!stallSince) stallSince = now;
+      if (now - stallSince > 250) { bufEl.hidden = false; if (!music.paused) music.pause(); }
+      if (now - stallSince < 8000) { t0 = t; clock0 = now; syncMedia(); requestAnimationFrame(loop); return; }
+    } else if (stallSince) { stallSince = 0; bufEl.hidden = true; t0 = t; clock0 = now; musicFresh = true; }
+    t = t0 + (now - clock0) / 1000;
     if (t >= total()) { t = total(); stop(); }
     syncMedia(); draw(); placeSel(); followHead();
     if (playing) requestAnimationFrame(loop);
@@ -535,7 +552,7 @@
     syncMedia(); requestAnimationFrame(loop);
   }
   function stop() {
-    playing = false; pool.forEach(el => { if (el.tagName === "VIDEO") el.pause(); }); music.pause();
+    playing = false; stallSince = 0; bufEl.hidden = true; pool.forEach(el => { if (el.tagName === "VIDEO") el.pause(); }); music.pause();
     $("[data-play]").innerHTML = ico("play", 18);
     syncMedia(); requestDraw();
   }
@@ -608,7 +625,8 @@
     if (!r.ok) throw new Error(info.error || "That file can't be used.");
     const lib = mediaIndex[id] || {};
     items[id] = { ...lib, id, title: info.title, kind: info.kind, duration: info.duration, w: info.w, h: info.h,
-                  src: lib.src || `/studio/media/${id}`, thumb: lib.thumb || `/studio/t/${id}` };
+                  src: lib.src || `/studio/media/${id}`, thumb: lib.thumb || `/studio/t/${id}`, proxy: lib.proxy };
+    if (info.kind === "video") watchProxies();
     return items[id];
   }
   async function addMain(id, at) {
@@ -817,12 +835,23 @@
   const tl = $("[data-timeline]"), rowsEl = $("[data-rows]"), inner = $("[data-tl-inner]"), scrollEl = $("[data-tl-scroll]"), labelsEl = $("[data-tl-labels]");
   let PPS = 60, OFF = 0;                       // OFF: on phones the timeline starts half a screen in, under the centre playhead
   const X = sec => OFF + sec * PPS;
-  const zoomIn = $("[data-tlzoom]");
-  const setZoom = v => { PPS = clamp(v, 15, 220); zoomIn.value = PPS; drawTimeline(); followHead(true); };
-  zoomIn.addEventListener("input", () => setZoom(+zoomIn.value));
+  // zoom: from the whole video on screen to single frames (800 px a second); the slider is logarithmic
+  const ZMIN = 4, ZMAX = 800, zoomIn = $("[data-tlzoom]");
+  zoomIn.min = 0; zoomIn.max = 1000; zoomIn.step = 1;
+  const toSlider = v => Math.round(1000 * Math.log(v / ZMIN) / Math.log(ZMAX / ZMIN)), fromSlider = v => ZMIN * Math.pow(ZMAX / ZMIN, v / 1000);
+  function setZoom(v, anchorX) {
+    v = clamp(v, ZMIN, ZMAX);
+    // keep one moment where it is on screen: the pointer (wheel/pinch) or the playhead
+    let ax = anchorX;
+    if (ax === undefined) { ax = X(t) - scrollEl.scrollLeft; if (ax < 0 || ax > scrollEl.clientWidth) ax = scrollEl.clientWidth / 2; }
+    const at = (scrollEl.scrollLeft + ax - OFF) / PPS;
+    PPS = v; zoomIn.value = toSlider(PPS); drawTimeline();
+    if (M) followHead(true); else scrollEl.scrollLeft = Math.max(0, X(at) - ax);
+  }
+  zoomIn.addEventListener("input", () => setZoom(fromSlider(+zoomIn.value)));
   const zb = (q, f) => { const b = $(q); if (b) b.addEventListener("click", f); };
-  zb("[data-zoom-in]", () => setZoom(PPS * 1.35)); zb("[data-zoom-out]", () => setZoom(PPS / 1.35));
-  zb("[data-zoom-fit]", () => setZoom((scrollEl.clientWidth - 30 - OFF * 2) / Math.max(5, total() + 1)));
+  zb("[data-zoom-in]", () => setZoom(PPS * 1.5)); zb("[data-zoom-out]", () => setZoom(PPS / 1.5));
+  zb("[data-zoom-fit]", () => { setZoom((scrollEl.clientWidth - 30 - OFF * 2) / Math.max(1, total() + 0.5)); if (!M) scrollEl.scrollLeft = 0; });
   // phones: the playhead stays in the middle and the timeline scrolls under it
   let scrollSet = -1;
   function followHead(force) {
@@ -830,28 +859,100 @@
     const want = Math.round(t * PPS);
     if (force || Math.abs(scrollEl.scrollLeft - want) > 0.5) { scrollSet = want; scrollEl.scrollLeft = want; }
   }
+  let pinching = false;
   scrollEl.addEventListener("scroll", () => {
-    if (!M) return;
+    if (!M || pinching) return;
     if (Math.abs(scrollEl.scrollLeft - scrollSet) <= 1) return;
     scrollSet = -1; if (playing) stop();
     seek(scrollEl.scrollLeft / PPS, true);
   }, { passive: true });
-  // pinch the timeline to zoom (phones and trackpads)
-  const tlPts = new Map(); let tlPinch = null;
-  scrollEl.addEventListener("pointerdown", e => { if (e.pointerType === "touch") tlPts.set(e.pointerId, e.clientX); });
-  scrollEl.addEventListener("pointermove", e => {
-    if (!tlPts.has(e.pointerId)) return; tlPts.set(e.pointerId, e.clientX);
-    if (tlPts.size === 2) { const [a, b] = [...tlPts.values()], d = Math.abs(a - b) || 1; if (!tlPinch) tlPinch = { d, pps: PPS }; else setZoom(tlPinch.pps * d / tlPinch.d); }
+  // phones: the timeline's scrolling is done here (with momentum), not by the browser, so a second finger
+  // turns it straight into a pinch. Browsers throttle touch events once they scroll by themselves.
+  let tlPinch = null, tsc = null, coast = 0;
+  const tDist = ts => Math.abs(ts[0].clientX - ts[1].clientX) || 1;
+  // the moves are heard on the element the finger landed on: zooming redraws the rows, and touch events keep
+  // going to that (now removed) element, so listeners further up would stop hearing them
+  const touchTargets = new Set();
+  function hearTouches(el) {
+    if (touchTargets.has(el)) return;
+    touchTargets.add(el);
+    el.addEventListener("touchmove", tlMove, { passive: false }); el.addEventListener("touchend", tlEnd); el.addEventListener("touchcancel", tlEnd);
+  }
+  function forgetTouches() {
+    touchTargets.forEach(el => { el.removeEventListener("touchmove", tlMove); el.removeEventListener("touchend", tlEnd); el.removeEventListener("touchcancel", tlEnd); });
+    touchTargets.clear();
+  }
+  tl.addEventListener("touchstart", e => {
+    if (!M) return;
+    cancelAnimationFrame(coast); hearTouches(e.target);
+    if (e.touches.length >= 2) {
+      const r = scrollEl.getBoundingClientRect();
+      tlPinch = { d: tDist(e.touches), pps: PPS, ax: (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left };
+      tsc = null; pinching = true; if (playing) stop(); return;
+    }
+    if (e.target.closest(".vd-block.on, .vd-handle")) { tsc = null; return; }      // dragging or trimming the selected block
+    const p0 = e.touches[0];
+    tsc = { x: p0.clientX, y: p0.clientY, sl: scrollEl.scrollLeft, st: tl.scrollTop, lx: p0.clientX, lt: performance.now(), v: 0 };
+  }, { passive: true });
+  let lastMove = null;
+  function tlMove(e) {
+    if (!M || lastMove === e) return; lastMove = e;
+    if (tlPinch && e.touches.length >= 2) { if (e.cancelable) e.preventDefault(); setZoom(tlPinch.pps * tDist(e.touches) / tlPinch.d, tlPinch.ax); return; }
+    if (!tsc || e.touches.length !== 1) return;
+    if (e.cancelable) e.preventDefault();
+    const p0 = e.touches[0], now = performance.now();
+    scrollEl.scrollLeft = tsc.sl - (p0.clientX - tsc.x);
+    tl.scrollTop = tsc.st - (p0.clientY - tsc.y);
+    const dt = Math.max(1, now - tsc.lt); tsc.v = 0.8 * ((tsc.lx - p0.clientX) / dt) + 0.2 * tsc.v; tsc.lx = p0.clientX; tsc.lt = now;
+  }
+  const tlEnd = e => {
+    if (!e.touches.length) forgetTouches();
+    if (tlPinch && e.touches.length < 2) { tlPinch = null; setTimeout(() => { pinching = false; followHead(true); }, 60); return; }
+    if (tsc && !e.touches.length) {
+      let v = tsc.v * 16; tsc = null;                      // keep gliding, slowing down, like a native scroll
+      const glide = () => { if (Math.abs(v) < 0.4) return; scrollEl.scrollLeft += v; v *= 0.94; coast = requestAnimationFrame(glide); };
+      if (Math.abs(v) > 2) coast = requestAnimationFrame(glide);
+    }
+  };
+  // Safari's own page zoom would fight the pinch
+  ["gesturestart", "gesturechange"].forEach(ev => tl.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+  // trackpad pinch (it arrives as Ctrl + wheel) and Ctrl/Cmd + mouse wheel zoom around the pointer; Alt + wheel too
+  scrollEl.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey || e.altKey)) return;
+    e.preventDefault();
+    const r = scrollEl.getBoundingClientRect();
+    setZoom(PPS * Math.exp(-clamp(e.deltaY, -60, 60) * 0.012), e.clientX - r.left);
+  }, { passive: false });
+  // keys: + and - zoom, 0 fits
+  document.addEventListener("keydown", e => {
+    if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || e.ctrlKey || e.metaKey) return;
+    if (e.key === "=" || e.key === "+") { e.preventDefault(); setZoom(PPS * 1.5); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(PPS / 1.5); }
+    else if (e.key === "0") { e.preventDefault(); $("[data-zoom-fit]") && $("[data-zoom-fit]").click(); }
   });
-  const tlUp = e => { tlPts.delete(e.pointerId); if (tlPts.size < 2) tlPinch = null; };
-  scrollEl.addEventListener("pointerup", tlUp); scrollEl.addEventListener("pointercancel", tlUp);
-  scrollEl.addEventListener("wheel", e => { if (e.ctrlKey) { e.preventDefault(); setZoom(PPS * (e.deltaY < 0 ? 1.12 : 1 / 1.12)); } }, { passive: false });
+  // while dragging near either edge of the timeline, it scrolls along (for long trims and moves)
+  let dragAuto = null;
+  function autoScroll(ev, mv) {
+    dragAuto = dragAuto || { raf: 0 };
+    dragAuto.ev = ev; dragAuto.mv = mv;
+    if (dragAuto.raf) return;
+    const tick = () => {
+      if (!dragAuto) return;
+      const r = scrollEl.getBoundingClientRect(), x = dragAuto.ev.clientX, edge = M ? 48 : 36;
+      const v = x < r.left + edge ? -Math.ceil((r.left + edge - x) / 3) : x > r.right - edge ? Math.ceil((x - (r.right - edge)) / 3) : 0;
+      if (v) { const before = scrollEl.scrollLeft; scrollEl.scrollLeft += v; if (scrollEl.scrollLeft !== before) dragAuto.mv(dragAuto.ev, true); }
+      dragAuto.raf = requestAnimationFrame(tick);
+    };
+    dragAuto.raf = requestAnimationFrame(tick);
+  }
+  function endAuto() { if (dragAuto) cancelAnimationFrame(dragAuto.raf); dragAuto = null; }
   const FXNAME = Object.fromEntries(C.effects.map(([k, l]) => [k, l]));
   function rowsSpec() {
     const maxT = Math.max(0, ...P.layers.map(L => L.track)), maxF = Math.max(1, ...(P.effects || []).map(e => e.track));
     const rows = [];
-    for (let tr = maxF; tr >= 1; tr--) rows.push({ kind: "fx", fxtrack: tr, label: maxF > 1 ? `Effects ${tr}` : "Effects", icon: "effects" });
-    rows.push({ kind: "new", track: maxT + 1, label: "New layer", icon: "plus" });
+    // phones skip the empty helper rows (nothing is dragged in from a side panel there), so the main track shows
+    if (!M || (P.effects || []).length) for (let tr = maxF; tr >= 1; tr--) rows.push({ kind: "fx", fxtrack: tr, label: maxF > 1 ? `Effects ${tr}` : "Effects", icon: "effects" });
+    if (!M) rows.push({ kind: "new", track: maxT + 1, label: "New layer", icon: "plus" });
     for (let tr = maxT; tr >= 1; tr--) {
       const kinds = new Set(P.layers.filter(L => L.track === tr).map(L => L.kind));
       rows.push({ kind: "layer", track: tr, label: `Layer ${tr}`, icon: kinds.size === 1 && kinds.has("text") ? "text" : "stock" });
@@ -977,12 +1078,12 @@
   });
   function dragMain(e, b, id, edge) {
     e.preventDefault();
-    const c = P.main.find(x => x.id === id), o = { ...c }, x0 = e.clientX, info = items[c.item] || {};
+    const c = P.main.find(x => x.id === id), o = { ...c }, x0 = e.clientX, sl0 = scrollEl.scrollLeft, info = items[c.item] || {};
     sel = { kind: "main", id }; props();
     let moved = false, ghost = null, insertAt = null;
     const seg0 = layout().segs.find(s => s.c.id === id);
     const mv = ev => {
-      const d = (ev.clientX - x0) / PPS; moved = moved || Math.abs(ev.clientX - x0) > 3;
+      const d = (ev.clientX - x0 + scrollEl.scrollLeft - sl0) / PPS; autoScroll(ev, mv); moved = moved || Math.abs(ev.clientX - x0) > 3;
       if (!moved) return;
       if (edge === "l") { if (c.still) c.out = clamp(o.out - d, 0.5, 30); else c.in = clamp(o.in + d * c.speed, 0, o.out - 0.3); }
       else if (edge === "r") { if (c.still) c.out = clamp(o.out + d, 0.5, 30); else c.out = clamp(o.out + d * c.speed, o.in + 0.3, info.duration || 9999); }
@@ -992,26 +1093,26 @@
         if (!ghost) { ghost = document.createElement("div"); ghost.className = "vd-ghost"; b.parentElement.appendChild(ghost); b.classList.add("vd-dragging"); }
         const others = segs.filter(s => s.c.id !== id); const gx = insertAt < others.length ? others[insertAt].start : (others.length ? others[others.length - 1].end : 0);
         ghost.style.left = `${X(gx) - 2}px`;
-        b.style.transform = `translateX(${ev.clientX - x0}px)`;
+        b.style.transform = `translateX(${ev.clientX - x0 + scrollEl.scrollLeft - sl0}px)`;
         return;
       }
       drawTimeline(); requestDraw();
-      seek(edge === "l" ? seg0.start : Math.min(seg0.start + clipLen(c) - 0.04, total()));
+      seek(edge === "l" ? seg0.start : Math.min(seg0.start + clipLen(c) - 0.04, total()), M);
     };
     const up = () => {
-      window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); endAuto();
       if (ghost && insertAt !== null) { const i = P.main.indexOf(c); P.main.splice(i, 1); P.main.splice(insertAt, 0, c); }
-      if (moved) commit(); else { seek(seg0.start + 0.01); drawTimeline(); placeSel(); }
+      if (moved) commit(); else { if (!M) seek(seg0.start + 0.01); drawTimeline(); placeSel(); }
     };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
   }
   function dragLayer(e, id, edge) {
     e.preventDefault();
-    const L = P.layers.find(x => x.id === id), o = { ...L }, x0 = e.clientX, info = items[L.item] || {};
+    const L = P.layers.find(x => x.id === id), o = { ...L }, x0 = e.clientX, sl0 = scrollEl.scrollLeft, info = items[L.item] || {};
     sel = { kind: "layer", id }; props();
     let moved = false;
     const mv = ev => {
-      const d = (ev.clientX - x0) / PPS; moved = moved || Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - e.clientY) > 3;
+      const d = (ev.clientX - x0 + scrollEl.scrollLeft - sl0) / PPS; autoScroll(ev, mv); moved = moved || Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - e.clientY) > 3;
       if (!moved) return;
       if (edge === "l") {
         const ns = snapT(clamp(o.start + d, 0, o.start + layerLen(o) - 0.3), id), dd = ns - o.start;
@@ -1028,17 +1129,17 @@
       }
       drawTimeline(); requestDraw();
     };
-    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up);
-      compactTracks(); if (moved) commit(); else { if (t < L.start || t >= L.start + layerLen(L)) seek(L.start + 0.01); drawTimeline(); placeSel(); } };
+    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); endAuto();
+      compactTracks(); if (moved) commit(); else { if (!M && (t < L.start || t >= L.start + layerLen(L))) seek(L.start + 0.01); drawTimeline(); placeSel(); } };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
   }
   function dragFx(e, id, edge) {
     e.preventDefault();
-    const F = P.effects.find(x => x.id === id), o = { ...F }, x0 = e.clientX;
+    const F = P.effects.find(x => x.id === id), o = { ...F }, x0 = e.clientX, sl0 = scrollEl.scrollLeft;
     sel = { kind: "fx", id }; props();
     let moved = false;
     const mv = ev => {
-      const d = (ev.clientX - x0) / PPS; moved = moved || Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - e.clientY) > 3;
+      const d = (ev.clientX - x0 + scrollEl.scrollLeft - sl0) / PPS; autoScroll(ev, mv); moved = moved || Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - e.clientY) > 3;
       if (!moved) return;
       const end = total();
       if (edge === "l") { const ns = snapT(clamp(o.start + d, 0, o.start + o.dur - 0.2), id); F.dur = +(o.dur - (ns - o.start)).toFixed(3); F.start = +ns.toFixed(3); }
@@ -1052,8 +1153,8 @@
       }
       drawTimeline(); requestDraw();
     };
-    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up);
-      compactFx(); if (moved) commit(); else { if (t < F.start || t >= F.start + F.dur) seek(F.start + 0.01); drawTimeline(); placeSel(); } };
+    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); endAuto();
+      compactFx(); if (moved) commit(); else { if (!M && (t < F.start || t >= F.start + F.dur)) seek(F.start + 0.01); drawTimeline(); placeSel(); } };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
   }
   function compactFx() {
@@ -1086,6 +1187,7 @@
   }
   // the playhead: drag it along the ruler
   $("[data-ruler]").addEventListener("pointerdown", e => {
+    if (M && e.pointerType === "touch") return;          // phones: the ruler scrolls like the rest of the timeline
     stop(); seek(timeAt(e));
     const mv = ev => seek(timeAt(ev)), up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
@@ -1744,6 +1846,25 @@
     renderState(j); setTimeout(pollRender, 1500);
   });
 
+  // ================================================================ light preview copies (made on the NAS)
+  let proxyT;
+  function watchProxies() {
+    clearTimeout(proxyT);
+    const waiting = Object.values(items).filter(it => it.kind === "video" && it.proxy !== "ready" && it.proxy !== "error");
+    if (!waiting.length) { say(""); return; }
+    say(`Preparing smooth preview (${waiting.length} video${waiting.length > 1 ? "s" : ""})…`);
+    proxyT = setTimeout(async () => {
+      try {
+        const st = await (await fetch(`/studio/proxy?ids=${waiting.map(w => w.id).join(",")}`)).json();
+        let changed = false;
+        waiting.forEach(it => { const s_ = st[it.id]; if (s_ === "ready") { it.proxy = "ready"; it.src = `/studio/media/${it.id}?p=${Date.now() % 100000}`; changed = true; }
+          else if (s_ === "error") it.proxy = "error"; else if (s_) it.proxy = s_; });
+        if (changed) { syncMedia(); requestDraw(); }
+      } catch (e) {}
+      watchProxies();
+    }, 4000);
+  }
+
   // ================================================================ start
   (async () => {
     const r = await fetch(`/studio/video/${C.iid}/project`); const j = await r.json();
@@ -1753,9 +1874,10 @@
     hist = [JSON.stringify(P)]; hi = 0;
     loadOutro(); fit(); brandPanel(); musicNow(); drawTimeline(); props(); seek(0);
     Object.values(items).forEach(it => { if (it.mask_state === "running") pollBg(it.id); });
+    watchProxies();
     loadMedia();
     if (C.render && C.render.state === "running") pollRender(); else renderState(C.render || {});
-    PPS = M ? 45 : Math.max(15, Math.min(220, (scrollEl.clientWidth - 40) / Math.max(10, total() + 2))); zoomIn.value = PPS; drawTimeline();
+    PPS = M ? 45 : Math.max(15, Math.min(220, (scrollEl.clientWidth - 40) / Math.max(10, total() + 2))); zoomIn.value = toSlider(PPS); drawTimeline();
     openTab(M ? "media" : "media"); if (M) closeSheets(); followHead(true);
     say("");
   })();

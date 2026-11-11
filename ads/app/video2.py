@@ -355,16 +355,38 @@ def run(args, timeout=3600):
     return p
 
 
+def rotation(stream):
+    """A phone video's turn (degrees) from its display matrix or old-style tag; ffmpeg applies it when decoding."""
+    for sd in stream.get("side_data_list") or []:
+        if "rotation" in sd:
+            try:
+                return int(round(float(sd["rotation"]))) % 360
+            except (TypeError, ValueError):
+                pass
+    try:
+        return int((stream.get("tags") or {}).get("rotate") or 0) % 360
+    except ValueError:
+        return 0
+
+
+def shown_size(stream):
+    """Width and height as the video plays (a sideways-recorded phone video is tall)."""
+    w, h = int(stream.get("width") or 0), int(stream.get("height") or 0)
+    return (h, w) if rotation(stream) in (90, 270) else (w, h)
+
+
 def probe_dims(path):
-    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-                        "-show_entries", "format=duration", "-show_entries", "stream=codec_type", "-of", "json", path],
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                        "stream=width,height,codec_type:stream_side_data=rotation:stream_tags=rotate",
+                        "-show_entries", "format=duration", "-of", "json", path],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
     try:
         j = json.loads(p.stdout or b"{}")
         s = (j.get("streams") or [{}])[0]
         a = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", path],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-        return int(s.get("width") or 0), int(s.get("height") or 0), bool(a.stdout.strip())
+        w, h = shown_size(s)
+        return w, h, bool(a.stdout.strip())
     except (ValueError, IndexError):
         return 0, 0, False
 

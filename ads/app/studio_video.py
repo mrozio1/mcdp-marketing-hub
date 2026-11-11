@@ -65,7 +65,8 @@ def _run(args, timeout=1800):
 # ------------------------------------------------------------------ files
 def probe(path):
     _need_ffmpeg()
-    p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height",
+    p = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                        "format=duration:stream=codec_type,width,height:stream_side_data=rotation:stream_tags=rotate",
                         "-of", "json", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
     try:
         j = json.loads(p.stdout or b"{}")
@@ -77,7 +78,8 @@ def probe(path):
         dur = float((j.get("format") or {}).get("duration") or 0)
     except ValueError:
         dur = 0
-    return {"duration": dur, "w": v.get("width"), "h": v.get("height"),
+    w, h = video2.shown_size(v) if v else (None, None)
+    return {"duration": dur, "w": w, "h": h,
             "audio": any(s.get("codec_type") == "audio" for s in streams)}
 
 
@@ -108,7 +110,7 @@ def media_info(iid):
     if cached:
         try:
             got = json.loads(cached)
-            if got.get("v") == it.get("updated_at"):
+            if got.get("v") == f"2:{it.get('updated_at')}":
                 return got["info"]
         except ValueError:
             pass
@@ -123,7 +125,7 @@ def media_info(iid):
     with db.conn() as c:
         c.execute("UPDATE studio_items SET duration=COALESCE(duration, ?), width=COALESCE(width, ?), height=COALESCE(height, ?) "
                   "WHERE id=?", (info["duration"] or None, pr["w"], pr["h"], iid))
-    db.set_setting(info_key, json.dumps({"v": it.get("updated_at"), "info": info}))
+    db.set_setting(info_key, json.dumps({"v": f"2:{it.get('updated_at')}", "info": info}))
     return info
 
 

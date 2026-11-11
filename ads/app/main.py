@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx
+from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
@@ -4924,6 +4924,8 @@ def studio_video_project(request: Request, iid: int):
     ids |= {c["bg"]["item"] for c in p["main"] if (c.get("bg") or {}).get("item")}
     if p.get("music"):
         ids.add(p["music"]["item"])
+    for i in ids:                                  # start the light preview copies for this project's videos
+        proxy.ensure(i)
     return JSONResponse({"project": p, "items": {i: _media_row(studio.item(i)) for i in ids if studio.item(i)}},
                         headers={"Cache-Control": "no-store"})
 
@@ -4937,6 +4939,7 @@ def _media_row(it):
         bs = bgremove.status(it["id"])
         row["mask"] = f"/studio/mask/{it['id']}" if bs.get("state") == "ready" else None
         row["mask_state"] = bs.get("state")
+        row["proxy"] = proxy.state(it)
     return row
 
 
@@ -5001,7 +5004,10 @@ async def studio_video_info(request: Request, item_id: int):
     if not authed(request):
         return JSONResponse({}, status_code=401)
     try:
-        return await asyncio.to_thread(studio_video.media_info, item_id)
+        info = await asyncio.to_thread(studio_video.media_info, item_id)
+        if info.get("kind") == "video":
+            proxy.ensure(item_id)
+        return info
     except studio_video.VideoError as e:
         return JSONResponse({"error": str(e)}, status_code=422)
 
@@ -5068,6 +5074,17 @@ async def studio_media_stream(request: Request, iid: int):
     it = studio.item(iid)
     if not it:
         return Response(status_code=404)
+    # the editor plays light copies (proxies): small, quick to seek, no trip to SharePoint
+    if it["kind"] == "video" and not request.query_params.get("full"):
+        pp = proxy.path(it)
+        if pp:
+            return FileResponse(pp, media_type="video/mp4", headers={"Cache-Control": "private, max-age=86400"})
+        proxy.ensure(iid)
+    if it["kind"] in ("image", "design"):
+        ip = await asyncio.to_thread(proxy.image, it)
+        if ip:
+            return FileResponse(ip, media_type="image/png" if ip.endswith(".png") else "image/jpeg",
+                                headers={"Cache-Control": "private, max-age=86400"})
     p = studio.local_path(it)
     if p:
         return FileResponse(p, media_type=it["mime"] or None, headers={"Cache-Control": "private, max-age=3600"})
@@ -5100,6 +5117,18 @@ async def studio_media_stream(request: Request, iid: int):
     keep.setdefault("Accept-Ranges", "bytes")
     return StreamingResponse(body(), status_code=upstream.status, media_type=it["mime"] or "application/octet-stream",
                              headers={**keep, "Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/studio/proxy")
+def studio_proxy_states(request: Request, ids: str = ""):
+    """Which of these videos have their light preview copy ready."""
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    out = {}
+    for x in ids.split(",")[:60]:
+        if x.strip().isdigit():
+            out[x.strip()] = proxy.state(studio.item(int(x)))
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/studio/mask/{item_id}")

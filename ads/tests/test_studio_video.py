@@ -279,3 +279,45 @@ def test_effects_track_and_effect_transitions_render(env):
     assert v.probe(studio.local_path(it))["duration"] == pytest.approx(end, abs=0.25)
     from app import vfx
     assert vfx.from_transitions(__import__("app.video2", fromlist=["layout"]).layout(q)["segs"])[0]["type"] == "glitch"
+
+
+def test_light_preview_copies(env, tmp_path):
+    from app import proxy
+    v, studio, ed, pid = env["v"], env["studio"], env["ed"], env["pid"]
+    # a phone video: 1920x1080 frames, recorded sideways (rotation tag), so it plays tall
+    raw = str(tmp_path / "phone.mp4")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=60:duration=2", "-f", "lavfi",
+                    "-i", "sine=duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                    "-metadata:s:v:0", "rotate=90", raw], check=True)
+    iid = studio.add_file(raw, "phone.mp4", pid, None, by="Amber", mime="video/mp4")
+    it = studio.item(iid)
+    assert proxy.state(it) is None
+    out = proxy.make(iid)
+    assert out and proxy.state(studio.item(iid)) == "ready"
+    pr = v.probe(out)
+    assert max(pr["w"], pr["h"]) <= 960 and pr["audio"]
+    assert pr["duration"] == pytest.approx(2, abs=0.15)
+    r = ed.get(f"/studio/media/{iid}")
+    assert r.status_code == 200 and len(r.content) == os.path.getsize(out)          # the editor gets the light copy
+    assert ed.get(f"/studio/proxy?ids={iid}").json()[str(iid)] == "ready"
+    full = ed.get(f"/studio/media/{iid}?full=1")
+    assert full.status_code == 200 and len(full.content) != len(r.content)           # the original is still there
+    # big photos get a smaller copy too
+    from PIL import Image
+    big = str(tmp_path / "big.jpg"); Image.new("RGB", (4000, 3000), (10, 120, 200)).save(big)
+    pic = studio.add_file(big, "big.jpg", pid, None, by="Amber", mime="image/jpeg", width=4000, height=3000)
+    im = Image.open(io.BytesIO(ed.get(f"/studio/media/{pic}").content))
+    assert max(im.size) == 1920
+
+
+def test_sideways_phone_video_renders_tall(env, tmp_path):
+    v, studio, pid = env["v"], env["studio"], env["pid"]
+    flat, rot = str(tmp_path / "flat.mp4"), str(tmp_path / "rot.mp4")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30:duration=2", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", flat], check=True)
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-display_rotation:v:0", "90", "-i", flat, "-c", "copy", rot], check=True)
+    assert v.probe(rot)["w"] == 360 and v.probe(rot)["h"] == 640
+    iid_src = studio.add_file(rot, "rot.mp4", pid, None, by="Amber", mime="video/mp4")
+    iid = v.create_project(pid, None, "story", "Sideways", "Amber", [iid_src])
+    v._render(iid, "Amber", {})
+    assert v.status(iid)["state"] == "done", v.status(iid)

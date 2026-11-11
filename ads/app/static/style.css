@@ -1947,7 +1947,8 @@ button.vd-lab:hover { background: #F2F0EB; }
   .vd-lab-main { height: 54px; color: #fff; }
   .vd-ruler { color: #8A8A8A; border-color: #2A2A2A; }
   .vd-ruler span { border-color: #333; }
-  .vd-tl-scroll { overflow-x: auto; scrollbar-width: none; touch-action: pan-x pan-y; }
+  .vd-tl-scroll { overflow-x: auto; scrollbar-width: none; touch-action: none; }
+  .vd-timeline { touch-action: none; overscroll-behavior: contain; }
   .vd-tl-scroll::-webkit-scrollbar { display: none; }
   .vd-row { height: 34px; background: transparent; }
   .vd-row-main { height: 54px; }
@@ -2001,3 +2002,16 @@ button.vd-lab:hover { background: #F2F0EB; }
   .vd-fxlib { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .vd-row-fx { background: transparent; }
 }
+/* ---- buffering and trimming */
+.vd-buffer { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 7; display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.8rem;
+             border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: 0.8rem; pointer-events: none; }
+.vd-buffer span { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: vdspin .8s linear infinite; }
+.vd-buffer[hidden] { display: none; }
+@keyframes vdspin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) {
+  .vd-handle { width: 22px; }
+  .vd-hl::after, .vd-hr::after { left: 10px; }
+}
+.vd-block .vd-handle { position: absolute; top: 0; bottom: 0; padding: 0; z-index: 2; white-space: normal; overflow: visible; text-shadow: none; }
+.vd-block .vd-hl { left: 0; }
+.vd-block .vd-hr { right: 0; left: auto; }
