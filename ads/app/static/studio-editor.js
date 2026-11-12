@@ -177,9 +177,15 @@
   function frameOf(f) {
     if (f.frame) return f.frame;
     if (f.type === "circle") return { shape: "circle", x: f.left, y: f.top, w: f.radius * 2 * f.scaleX, h: f.radius * 2 * f.scaleY, rx: 0 };
+    if (f.type === "path") return { shape: "path", path: f.path, x: f.left, y: f.top, w: f.getScaledWidth(), h: f.getScaledHeight(), rx: 0 };
     return { shape: "rect", x: f.left, y: f.top, w: f.getScaledWidth(), h: f.getScaledHeight(), rx: (f.rx || 0) * f.scaleX };
   }
   function clipFor(fr) {
+    if (fr.shape === "path") {          // shaped frames (arch, blob, heart…): the outline stretched to the frame's box
+      const p = new fabric.Path(fr.path, { strokeWidth: 0, absolutePositioned: true });
+      p.set({ scaleX: fr.w / (p.width || 1), scaleY: fr.h / (p.height || 1), left: fr.x, top: fr.y });
+      return p;
+    }
     return fr.shape === "circle"
       ? new fabric.Ellipse({ left: fr.x, top: fr.y, rx: fr.w / 2, ry: fr.h / 2, absolutePositioned: true })
       : new fabric.Rect({ left: fr.x, top: fr.y, width: fr.w, height: fr.h, rx: fr.rx, ry: fr.rx, absolutePositioned: true });
@@ -359,7 +365,8 @@
   async function drawPreviews() {          // (re)draw the previews, e.g. after the brand fonts change
     drawGen++;
     await previewLogo();
-    await Promise.all([fonts.heading, fonts.body].map(f => fontReady(f, 700).catch(() => {})));
+    await Promise.all([fonts.heading, fonts.body, ...LIB.ACCENT_FONTS].map(f => fontReady(f, 700).catch(() => {})));
+    await Promise.all([fonts.body].map(f => fontReady(f, 400).catch(() => {})));
     drawVisible();
   }
   showTemplates();
