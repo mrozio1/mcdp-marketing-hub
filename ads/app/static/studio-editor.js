@@ -199,61 +199,27 @@
 
   // ---------------------------------------------------------------- built-in templates
   const LOGO = () => (C.logo ? `/brand-images/${C.logo}?full=1` : null);
-  const T = {
-    blank: { name: "Blank", build: () => ({ bg: "#FFFFFF", objs: [] }) },
-    photo: { name: "Photo and headline", build: () => {
-      const ph = frame({ left: 0, top: 0, width: W, height: H * 0.58, strokeWidth: 0, strokeDashArray: null });
-      return { bg: "#FFFFFF", objs: [ph,
-        textbox("Grateful for every smile", { ...textDefaults("heading"), left: W * 0.08, top: H * 0.63, width: W * 0.84, fill: P }),
-        textbox("Happy Thanksgiving from all of us.", { ...textDefaults("body"), left: W * 0.08, top: H * 0.63 + U * 22, width: W * 0.7 }),
-      ], logo: { x: 0.92, y: 0.94, size: 0.16, anchor: "br" } };
-    } },
-    bold: { name: "Bold statement", build: () => ({ bg: P, objs: [
-      textbox("Your smile, our favourite thing", { ...textDefaults("heading"), fontSize: U * 11, left: W * 0.1, top: H * 0.3, width: W * 0.8, fill: "#FFFFFF", textAlign: "center" }),
-      rect({ left: W * 0.42, top: H * 0.3 - U * 6, width: W * 0.16, height: U * 1, fill: A, name: "Accent line" }),
-      textbox(C.brand, { ...textDefaults("subhead"), left: W * 0.1, top: H * 0.84, width: W * 0.8, fill: "#FFFFFF", textAlign: "center", name: "Practice name" }),
-    ] }) },
-    offer: { name: "Offer", build: () => {
-      const [bg, t, padX, padY] = button("Book a free consult");
-      bg.set({ left: W * 0.08, top: H * 0.74 }); t.set({ left: W * 0.08 + padX, top: H * 0.74 + padY });
-      return { bg: "#FBF6EE", objs: [
-        new fabric.Circle({ left: W * 0.58, top: -W * 0.12, radius: W * 0.32, fill: A, name: "Circle", opacity: 0.9 }),
-        textbox("Free consults all November", { ...textDefaults("heading"), fontSize: U * 10, left: W * 0.08, top: H * 0.3, width: W * 0.78, fill: P }),
-        textbox("Meet the doctor, get a plan and see your options. No pressure.", { ...textDefaults("body"), left: W * 0.08, top: H * 0.3 + U * 26, width: W * 0.7 }),
-        bg, t,
-      ], logo: { x: 0.08, y: 0.06, size: 0.18, anchor: "tl" } };
-    } },
-    notice: { name: "Hours or closure", build: () => ({ bg: "#FFFFFF", objs: [
-      rect({ left: 0, top: 0, width: W, height: H * 0.3, fill: P, name: "Header band" }),
-      textbox("Holiday hours", { ...textDefaults("heading"), left: W * 0.08, top: H * 0.1, width: W * 0.84, fill: "#FFFFFF" }),
-      textbox("Thursday, Nov 26: Closed\nFriday, Nov 27: Closed\nMonday, Nov 30: Open 8 to 5", { ...textDefaults("subhead"), fontWeight: 400, lineHeight: 1.6, left: W * 0.08, top: H * 0.38, width: W * 0.84 }),
-      textbox("Thank you for being part of our family.", { ...textDefaults("body"), left: W * 0.08, top: H * 0.78, width: W * 0.6, fill: "#5B5852" }),
-    ], logo: { x: 0.92, y: 0.94, size: 0.16, anchor: "br" } }) },
-    team: { name: "Meet the team", build: () => ({ bg: "#F4F1EA", objs: [
-      circleFrame({ left: W * 0.5 - Math.min(W, H) * 0.22, top: H * 0.08, radius: Math.min(W, H) * 0.22 }),
-      textbox("Meet Dr. Jordan", { ...textDefaults("heading"), fontSize: U * 8, left: W * 0.08, top: H * 0.08 + Math.min(W, H) * 0.47, width: W * 0.84, fill: P, textAlign: "center" }),
-      textbox("Orthodontist", { ...textDefaults("subhead"), left: W * 0.08, top: H * 0.08 + Math.min(W, H) * 0.47 + U * 11, width: W * 0.84, fill: A, textAlign: "center" }),
-      textbox("Loves hiking with her two kids and has never met a smoothie she didn't like.", { ...textDefaults("body"), left: W * 0.14, top: H * 0.08 + Math.min(W, H) * 0.47 + U * 19, width: W * 0.72, textAlign: "center" }),
-    ] }) },
-    tip: { name: "Tip of the week", build: () => ({ bg: "#FFFFFF", objs: [
-      rect({ left: U * 4, top: U * 4, width: W - U * 8, height: H - U * 8, fill: "transparent", stroke: P, strokeWidth: U * 1, name: "Border" }),
-      textbox("TIP", { ...textDefaults("subhead"), charSpacing: 400, left: W * 0.12, top: H * 0.16, width: W * 0.5, fill: A, name: "Label" }),
-      textbox("Brush for two full minutes, twice a day", { ...textDefaults("heading"), left: W * 0.12, top: H * 0.26, width: W * 0.76, fill: P }),
-      textbox("Tip: play a song you like. Most are about three minutes, so stop at the second chorus.", { ...textDefaults("body"), left: W * 0.12, top: H * 0.62, width: W * 0.7 }),
-    ], logo: { x: 0.88, y: 0.9, size: 0.14, anchor: "br" } }) },
-    event: { name: "Event", build: () => {
-      const [bg, t, padX, padY] = button("Save your spot");
-      bg.set({ left: W * 0.08, top: H * 0.8 }); t.set({ left: W * 0.08 + padX, top: H * 0.8 + padY });
-      return { bg: "#FFFFFF", objs: [
-        rect({ left: W * 0.08, top: H * 0.08, width: U * 22, height: U * 24, fill: A, rx: U * 2, ry: U * 2, name: "Date block" }),
-        textbox("DEC", { ...textDefaults("subhead"), left: W * 0.08, top: H * 0.08 + U * 3, width: U * 22, textAlign: "center", fill: "#FFFFFF", name: "Month" }),
-        textbox("12", { ...textDefaults("heading"), fontSize: U * 10, left: W * 0.08, top: H * 0.08 + U * 9, width: U * 22, textAlign: "center", fill: "#FFFFFF", name: "Day" }),
-        textbox("Holiday open house", { ...textDefaults("heading"), left: W * 0.08, top: H * 0.42, width: W * 0.84, fill: P }),
-        textbox("Hot cocoa, photos with Santa and a raffle. 4 to 7 pm at the Traverse City office.", { ...textDefaults("body"), left: W * 0.08, top: H * 0.42 + U * 22, width: W * 0.76 }),
-        bg, t,
-      ] };
-    } },
-  };
+  const LIB = window.MCDPTemplates({ W, H, U, P, A, C, textDefaults, textbox, rect, frame, circleFrame, button, fabric });
+  const T = LIB.T;
+  // Layouts are drawn for typical words in the brand's fonts; a wider font (or longer words) can make a heading wrap
+  // onto more lines than planned. So once the fonts are in, any text that runs into the text below it, or off the
+  // page, is made a little smaller until it fits.
+  function settle(objs) {
+    const tx = objs.filter(o => o.type === "textbox" && !o.keep);
+    tx.forEach(o => o.initDimensions());
+    const over = (a, b) => a.left < b.left + b.width && b.left < a.left + a.width;
+    for (let pass = 0; pass < 3; pass++) {
+      tx.forEach(a => {
+        const min = a.fontSize * 0.55;
+        for (let n = 0; n < 14 && a.fontSize > min; n++) {
+          const bottom = a.top + a.height;
+          const hit = bottom > H - U * 2 || tx.some(b => b !== a && b.top > a.top + U && over(a, b) && bottom > b.top - U * 0.8);
+          if (!hit) break;
+          a.set({ fontSize: Math.round(a.fontSize * 0.93) }); a.initDimensions();
+        }
+      });
+    }
+  }
   async function applyTemplate(key) {
     const t = T[key].build();
     quiet = true;
@@ -272,26 +238,131 @@
     }
     await loadFontsIn(canvas.getObjects());
     canvas.getObjects().forEach(o => o.initDimensions && o.initDimensions());
+    settle(canvas.getObjects());
     quiet = false; canvas.renderAll(); record(); checkSoon();
   }
+  // ---- the template panel: categories, search, favourites, live previews in this brand and size
   const builtins = $("[data-builtins]");
-  Object.entries(T).forEach(([key, t]) => {
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "ed-tpl"; b.dataset.builtin = key;
-    b.innerHTML = `<canvas width="${Math.round(160 * Math.min(1, W / H))}" height="${Math.round(160 * Math.min(1, H / W))}"></canvas><span></span>`;
-    b.querySelector("span").textContent = t.name;
-    builtins.appendChild(b);
+  const CAT_NAMES = Object.fromEntries(LIB.CATS);
+  const month = new Date().getMonth() + 1;
+  const monthsAway = t => t.months ? Math.min(...t.months.map(m => (m - month + 12) % 12)) : 99;
+  let favs = new Set(C.favs || []);
+  const pw = Math.round(160 * Math.min(1, W / H)), ph = Math.round(160 * Math.min(1, H / W));
+  const sections = {};
+  ["seasonal", "offers", "facts", "news", "patients", "basics"].forEach(cat => {
+    const sec = document.createElement("div");
+    sec.className = "ed-tpl-sec"; sec.dataset.tplSec = cat;
+    sec.innerHTML = `<h3></h3><div class="ed-tpl-grid"></div>`;
+    sec.querySelector("h3").textContent = cat === "seasonal" ? "Holidays & seasonal (coming up first)" : CAT_NAMES[cat];
+    builtins.appendChild(sec); sections[cat] = sec.querySelector(".ed-tpl-grid");
   });
-  async function drawPreviews() {          // small live previews of the built-in layouts, in this brand and size
-    for (const b of $$("[data-builtin]")) {
-      const el = b.querySelector("canvas");
-      const sc = new fabric.StaticCanvas(el, { width: el.width, height: el.height, renderOnAddRemove: false });
-      const t = T[b.dataset.builtin].build();
-      sc.setBackgroundColor(t.bg, () => {}); sc.setZoom(el.width / W);
-      t.objs.forEach(o => sc.add(o));
-      sc.renderAll();
-    }
+  Object.entries(T)
+    .sort(([, a], [, b]) => a.cat === "seasonal" && b.cat === "seasonal" ? monthsAway(a) - monthsAway(b) : 0)
+    .forEach(([key, t]) => {
+      const w = document.createElement("div");
+      w.className = "ed-tpl-wrap"; w.dataset.tplKey = "b:" + key; w.dataset.tplCat = t.cat; w.dataset.tplName = t.name.toLowerCase() + " " + (CAT_NAMES[t.cat] || "").toLowerCase();
+      if (monthsAway(t) <= 1) w.dataset.soon = "1";
+      w.innerHTML = `<button type="button" class="ed-tpl" data-builtin="${key}"><canvas width="${pw}" height="${ph}"></canvas><span></span></button>` +
+        `<button type="button" class="ed-tpl-fav" data-fav aria-pressed="false">☆</button>`;
+      w.querySelector("span").textContent = t.name;
+      if (w.dataset.soon) w.querySelector(".ed-tpl").insertAdjacentHTML("beforeend", `<em class="ed-tpl-soon">Coming up</em>`);
+      w.querySelector("[data-fav]").setAttribute("aria-label", `Add ${t.name} to favourites`);
+      sections[t.cat].appendChild(w);
+    });
+  const catBar = $("[data-tpl-cats]"), search = $("[data-tpl-search]"), empty = $("[data-tpl-empty]");
+  const CHIPS = [["favorites", "★ Favourites"], ["all", "All"], ["soon", "Coming up"], ...LIB.CATS.filter(([k]) => !["favorites", "all"].includes(k))];
+  if (C.hasTeam) CHIPS.push(["team", "Team's"]);
+  let view = favs.size ? "favorites" : "all";
+  try { view = localStorage.getItem("mcdp_tpl_view") || view; } catch (e) {}
+  if (!CHIPS.some(([k]) => k === view)) view = "all";
+  CHIPS.forEach(([k, label]) => {
+    const c = document.createElement("button");
+    c.type = "button"; c.className = "ed-chip"; c.dataset.cat = k; c.textContent = label; c.setAttribute("role", "tab");
+    catBar.appendChild(c);
+  });
+  const tiles = () => $$(".ed-tpl-wrap");
+  function showTemplates() {
+    const q = (search.value || "").trim().toLowerCase();
+    $$("[data-cat]", catBar).forEach(c => { c.classList.toggle("on", c.dataset.cat === view); c.setAttribute("aria-selected", c.dataset.cat === view); });
+    let shown = 0;
+    tiles().forEach(w => {
+      const fav = favs.has(w.dataset.tplKey), star = w.querySelector("[data-fav]");
+      star.textContent = fav ? "★" : "☆"; star.setAttribute("aria-pressed", fav); star.classList.toggle("on", fav);
+      star.title = fav ? "Remove from favourites" : "Add to favourites";
+      const ok = (q ? w.dataset.tplName.includes(q) : true) && (q || view === "all" || (view === "favorites" ? fav : view === "soon" ? w.dataset.soon : w.dataset.tplCat === view));
+      w.hidden = !ok; if (ok) shown++;
+    });
+    $$(".ed-tpl-sec").forEach(s => { s.hidden = !$$(".ed-tpl-wrap", s).some(w => !w.hidden); });
+    empty.hidden = shown > 0;
+    empty.textContent = q ? `No templates match “${search.value.trim()}”.` : view === "favorites" ? "No favourites yet. Tap the ☆ on any template to keep it here." : "Nothing here yet.";
+    drawVisible();
   }
+  catBar.addEventListener("click", e => {
+    const c = e.target.closest("[data-cat]"); if (!c) return;
+    view = c.dataset.cat; search.value = "";
+    try { localStorage.setItem("mcdp_tpl_view", view); } catch (err) {}
+    showTemplates();
+  });
+  search.addEventListener("input", showTemplates);
+  $("#ed-p-templates").addEventListener("click", async e => {
+    const st = e.target.closest("[data-fav]"); if (!st) return;
+    e.preventDefault(); e.stopPropagation();
+    const key = st.closest(".ed-tpl-wrap").dataset.tplKey, on = !favs.has(key);
+    if (on) favs.add(key); else favs.delete(key);
+    showTemplates();
+    const fd = new FormData(); fd.append("key", key); fd.append("on", on ? "1" : "0");
+    try {
+      const r = await fetch("/studio/template-favs", { method: "POST", body: fd, headers: { Accept: "application/json" } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      favs = new Set(j.favs); say(on ? "Added to favourites" : "Removed from favourites");
+    } catch (err) {
+      if (on) favs.delete(key); else favs.add(key);
+      say(`Favourite not saved: ${err.message}`);
+    }
+    showTemplates();
+  });
+  // previews are drawn as they come into view (there are a lot of them)
+  let logoImg = null, logoTried = false, drawGen = 0;
+  async function previewLogo() {
+    if (logoTried) return logoImg;
+    logoTried = true;
+    try { if (LOGO()) logoImg = await loadImage(LOGO()); } catch (e) {}
+    return logoImg;
+  }
+  function drawOne(b) {
+    const el = b.querySelector("canvas"), t = T[b.dataset.builtin].build();
+    if (el._sc) el._sc.dispose();
+    const sc = new fabric.StaticCanvas(el, { width: pw, height: ph, renderOnAddRemove: false, enableRetinaScaling: false });
+    el._sc = sc;
+    sc.setBackgroundColor(t.bg, () => {}); sc.setZoom(pw / W);
+    settle(t.objs);
+    t.objs.forEach(o => sc.add(o));
+    if (t.logo && logoImg) {
+      const img = new fabric.Image(logoImg.getElement());
+      const s = Math.min((W * t.logo.size) / logoImg.width, (H * t.logo.size) / logoImg.height * 1.4);
+      img.set({ scaleX: s, scaleY: s });
+      const w = logoImg.width * s, h = logoImg.height * s;
+      img.set({ left: t.logo.anchor === "tl" ? W * t.logo.x : W * t.logo.x - w, top: t.logo.anchor === "tl" ? H * t.logo.y : H * t.logo.y - h });
+      sc.add(img);
+    }
+    sc.renderAll();
+    b.dataset.drawn = drawGen;
+  }
+  const io = "IntersectionObserver" in window ? new IntersectionObserver(es => es.forEach(en => {
+    if (en.isIntersecting && en.target.dataset.drawn != drawGen) drawOne(en.target);
+  }), { root: null, rootMargin: "300px" }) : null;
+  function drawVisible() {
+    if (!builtins.dataset.drawn) return;
+    $$("[data-builtin]").forEach(b => { if (io) { io.unobserve(b); io.observe(b); } else if (b.dataset.drawn != drawGen) drawOne(b); });
+  }
+  async function drawPreviews() {          // (re)draw the previews, e.g. after the brand fonts change
+    drawGen++;
+    await previewLogo();
+    await Promise.all([fonts.heading, fonts.body].map(f => fontReady(f, 700).catch(() => {})));
+    drawVisible();
+  }
+  showTemplates();
 
   async function applyTeamTemplate(tid) {
     const r = await fetch(`/studio/templates/${tid}/doc`); const doc = await r.json();

@@ -1513,6 +1513,21 @@ main.ed-main > .flash { margin: 0.5rem 1rem; }
 .ed-tpl { background: #fff; border: 1px solid var(--hair); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; align-items: center; cursor: pointer; font: inherit; font-size: 0.78rem; }
 .ed-tpl:hover { border-color: var(--teal); }
 .ed-tpl canvas, .ed-tpl img { max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 0 0 1px var(--hair); background: #fff; }
+.ed-tpl-search { width: 100%; box-sizing: border-box; padding: 0.5rem 0.7rem; border: 1px solid var(--hair); border-radius: 8px; font: inherit; font-size: 0.85rem; margin: 0 0 0.55rem; }
+.ed-tpl-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 0.4rem; }
+.ed-chip { border: 1px solid var(--hair); background: #fff; color: var(--ink-soft); border-radius: 999px; padding: 0.3rem 0.65rem; font: inherit; font-size: 0.75rem; cursor: pointer; white-space: nowrap; }
+.ed-chip:hover { border-color: var(--teal); color: var(--ink); }
+.ed-chip.on { background: var(--teal-deep); border-color: var(--teal-deep); color: #fff; }
+.ed-tpl-sec h3 { margin-top: 0.9rem; }
+.ed-tpl-wrap { position: relative; display: flex; }
+.ed-tpl-wrap[hidden] { display: none; }
+.ed-tpl-wrap > .ed-tpl { flex: 1 1 auto; min-width: 0; position: relative; }
+.ed-tpl > span { text-align: center; line-height: 1.2; }
+.ed-tpl-fav { position: absolute; top: 9px; right: 9px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(255,255,255,.92); box-shadow: 0 1px 3px rgba(0,0,0,.25); color: #8A857C; font-size: 16px; line-height: 28px; padding: 0; cursor: pointer; }
+.ed-tpl-fav:hover { color: #D9A441; }
+.ed-tpl-fav.on { color: #D9A441; }
+.ed-tpl-soon { position: absolute; left: 9px; top: 9px; background: var(--teal-deep); color: #fff; font-style: normal; font-size: 0.62rem; font-weight: 700; letter-spacing: .02em; padding: 2px 6px; border-radius: 999px; }
+@media (max-width: 760px) { .ed-tpl-intro { display: none; } .ed-tpl-cats { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; } .ed-tpl-fav { width: 34px; height: 34px; line-height: 34px; font-size: 18px; } }
 .ed-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .ed-swatch { width: 34px; height: 34px; border-radius: 8px; border: 1px solid rgba(0,0,0,.12); cursor: pointer; }
 .ed-swatch:hover { outline: 2px solid var(--teal); outline-offset: 2px; }

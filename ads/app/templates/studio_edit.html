@@ -58,14 +58,19 @@
     <aside class="ed-panel" aria-label="Tool panel">
       <section id="ed-p-templates" data-panel="templates" hidden>
         <h2>Templates</h2>
-        <p class="small muted">Click one to start from it. It uses {{ brand_name }}'s colours, fonts and logo, and replaces what's on the page (Undo brings it back).</p>
-        <div class="ed-tpl-grid" data-builtins></div>
+        <p class="small muted ed-tpl-intro">Click one to start from it. Every layout uses {{ brand_name }}'s colours, fonts and logo, and replaces what's on the page (Undo brings it back). Tap the star to keep one in Favourites.</p>
+        <input type="search" class="ed-tpl-search" data-tpl-search placeholder="Search templates (e.g. Halloween, offer, review)" aria-label="Search templates">
+        <div class="ed-tpl-cats" data-tpl-cats role="tablist" aria-label="Template categories"></div>
+        <div data-builtins></div>
         {% if templates %}
-        <h3>The team's templates</h3>
-        <div class="ed-tpl-grid">
-          {% for t in templates %}<button type="button" class="ed-tpl" data-team-tpl="{{ t.id }}" title="{{ t.name }} · {{ t.w }}×{{ t.h }}"><img src="/studio/templates/{{ t.id }}/thumb" alt=""><span>{{ t.name }}</span></button>{% endfor %}
+        <div class="ed-tpl-sec" data-tpl-sec="team">
+          <h3>The team's templates</h3>
+          <div class="ed-tpl-grid">
+            {% for t in templates %}<div class="ed-tpl-wrap" data-tpl-key="t:{{ t.id }}" data-tpl-cat="team" data-tpl-name="{{ t.name|lower }}"><button type="button" class="ed-tpl" data-team-tpl="{{ t.id }}" title="{{ t.name }} · {{ t.w }}×{{ t.h }}"><img src="/studio/templates/{{ t.id }}/thumb" alt="" loading="lazy"><span>{{ t.name }}</span></button><button type="button" class="ed-tpl-fav" data-fav aria-pressed="false" aria-label="Add {{ t.name }} to favourites">☆</button></div>{% endfor %}
+          </div>
         </div>
         {% endif %}
+        <p class="small muted" data-tpl-empty hidden></p>
       </section>
 
       <section id="ed-p-brand" data-panel="brand" hidden>
@@ -222,8 +227,9 @@
 <script type="application/json" id="ed-config">{{ {
   "iid": it.id, "pid": it.practice_id, "w": it.width, "h": it.height, "title": it.title, "canEdit": can_edit,
   "colors": colors, "fonts": fonts, "brand": brand_name, "logo": logo, "fresh": fresh == 1, "isPractice": is_practice,
-  "status": it.status, "back": "/studio/i/" ~ it.id
+  "status": it.status, "back": "/studio/i/" ~ it.id, "favs": tpl_favs or [], "hasTeam": (templates|length) > 0
 }|tojson }}</script>
 <script src="/static/vendor/fabric-5.3.0.min.js"></script>
+<script src="/static/studio-templates.js?v={{ static_v }}"></script>
 <script src="/static/studio-editor.js?v={{ static_v }}"></script>
 {% endblock %}

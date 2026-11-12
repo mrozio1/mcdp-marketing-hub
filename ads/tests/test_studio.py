@@ -701,3 +701,23 @@ def test_design_shows_as_a_picture_on_share_pages(env):
     studio.trash(iid)
     studio.delete_forever(iid)
     assert not os.path.exists(studio.design_path(iid))
+
+
+def test_template_library_and_favourites(env):
+    ed, vi, pid = env["ed"], env["vi"], env["schulz"]
+    iid, _ = make_design(ed, pid, title="Fav test")
+    page = ed.get(f"/studio/edit/{iid}").text
+    assert "studio-templates.js" in page and "data-tpl-cats" in page and '"favs": []' in page
+    js = ed.get("/static/studio-templates.js").text
+    for key in ("halloween", "thanksgiving", "valentine", "percent", "referral", "didyouknow", "mythfact", "review", "hiring"):
+        assert f'add("{key}"' in js
+    # starring is per person, newest first, and can be undone
+    assert ed.post("/studio/template-favs", data={"key": "b:halloween"}).json()["favs"] == ["b:halloween"]
+    assert ed.post("/studio/template-favs", data={"key": "t:12", "on": "1"}).json()["favs"] == ["t:12", "b:halloween"]
+    assert ed.post("/studio/template-favs", data={"key": "b:halloween", "on": "0"}).json()["favs"] == ["t:12"]
+    assert '"favs": ["t:12"]' in ed.get(f"/studio/edit/{iid}").text
+    assert vi.post("/studio/template-favs", data={"key": "b:offer"}).json()["favs"] == ["b:offer"]
+    assert ed.post("/studio/template-favs", data={"key": "b:offer"}).json()["favs"] == ["b:offer", "t:12"]
+    assert ed.post("/studio/template-favs", data={"key": "../etc"}).status_code == 422
+    from fastapi.testclient import TestClient
+    assert TestClient(env["main"].app).post("/studio/template-favs", data={"key": "b:offer"}).status_code == 401

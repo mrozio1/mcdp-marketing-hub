@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import html
 import os
 import re
@@ -38,7 +39,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
 PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/")
-ANY_SIGNED_IN_POST = ("/account", "/field/route-order")
+ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
@@ -4475,7 +4476,36 @@ def studio_edit(request: Request, iid: int, fresh: int = 0):
                 look=look, colors=kit_colors, fonts=studio.brand_fonts(pid if pid is not None else studio.MCDP),
                 font_list=studio.FONTS, sizes=studio.SIZES, fresh=fresh, statuses=studio.STATUSES,
                 templates=studio.templates(pid), ai_on=ai.available(), is_practice=bool(pid),
-                logo=(images.logo(pid) or {}).get("id") if pid else None)
+                logo=(images.logo(pid) or {}).get("id") if pid else None, tpl_favs=_tpl_favs(request))
+
+
+def _tpl_favs_key(request: Request):
+    return f"studio_tpl_favs_{int((me(request) or {}).get('id') or 0)}"
+
+
+def _tpl_favs(request: Request):
+    """Each person's starred templates ("b:<built-in key>" or "t:<team template id>"), newest first."""
+    try:
+        v = json.loads(db.get_setting(_tpl_favs_key(request)) or "[]")
+        return [k for k in v if isinstance(k, str)][:200]
+    except ValueError:
+        return []
+
+
+@app.post("/studio/template-favs")
+async def studio_template_favs(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    form = await request.form()
+    key = str(form.get("key") or "").strip()
+    if not re.fullmatch(r"(b:[a-z0-9_]{1,40}|t:\d{1,12})", key):
+        return JSONResponse({"error": "That isn't a template."}, status_code=422)
+    on = str(form.get("on") or "1") not in ("0", "false", "")
+    favs = [k for k in _tpl_favs(request) if k != key]
+    if on:
+        favs.insert(0, key)
+    db.set_setting(_tpl_favs_key(request), json.dumps(favs[:200]))
+    return JSONResponse({"ok": True, "favs": favs[:200]})
 
 
 @app.get("/studio/designs/{iid}/doc")
