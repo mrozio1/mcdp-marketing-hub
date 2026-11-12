@@ -1949,7 +1949,7 @@
   }
   // stock video (Pixabay). The hub searches for the team; if Pixabay's firewall turns the NAS away, this browser asks
   // Pixabay's API itself (with the team's key) and, if needed, downloads the picked video and uploads it to the library.
-  let stockQ = { q: "", page: 1 }, pxKey = null;
+  let stockQ = { q: "", page: 1 }, pxKey = null, pxKeys = null;
   const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
   function pxHit(h) {                       // same choice of file as the hub makes (app/stock.py pixabay_hit)
@@ -1959,11 +1959,34 @@
     const tiny = v.tiny || v.small || {};
     return { id: h.id, duration: h.duration, tags: h.tags || "", user: h.user || "", page: h.pageURL || "", thumb: (v.medium || {}).thumbnail || tiny.thumbnail || "", preview: tiny.url || "", file: best, raw: h };
   }
+  function pexVideo(h) {                    // same choice of file as the hub makes (app/stock.py pexels_video_hit)
+    const files = (h.video_files || []).filter(f => f.link && /mp4$/.test(f.file_type || "") && f.width && f.height && Math.max(f.width, f.height) <= 1920)
+      .sort((a, b) => a.width * a.height - b.width * b.height);
+    if (!files.length) return null;
+    const best = files[files.length - 1], slug = String(h.url || "").replace(/^https:\/\/www\.pexels\.com\/video\/|\/?$/g, "").replace(/-?\d+$/, "").replace(/-/g, " ").trim();
+    const title = slug ? slug[0].toUpperCase() + slug.slice(1) : "Stock video";
+    return { id: h.id, provider: "pexels", duration: h.duration, tags: title, user: (h.user || {}).name || "", page: h.url || "", thumb: h.image || "", preview: files[0].link,
+             file: { url: best.link, w: best.width, h: best.height } };
+  }
   async function browserSearch(q) {
+    if (pxKeys === null) { const r = await fetch("/studio/stock/browser-key"); pxKeys = r.ok ? await r.json() : {}; }
+    if (pxKeys.pexels) {
+      const ck = `pxl:${q.toLowerCase()}`, hit = lsGet(ck);
+      if (hit && hit.at > Date.now() - 24 * 3600e3) return hit.data;
+      let r;
+      try { r = await fetch(`https://api.pexels.com/videos/search?${new URLSearchParams({ query: q, per_page: 30 })}`, { headers: { Authorization: pxKeys.pexels } }); }
+      catch (e) { throw new Error("Couldn't reach Pexels from this browser either. Check the internet connection, or an ad blocker that stops pexels.com."); }
+      if (r.status === 401 || r.status === 403) throw new Error("Pexels says the key isn't right. Copy it again from pexels.com/api and paste it on Connections → Stock and music.");
+      if (r.status === 429) throw new Error("Too many searches for now; wait a little and try again.");
+      if (!r.ok) throw new Error(`Pexels didn't answer the search (HTTP ${r.status}).`);
+      const j = await r.json(), data = { hits: (j.videos || []).map(pexVideo).filter(Boolean), total: j.total_results || 0, provider: "pexels" };
+      lsSet(ck, { at: Date.now(), data });
+      return data;
+    }
     const ck = `px:${q.toLowerCase()}`, hit = lsGet(ck);
     if (hit && hit.at > Date.now() - 24 * 3600e3) return hit.data;           // Pixabay asks for searches to be kept 24 hours
-    if (pxKey === null) { const r = await fetch("/studio/stock/browser-key"); pxKey = r.ok ? (await r.json()).pixabay : ""; }
-    if (!pxKey) throw new Error("Stock video search needs a free Pixabay key on Connections → Stock and music.");
+    if (pxKey === null) pxKey = pxKeys.pixabay || "";
+    if (!pxKey) throw new Error("Stock video search needs a free Pexels key on Connections → Stock and music.");
     let r;
     try { r = await fetch(`https://pixabay.com/api/videos/?${new URLSearchParams({ key: pxKey, q, safesearch: "true", per_page: 30, video_type: "film" })}`); }
     catch (e) { throw new Error("Couldn't reach Pixabay from this browser either. Check the internet connection, or an ad blocker that stops pixabay.com."); }
@@ -1976,11 +1999,11 @@
   }
   async function stockSearch(q, o) {
     let data;
-    if (!lsGet("pxDirect")) {
+    if (!lsGet("pxDirect2")) {
       const r = await fetch(`/studio/stock/videos?${new URLSearchParams({ q, o })}`), j = await r.json();
       if (r.ok) return j;
       if (!j.blocked) throw new Error(j.error);
-      lsSet("pxDirect", true);                    // remember: this hub's NAS is turned away, go straight from the browser
+      lsSet("pxDirect2", true);                    // remember: this hub's NAS is turned away, go straight from the browser
     }
     data = await browserSearch(q);
     if (o === "tall") data = { ...data, hits: data.hits.filter(x => x.file.h > x.file.w) };
@@ -1988,20 +2011,21 @@
     return data;
   }
   async function stockImport(h) {
-    say("Bringing it in from Pixabay…");
-    const body = { q: stockQ.q, page: 1, pid: C.pid, hit: h.raw || null };
+    const src = h.provider === "pexels" ? "Pexels" : "Pixabay";
+    say(`Bringing it in from ${src}…`);
+    const body = { q: stockQ.q, page: 1, pid: C.pid, hit: h.provider === "pexels" ? h : (h.raw || null) };
     const rr = await fetch(`/studio/stock/videos/${h.id}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
     let jj = await rr.json();
-    if (!rr.ok && jj.blocked && h.raw) {
+    if (!rr.ok && jj.blocked && (h.raw || h.provider === "pexels")) {
       // the NAS can't download it either: this browser fetches the file and uploads it like any other video
-      say("Downloading from Pixabay…");
+      say(`Downloading from ${src}…`);
       let blob;
       try { const fr = await fetch(h.file.url); if (!fr.ok) throw new Error(`HTTP ${fr.status}`); blob = await fr.blob(); }
-      catch (e) { say("Pixabay wouldn't let the video be downloaded here. Open it on Pixabay, download it, and add it under Media."); window.open(h.page, "_blank", "noopener"); return null; }
+      catch (e) { say(`${src} wouldn't let the video be downloaded here. Open it on ${src}, download it, and add it under Media.`); window.open(h.page, "_blank", "noopener"); return null; }
       const name = `${(h.tags.split(",")[0] || "Stock video").trim()}.mp4`;
       const id = await upload(new File([blob], name, { type: "video/mp4" }), C.pid, jj.folder, $("[data-vtray]"));
       if (!id) { say("The upload didn't finish; try again."); return null; }
-      const ar = await fetch(`/studio/stock/videos/${h.id}/attach`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ item: id, hit: h.raw }) });
+      const ar = await fetch(`/studio/stock/videos/${h.id}/attach`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ item: id, hit: h.provider === "pexels" ? h : h.raw }) });
       jj = await ar.json(); if (!ar.ok) { say(jj.error); return null; }
     } else if (!rr.ok) { say(jj.error); return null; }
     items[jj.id] = jj; mediaIndex[jj.id] = jj; say(""); loadMedia(); return jj.id;

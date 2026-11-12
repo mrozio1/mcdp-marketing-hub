@@ -762,3 +762,56 @@ def test_stock_photos_for_templates(env, monkeypatch, tmp_path):
     assert r.status_code == 422 and "Pixabay key" in r.json()["error"]
     page = ed.get(f"/studio/edit/{did}").text
     assert "data-px-form" in page and "data-stock-swap" in page
+
+
+def test_pexels_photos_and_videos(env, monkeypatch, tmp_path):
+    from app import stock
+    ed, studio, pid, db = env["ed"], env["studio"], env["schulz"], env["db"]
+    photo = {"id": 501, "width": 4000, "height": 3000, "url": "https://www.pexels.com/photo/autumn-leaves-501/", "photographer": "Ana",
+             "alt": "Autumn leaves on a table", "src": {"large2x": "https://images.pexels.com/photos/501/p.jpeg?w=1880", "large": "https://images.pexels.com/photos/501/p.jpeg?w=940",
+                                                       "small": "https://images.pexels.com/photos/501/p.jpeg?h=130"}}
+    video = {"id": 902, "duration": 12, "url": "https://www.pexels.com/video/kids-running-on-a-beach-902/", "image": "https://images.pexels.com/videos/902/x.jpg",
+             "user": {"name": "Ben"}, "video_files": [
+                 {"link": "https://videos.pexels.com/video-files/902/hd.mp4", "file_type": "video/mp4", "width": 1920, "height": 1080},
+                 {"link": "https://videos.pexels.com/video-files/902/sd.mp4", "file_type": "video/mp4", "width": 640, "height": 360},
+                 {"link": "https://videos.pexels.com/video-files/902/4k.mp4", "file_type": "video/mp4", "width": 3840, "height": 2160}]}
+    seen = []
+
+    def fake_get(url, timeout=30, service="", headers=None):
+        seen.append((url, headers))
+        return {"videos": [video], "total_results": 1} if "/videos/" in url else {"photos": [photo], "total_results": 1}
+
+    def fake_download(url, suffix):
+        assert ".pexels.com/" in url
+        p = tmp_path / f"pexels{suffix}"
+        p.write_bytes(png_bytes(320, 240) if suffix != ".mp4" else b"\0" * 2000)
+        return str(p)
+    monkeypatch.setattr(stock, "_get", fake_get)
+    monkeypatch.setattr(stock, "_download", fake_download)
+    db.set_setting("pexels_key", "test-pexels-key")
+    try:
+        assert stock.provider() == "pexels"
+        j = ed.get("/studio/stock/images?q=fall+leaves&kind=photo&o=horizontal").json()
+        assert j["provider"] == "pexels" and j["hits"][0]["provider"] == "pexels" and j["hits"][0]["user"] == "Ana"
+        assert seen[-1][1] == {"Authorization": "test-pexels-key"} and "orientation=landscape" in seen[-1][0]
+        art = ed.get("/studio/stock/images?q=pumpkin&kind=art").json()
+        assert "isolated" in seen[-1][0] and art["hits"][0]["kind"] == "art"
+        hit = j["hits"][0]
+        r = ed.post("/studio/stock/images/import", json={"pid": pid, "hit": hit})
+        assert r.status_code == 200, r.text
+        it = studio.item(r.json()["id"])
+        assert it["source"] == "pexels" and "Pexels" in it["title"] and "Ana" in it["notes"] and studio.folder(it["folder_id"])["name"] == "Stock photos"
+        assert ed.post("/studio/stock/images/import", json={"pid": pid, "hit": hit}).json()["id"] == it["id"]
+        assert ed.post("/studio/stock/images/import", json={"pid": pid, "hit": {**hit, "id": 7, "file": "https://evil.example/a.jpg"}}).status_code == 422
+        # videos: the largest file up to 1920, a small preview, a title from the page address
+        v = ed.get("/studio/stock/videos?q=beach").json()
+        h = v["hits"][0]
+        assert v["provider"] == "pexels" and h["file"]["url"].endswith("/hd.mp4") and h["preview"].endswith("/sd.mp4") and h["tags"] == "Kids running on a beach"
+        r = ed.post(f"/studio/stock/videos/{h['id']}", json={"pid": pid, "hit": h, "q": "beach"})
+        assert r.status_code == 200, r.text
+        vit = studio.item(r.json()["id"])
+        assert vit["source"] == "pexels" and "Ben" in vit["notes"]
+        key = ed.get("/studio/stock/browser-key").json()
+        assert key["provider"] == "pexels" and key["pexels"] == "test-pexels-key"
+    finally:
+        db.set_setting("pexels_key", "")

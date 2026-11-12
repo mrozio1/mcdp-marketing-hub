@@ -164,7 +164,17 @@ window.MCDPTemplates = function (k) {
   const photoCircle = (cx, cy, r, o = {}) => circleFrame({ left: cx - r, top: cy - r, radius: r, fill: spotFill(o.tone), strokeWidth: 0, strokeDashArray: null, ...stk(o) });
   // a cut-out drawing (leaves, pumpkins, ornaments…) from Pixabay in place of a drawn shape; the shape stays if none is found
   const art = (obj, q, i = 0) => { obj.set({ stock: { q, kind: "art", i }, role: "art", name: "Drawing" }); return obj; };
-  const artBox = (q, x, y, w, h, i = 0, o = {}) => art(box(x, y, w, h, "rgba(0,0,0,0)", { name: "Drawing", ...o }), q, i);
+  // a drawing slot: a drawn shape that matches the idea (so it still looks right on dark pages, or with no picture service)
+  const FALLBACK = [[/leaf|leaves|autumn|fall/, "maple"], [/pumpkin/, "pumpkin"], [/flower|blossom|rose/, "flower"], [/heart/, "heart"],
+                    [/shamrock|clover/, "shamrock"], [/apple/, "apple"], [/pencil/, "pencil"], [/balloon/, "balloon"], [/gift/, "gift"],
+                    [/holly|pine|branch/, "leaf"], [/ornament/, "balloon"]];
+  const artBox = (q, x, y, w, h, i = 0, o = {}) => {
+    const fb = FALLBACK.find(([re]) => re.test(q));
+    if (!fb) return art(box(x, y, w, h, "rgba(0,0,0,0)", { name: "Drawing", ...o }), q, i);
+    const sz = Math.min(w, h) * 0.8;
+    return art(shape(fb[1], x + (o.originX === "center" ? 0 : (w - sz) / 2), y + (o.originY === "center" ? 0 : (h - sz) / 2), sz,
+      { fill: [A, shade(A, 0.18), tint(A, 0.3)][i % 3], ...o }), q, i);
+  };
   // torn paper: a card with a hand-torn edge
   const tornD = seed => { const r = rnd(seed), j = () => r() * 2.6; let d = `M${j()} ${j()} `;
     for (let x = 4; x <= 100; x += 4) d += `L${x} ${j()} `; for (let y = 4; y <= 100; y += 4) d += `L${100 - j()} ${y} `;

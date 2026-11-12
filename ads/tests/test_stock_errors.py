@@ -24,7 +24,7 @@ def test_firewall_is_not_called_a_bad_key(monkeypatch):
 
 def test_curl_is_tried_when_python_is_turned_away(monkeypatch):
     monkeypatch.setattr(stock.urllib.request, "urlopen", _raise(403, ""))
-    monkeypatch.setattr(stock, "_curl", lambda url, timeout, out_path=None: (200, '{"hits": [], "totalHits": 0}'))
+    monkeypatch.setattr(stock, "_curl", lambda url, timeout, out_path=None, headers=None: (200, '{"hits": [], "totalHits": 0}'))
     assert stock._get("https://pixabay.com/api/videos/?key=x", service="Pixabay") == {"hits": [], "totalHits": 0}
 
 

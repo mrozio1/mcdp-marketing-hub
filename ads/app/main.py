@@ -5202,7 +5202,9 @@ async def studio_stock_videos(request: Request, q: str = "", page: int = 1, o: s
     if not authed(request):
         return JSONResponse({}, status_code=401)
     try:
-        return await asyncio.to_thread(stock.pixabay_search, q, o, page)
+        if stock.provider() == "pexels":
+            return await asyncio.to_thread(stock.pexels_videos, q, o, page)
+        return {**(await asyncio.to_thread(stock.pixabay_search, q, o, page)), "provider": "pixabay"}
     except stock.StockError as e:
         return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
 
@@ -5213,7 +5215,9 @@ async def studio_stock_images(request: Request, q: str = "", kind: str = "photo"
     if not authed(request):
         return JSONResponse({}, status_code=401)
     try:
-        return await asyncio.to_thread(stock.pixabay_images, q, kind, o, page)
+        if stock.provider() == "pexels":
+            return await asyncio.to_thread(stock.pexels_photos, q, kind, o, page)
+        return {**(await asyncio.to_thread(stock.pixabay_images, q, kind, o, page)), "provider": "pixabay"}
     except stock.StockError as e:
         return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
 
@@ -5231,7 +5235,8 @@ async def studio_stock_image_import(request: Request):
     pid = _brand_in(j.get("pid"))
     pid = pid if pid is not None else studio.MCDP
     try:
-        iid = await asyncio.to_thread(stock.image_import, j.get("hit"), pid, actor(request))
+        pexels = isinstance(j.get("hit"), dict) and j["hit"].get("provider") == "pexels"
+        iid = await asyncio.to_thread(stock.pexels_photo_import if pexels else stock.image_import, j.get("hit"), pid, actor(request))
     except stock.StockError as e:
         return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
     except studio.StudioError as e:
@@ -5250,7 +5255,8 @@ async def studio_stock_image_attach(request: Request):
         it = studio.item(int(j.get("item") or 0))
         if not it or it["practice_id"] != pid or it["kind"] != "image":
             raise stock.StockError("That picture isn't in this brand's library.")
-        iid = await asyncio.to_thread(stock.image_attach, it["id"], j.get("hit"), pid, actor(request))
+        pexels = isinstance(j.get("hit"), dict) and j["hit"].get("provider") == "pexels"
+        iid = await asyncio.to_thread(stock.pexels_photo_attach if pexels else stock.image_attach, it["id"], j.get("hit"), pid, actor(request))
     except (stock.StockError, studio.StudioError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=422)
     return _img_row(iid)
@@ -5261,7 +5267,8 @@ def studio_stock_browser_key(request: Request):
     """When Pixabay's firewall turns the NAS away, the editor searches from the person's browser with the team's key."""
     if not authed(request) or not can_edit_now(request):
         return JSONResponse({"error": "Sign in again."}, status_code=401)
-    return JSONResponse({"pixabay": stock._tidy_key(db.get_setting("pixabay_key")) or ""}, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"pixabay": stock._tidy_key(db.get_setting("pixabay_key")) or "", "pexels": stock._tidy_key(db.get_setting("pexels_key")) or "",
+                         "provider": stock.provider()}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/studio/stock/videos/{hit_id}/attach")
@@ -5270,7 +5277,8 @@ async def studio_stock_video_attach(request: Request, hit_id: int):
         return JSONResponse({"error": "Sign in again."}, status_code=401)
     j = await request.json()
     try:
-        iid = await asyncio.to_thread(stock.pixabay_attach, int(j.get("item") or 0), j.get("hit"), actor(request))
+        pexels = isinstance(j.get("hit"), dict) and j["hit"].get("provider") == "pexels"
+        iid = await asyncio.to_thread(stock.pexels_video_attach if pexels else stock.pixabay_attach, int(j.get("item") or 0), j.get("hit"), actor(request))
     except (stock.StockError, studio.StudioError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=422)
     return _media_row(studio.item(iid))
@@ -5283,8 +5291,11 @@ async def studio_stock_video_add(request: Request, hit_id: int):
     j = await request.json()
     pid = _brand_in(j.get("pid"))
     try:
-        iid = await asyncio.to_thread(stock.pixabay_import, hit_id, j.get("q") or "", j.get("page") or 1,
-                                      pid if pid is not None else studio.MCDP, actor(request), j.get("hit"))
+        if isinstance(j.get("hit"), dict) and j["hit"].get("provider") == "pexels":
+            iid = await asyncio.to_thread(stock.pexels_video_import, j["hit"], pid if pid is not None else studio.MCDP, actor(request))
+        else:
+            iid = await asyncio.to_thread(stock.pixabay_import, hit_id, j.get("q") or "", j.get("page") or 1,
+                                          pid if pid is not None else studio.MCDP, actor(request), j.get("hit"))
     except stock.StockError as e:
         return JSONResponse({"error": str(e), "blocked": e.blocked,
                              "folder": stock.stock_folder(pid if pid is not None else studio.MCDP) if e.blocked else None}, status_code=422)
@@ -5324,14 +5335,16 @@ def studio_music_list(request: Request, q: str = ""):
 
 
 @app.post("/connections/stock")
-def connections_stock(request: Request, pixabay_key: str = Form(""), freesound_key: str = Form(""), clear: str = Form("")):
+def connections_stock(request: Request, pixabay_key: str = Form(""), freesound_key: str = Form(""), pexels_key: str = Form(""),
+                      clear: str = Form("")):
     if (r := guard(request)):
         return r
-    if clear in ("pixabay", "freesound"):
+    if clear in ("pixabay", "freesound", "pexels"):
         stock.save_keys(**{clear: ""})
         flash(request, "Key removed.")
     else:
         stock.save_keys(pixabay=pixabay_key if pixabay_key.strip() else None,
-                        freesound=freesound_key if freesound_key.strip() else None)
-        flash(request, "Saved. Stock video and music search use these in the video editor.")
+                        freesound=freesound_key if freesound_key.strip() else None,
+                        pexels=pexels_key if pexels_key.strip() else None)
+        flash(request, "Saved. Stock photos, video and music search use these in the Studio.")
     return RedirectResponse("/connections#stock", status_code=303)
