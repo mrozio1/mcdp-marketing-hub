@@ -78,6 +78,10 @@
 
       <section data-vpanel="text" hidden>
         <p class="small muted">Adds text at the playhead. Drag it on the video to place it; double-click (or tap Edit text) to type. Pick its font and animation in its panel.</p>
+        <h3>Styles</h3>
+        <p class="small muted">Ready-made looks with their own animations. With text selected, a style changes that text.</p>
+        <div class="vd-tstyles" data-tstyles></div>
+        <h3>Basic text</h3>
         <div class="vd-textadd">
           <button type="button" data-addtext="title" class="vd-ta vd-ta-title">Title</button>
           <button type="button" data-addtext="subtitle" class="vd-ta vd-ta-sub">Subtitle</button>
@@ -191,7 +195,7 @@
 <script type="application/json" id="vd-config">{{ {
   "iid": it.id, "pid": pid, "canEdit": can_edit, "brand": brand_name, "primary": look.primary, "accent": look.accent,
   "uploadsFolder": uploads_folder, "render": render, "maxTotal": max_total, "chunk": 8388608,
-  "transitions": transitions, "presets": presets, "motions": motions, "animIn": anim_in, "animOut": anim_out, "animLoop": anim_loop, "fontGroups": font_groups,
+  "transitions": transitions, "presets": presets, "motions": motions, "animIn": anim_in, "animOut": anim_out, "animLoop": anim_loop, "fontGroups": font_groups, "frameAnims": frame_anims, "loopPeriod": loop_period,
   "bgModes": bg_modes, "speeds": speeds, "fonts": fonts, "bgOk": bg_ok, "stock": stock_keys, "ratios": ratios,
   "effects": effects, "fxGroups": fx_groups, "fxScopes": fx_scopes, "transFx": trans_fx, "sprites": sprites, "spriteFx": sprite_fx
 }|tojson }}</script>

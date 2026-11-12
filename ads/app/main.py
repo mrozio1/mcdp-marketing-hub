@@ -4901,7 +4901,7 @@ def studio_video_page(request: Request, iid: int):
                 pid=pid, render=studio_video.status(iid), max_total=studio_video.MAX_TOTAL,
                 transitions=video2.TRANSITIONS, presets=[(k, v[0], v[1]) for k, v in video2.PRESETS.items()],
                 motions=video2.MOTIONS, anim_in=video2.ANIM_IN, anim_out=video2.ANIM_OUT, anim_loop=video2.ANIM_LOOP,
-                font_groups=video2.FONT_GROUPS, font_single=video2.FONT_SINGLE, bg_modes=video2.BG_MODES,
+                font_groups=video2.FONT_GROUPS, font_single=video2.FONT_SINGLE, frame_anims=sorted(video2.FRAME_ANIMS), loop_period=video2.LOOP_PERIOD, bg_modes=video2.BG_MODES,
                 fonts=video2.FONTS, bg_ok=bgremove.available(), stock_keys=stock.keys(),
                 ratios=[(k, l, w, h) for k, l, w, h in studio_video.SIZES],
                 effects=list(vfx.EFFECTS), fx_groups=list(vfx.GROUPS), fx_scopes=list(vfx.SCOPES), trans_fx=vfx.TRANS_FX,
@@ -5021,12 +5021,19 @@ async def studio_video_render(request: Request, iid: int):
         return JSONResponse({"error": "That video project is gone."}, status_code=404)
     if not studio_video.ffmpeg_ok():
         return JSONResponse({"error": "The video tools aren't installed on the server yet. Run the hub update on the NAS."}, status_code=422)
-    texts = {}
+    texts, frames = {}, {}
     if "multipart/form-data" in request.headers.get("content-type", ""):
-        form = await request.form()
+        form = await request.form(max_files=4000, max_fields=4000)
         for k, v in form.multi_items():
-            if k.startswith("text_") and hasattr(v, "read"):
+            if not hasattr(v, "read"):
+                continue
+            if k.startswith("text_"):
                 texts[re.sub(r"[^a-zA-Z0-9_-]", "", k[5:])[:24]] = await v.read(20 * 1024 * 1024)
+            elif k.startswith("tf_"):                  # tf_<layer>_<in|mid|out>_<n>: frames of an animated text layer
+                m = re.fullmatch(r"tf_([A-Za-z0-9]{1,24})_(in|mid|out)_(\d{1,4})", k)
+                if m:
+                    frames.setdefault(m[1], {}).setdefault(m[2], []).append((int(m[3]), await v.read(8 * 1024 * 1024)))
+        texts["__frames__"] = {lid: {seg: [b for _, b in sorted(fs)] for seg, fs in segs.items()} for lid, segs in frames.items()}
     started = studio_video.render(iid, actor(request), texts)
     return {**studio_video.status(iid), "started": started}
 

@@ -63,7 +63,34 @@ ANIM_IN = (("none", "None"), ("fade", "Fade"), ("pop", "Pop"), ("bounce", "Bounc
 ANIM_OUT = (("none", "None"), ("fade", "Fade"), ("popout", "Shrink"), ("zoomout", "Grow"), ("typewriter", "Erase"), ("wipe", "Wipe"),
             ("slideup", "Slide up"), ("slidedown", "Slide down"), ("slideleft", "Slide left"), ("slideright", "Slide right"))
 ANIM_LOOP = (("none", "None"), ("pulse", "Pulse"), ("bob", "Float"), ("wiggle", "Wiggle"), ("blink", "Blink"))
-NO_FADE = ("none", "wipe", "typewriter")
+# letter-by-letter and styled animations: drawn frame by frame by the editor (the same drawing as its preview)
+# and sent with the export; here they're only played back, in the layer's own place
+TEXT_IN = (("letters", "Letters pop"), ("rise", "Letters rise"), ("dropin", "Letters drop"), ("lfade", "Letters fade"),
+           ("words", "Words pop"), ("spread", "Spread"), ("scatter", "Scatter"), ("flickeron", "Neon on"),
+           ("typecursor", "Type + cursor"), ("glitchin", "Glitch in"))
+TEXT_OUT = (("lettersout", "Letters shrink"), ("fall", "Letters fall"), ("lfadeout", "Letters fade"), ("wordsout", "Words out"),
+            ("scatterout", "Scatter"), ("flickeroff", "Neon off"), ("glitchout", "Glitch out"))
+TEXT_LOOP = (("wave", "Wave"), ("jitter", "Jitter"), ("swing", "Swing"), ("rainbow", "Rainbow"), ("neon", "Neon flicker"),
+             ("shine", "Shine"), ("glitch", "Glitch"))
+LOOP_PERIOD = {"wave": 1.2, "jitter": 0.5, "swing": 1.6, "rainbow": 2.0, "neon": 2.0, "shine": 1.6, "glitch": 1.2}
+FRAME_ANIMS = {k for k, _ in TEXT_IN + TEXT_OUT + TEXT_LOOP}
+ANIM_IN, ANIM_OUT, ANIM_LOOP = ANIM_IN + TEXT_IN, ANIM_OUT + TEXT_OUT, ANIM_LOOP + TEXT_LOOP
+NO_FADE = ("none", "wipe", "typewriter", *FRAME_ANIMS)
+SHADES = ("none", "drop", "hard", "long", "3d")
+BG_SHAPES = ("box", "pill", "highlight", "underline")
+
+
+def text_pad(L):
+    """Room around a text layer's box for glows, shadows and letters that move (same as textPad() in the editor)."""
+    if L.get("kind") != "text":
+        return 0, 0
+    s_ = float(L.get("size") or 72)
+    return int(round(s_ * 1.0)), int(round(s_ * 1.4))
+
+
+def uses_frames(L):
+    a = L.get("anim") or {}
+    return L.get("kind") == "text" and any(a.get(k) in FRAME_ANIMS for k in ("in", "out", "loop"))
 BG_MODES = (("blur", "Blurred copy"), ("color", "Brand colour"), ("photo", "A photo"), ("black", "Black"))
 SPEEDS = (0.5, 0.75, 1, 1.25, 1.5, 2)
 # fonts for text layers (Google Fonts, free for any use), by kind; "single" ones have one weight only
@@ -265,7 +292,14 @@ def clean(p, w, h):
                           "align": c.get("align") if c.get("align") in ("left", "center", "right") else "center",
                           "stroke": _color(c.get("stroke"), "") if c.get("stroke") else "",
                           "strokew": round(_num(c.get("strokew"), 0.01, 0.3, 0.08), 3), "shadow": bool(c.get("shadow")),
-                          "caps": bool(c.get("caps"))})
+                          "caps": bool(c.get("caps")),
+                          "grad": _color(c.get("grad"), "") if c.get("grad") else "", "glow": _color(c.get("glow"), "") if c.get("glow") else "",
+                          "shade": c.get("shade") if c.get("shade") in SHADES else ("drop" if c.get("shadow") else "none"),
+                          "shadec": _color(c.get("shadec"), "#000000"),
+                          "bgshape": c.get("bgshape") if c.get("bgshape") in BG_SHAPES else "box",
+                          "spacing": round(_num(c.get("spacing"), -0.1, 0.8, 0), 3),
+                          "stroke2": _color(c.get("stroke2"), "") if c.get("stroke2") else ""})
+                L["shadow"] = L["shade"] == "drop"
         L.update({"x": round(_num(c.get("x"), -w, 2 * w, w * 0.25), 1), "y": round(_num(c.get("y"), -h, 2 * h, h * 0.25), 1),
                   "w": round(_num(c.get("w"), 8, 4 * w, w * 0.5), 1), "h": round(_num(c.get("h"), 8, 4 * h, h * 0.2), 1),
                   "rot": round(_num(c.get("rot"), -360, 360, 0), 2), "crop": _crop(c.get("crop")),
@@ -519,8 +553,10 @@ def piece_main(src, c, W, H, out, length, has_audio, mask=None, bg_photo=None, s
         f.append(f"[{bg_i}:v]fps={FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},format=rgba[bg]")
         f.append("[bgsrc]nullsink")
     else:
-        f.append(f"[bgsrc]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=24:6,"
-                 f"eq=brightness=-0.06,format=rgba[bg]")
+        # blurred at a quarter of the size, then scaled up: looks the same, a fraction of the work
+        qw, qh = even(W / 4), even(H / 4)
+        f.append(f"[bgsrc]scale={qw}:{qh}:force_original_aspect_ratio=increase,crop={qw}:{qh},boxblur=6:3,"
+                 f"scale={W}:{H}:flags=bilinear,eq=brightness=-0.06,format=rgba[bg]")
     f.append(f"[bg][fg]overlay=x={int(round(box['x']))}:y={int(round(box['y']))}:shortest=1,format=rgb24[comp]")
     chain = []
     mo = motion_expr(c.get("motion", "none"), length, W, H)
@@ -585,10 +621,40 @@ def _trans_fx():
     return vfx.TRANS_FX
 
 
+def text_clip(frames, ln, workdir, lid):
+    """A text layer drawn by the editor: in-frames, a middle (one loop period, repeated, or one still) and out-frames,
+    joined into one see-through clip of the layer's length."""
+    d = os.path.join(workdir, f"tf_{lid}")
+    os.makedirs(d, exist_ok=True)
+    args, segs = ["ffmpeg", "-y", "-v", "error"], []
+    nin, nmid, nout = (len(frames.get(k) or []) for k in ("in", "mid", "out"))
+    if not nmid:
+        return None
+    mid = max(1 / FPS, ln - nin / FPS - nout / FPS)
+    for seg, count in (("in", nin), ("mid", nmid), ("out", nout)):
+        if not count:
+            continue
+        for k, data in enumerate(frames[seg]):
+            with open(os.path.join(d, f"{seg}_{k:04d}.png"), "wb") as f:
+                f.write(data)
+        pat = os.path.join(d, f"{seg}_%04d.png")
+        if seg == "mid":
+            args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{mid:.3f}", "-i", pat]
+        else:
+            args += ["-framerate", str(FPS), "-i", pat]
+        segs.append(f"[{len(segs)}:v]format=rgba,setsar=1[s{len(segs)}]")
+    out = os.path.join(workdir, f"tf_{lid}.mov")
+    graph = ";".join(segs) + ";" + "".join(f"[s{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=0,format=rgba[v]"
+    run(args + ["-filter_complex", graph, "-map", "[v]", "-t", f"{ln:.3f}", "-c:v", "png", "-pix_fmt", "rgba", out])
+    return out
+
+
 def text_png(L, path):
     """Server-side stand-in for a text layer the browser didn't send (DejaVu, wrapped to the box)."""
     from PIL import Image, ImageDraw, ImageFont
+    px, py = text_pad(L)
     w, h = even(L["w"]), even(L["h"])
+    full = Image.new("RGBA", (even(L["w"] + 2 * px), even(L["h"] + 2 * py)), (0, 0, 0, 0))
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     font_file = os.path.join("/usr/share/fonts/truetype/dejavu", "DejaVuSans-Bold.ttf" if L.get("bold") else "DejaVuSans.ttf")
@@ -610,7 +676,8 @@ def text_png(L, path):
             d.text((x + off, y + off), line, font=font, fill=(0, 0, 0, 140), stroke_width=sw, stroke_fill=(0, 0, 0, 140))
         d.text((x, y), line, font=font, fill=L["color"], stroke_width=sw, stroke_fill=L.get("stroke") or None)
         y += lh
-    img.save(path, "PNG")
+    full.alpha_composite(img, (px, py))
+    full.save(path, "PNG")
 
 
 def overlay_stage(main_mp4, p, layers_src, out, total_len, ass=None, fontsdir=None, music=None):
@@ -631,6 +698,11 @@ def overlay_stage(main_mp4, p, layers_src, out, total_len, ass=None, fontsdir=No
             vi = n
             n += 1
             timing = f"setpts=(PTS-STARTPTS)/{L['speed']}"
+        elif src.get("clip"):                  # a text layer the editor drew frame by frame
+            args += ["-i", src["clip"]]
+            vi = n
+            n += 1
+            timing = "setpts=PTS-STARTPTS"
         else:
             args += ["-loop", "1", "-framerate", str(FPS), "-t", f"{ln:.3f}", "-i", src["path"]]
             vi = n
@@ -651,7 +723,8 @@ def overlay_stage(main_mp4, p, layers_src, out, total_len, ass=None, fontsdir=No
                      f"crop={cw}:{ch}:{cx}:{cy},format=gray[lm{idx}]")
             f.append(f"[{lab_src}][lm{idx}]alphamerge[lsa{idx}]")
             lab_src = f"lsa{idx}"
-        lw, lh = even(L["w"]), even(L["h"])
+        px, py = text_pad(L)                       # text pictures carry room around the box
+        lw, lh = even(L["w"] + 2 * px), even(L["h"] + 2 * py)
         gf = grade_filter(L.get("filter")) if L["kind"] != "text" else ""
         ax = anim_exprs(L, ln, W, H)
         q = lambda e, tvar: "'" + e.replace("T", tvar).replace(",", "\\,") + "'"
@@ -676,14 +749,16 @@ def overlay_stage(main_mp4, p, layers_src, out, total_len, ass=None, fontsdir=No
             f.append(f"color=c=black@0:s={lw}x{lh}:r={FPS}:d={d + 0.1:.3f},format=rgba,settb=1/{FPS}[bl{side}{idx}]")
             prog = "(1-P)"
             if side == "in":
-                cut = f"W*floor({prog}*{n_chars})/{n_chars}" if kind == "typewriter" else f"W*{prog}"
+                inner = f"{L['w'] * lw / (L['w'] + 2 * px):.2f}"
+                cut = (f"{px}+{inner}*floor({prog}*{n_chars})/{n_chars}" if kind == "typewriter" else f"{px}+{inner}*{prog}")
                 expr = f"if(lt(X,{cut}),B,A)"
                 f.append(f"[bl{side}{idx}][{cur}]xfade=transition=custom:duration={d:.3f}:offset=0:expr='{expr.replace(',', chr(92) + ',')}'[rv{side}{idx}]")
             else:
+                inner = f"{L['w'] * lw / (L['w'] + 2 * px):.2f}"
                 if kind == "typewriter":
-                    expr = f"if(lt(X,W*(1-floor({prog}*{n_chars})/{n_chars})),A,B)"
+                    expr = f"if(lt(X,{px}+{inner}*(1-floor({prog}*{n_chars})/{n_chars})),A,B)"
                 else:
-                    expr = f"if(lt(X,W*{prog}),B,A)"
+                    expr = f"if(lt(X,{px}+{inner}*{prog}),B,A)"
                 f.append(f"[{cur}][bl{side}{idx}]xfade=transition=custom:duration={d:.3f}:offset={max(0, ln - d):.3f}:"
                          f"expr='{expr.replace(',', chr(92) + ',')}'[rv{side}{idx}]")
             cur = f"rv{side}{idx}"

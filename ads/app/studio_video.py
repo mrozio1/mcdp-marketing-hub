@@ -379,6 +379,19 @@ def render(iid, by="", texts=None):
     return True
 
 
+def _pad_text_png(L, path):
+    """A text picture from an editor page loaded before text got room around it: add the room here."""
+    from PIL import Image
+    px, py = video2.text_pad(L)
+    with Image.open(path) as im:
+        w, h = im.size
+        if abs(w - L["w"]) > 4 or abs(h - L["h"]) > 4 or (not px and not py):
+            return
+        full = Image.new("RGBA", (int(L["w"] + 2 * px), int(L["h"] + 2 * py)), (0, 0, 0, 0))
+        full.alpha_composite(im.convert("RGBA").resize((int(L["w"]), int(L["h"]))), (px, py))
+    full.save(path, "PNG")
+
+
 def _dims(it, path):
     if it["kind"] in ("image", "design"):
         from PIL import Image
@@ -461,9 +474,16 @@ def _render(iid, by, texts=None):
                 if data and data.startswith(b"\x89PNG"):
                     with open(path, "wb") as f:
                         f.write(data)
+                    _pad_text_png(L, path)
                 else:
                     video2.text_png(L, path)
-                layer_src[L["id"]] = {"path": path, "w": int(L["w"]), "h": int(L["h"]), "audio": False}
+                src_ = {"path": path, "w": int(L["w"]), "h": int(L["h"]), "audio": False}
+                fr = (texts.get("__frames__") or {}).get(L["id"])
+                if fr and video2.uses_frames(L):
+                    clip = video2.text_clip(fr, video2.layer_len(L), work, L["id"])
+                    if clip:
+                        src_["clip"] = clip
+                layer_src[L["id"]] = src_
             else:
                 src_it, src = local(L["item"])
                 sw, sh, aud = _dims(src_it, src)

@@ -345,3 +345,49 @@ def test_text_animations_fonts_and_styles(env):
     assert b["font"] == "DejaVu Sans" and b["anim"]["din"] == 3                     # unknown font falls back; lengths are kept in range
     v._render(iid, "Amber", {})
     assert v.status(iid)["state"] == "done", v.status(iid)
+
+
+def test_letter_animations_play_the_editors_frames(env):
+    """Letter-by-letter text animations: the editor sends the frames, the export plays them in the layer's place."""
+    from PIL import Image
+    v, ed, studio, ids = env["v"], env["ed"], env["studio"], env["ids"]
+    from app import video2
+    iid = v.create_project(env["pid"], None, "story", "Letters", "Amber", [ids["clip"]])
+    p = v.project(iid)
+    L = {"id": "neon1", "kind": "text", "track": 1, "start": 0.5, "dur": 2.5, "x": 140, "y": 800, "w": 800, "h": 160, "size": 100,
+         "text": "OPEN LATE", "font": "Righteous", "color": "#FFFFFF", "glow": "#FF2BD6", "shade": "long", "bgshape": "pill",
+         "anim": {"in": "letters", "out": "fall", "loop": "wave", "din": 0.5, "dout": 0.5}}
+    p["layers"] = [L]
+    v.save_project(iid, p)
+    q = v.project(iid)
+    Lq = q["layers"][0]
+    assert video2.uses_frames(Lq) and Lq["glow"] == "#FF2BD6" and Lq["shade"] == "long" and Lq["bgshape"] == "pill"
+    px, py = video2.text_pad(Lq)
+    size = (int(Lq["w"]) + 2 * px, int(Lq["h"]) + 2 * py)
+
+    def png(colour):
+        b = io.BytesIO(); Image.new("RGBA", size, colour).save(b, "PNG"); return b.getvalue()
+    files = [("text_neon1", ("s.png", png((0, 0, 255, 255)), "image/png"))]
+    files += [(f"tf_neon1_in_{k}", (f"{k}.png", png((255, 0, 0, 255)), "image/png")) for k in range(15)]     # red while coming in
+    files += [(f"tf_neon1_mid_{k}", (f"{k}.png", png((0, 255, 0, 255)), "image/png")) for k in range(36)]    # green in the middle
+    files += [(f"tf_neon1_out_{k}", (f"{k}.png", png((255, 255, 0, 255)), "image/png")) for k in range(15)]  # yellow going out
+    r = ed.post(f"/studio/video/{iid}/render", files=files)
+    assert r.status_code == 200, r.text
+    for _ in range(240):
+        if v.status(iid).get("state") in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert v.status(iid)["state"] == "done", v.status(iid)
+    out = studio.local_path(studio.item(iid))
+    cx, cy = int(Lq["x"] + Lq["w"] / 2), int(Lq["y"] + Lq["h"] / 2)
+
+    def colour_at(t):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", out, "-frames:v", "1", "-vf", f"crop=2:2:{cx}:{cy}",
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return tuple(raw[:3])
+    r0, g0, b0 = colour_at(0.7)
+    assert r0 > 200 and g0 < 80                       # the in-frames
+    r1, g1, b1 = colour_at(1.8)
+    assert g1 > 200 and r1 < 80                       # the looping middle
+    r2, g2, b2 = colour_at(2.85)
+    assert r2 > 200 and g2 > 200 and b2 < 80          # the out-frames

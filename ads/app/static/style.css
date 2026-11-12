@@ -2029,3 +2029,8 @@ button.vd-lab:hover { background: #F2F0EB; }
 .vd-animtabs { margin-top: 0; }
 .vd-ta-outline { font-family: Anton, sans-serif; font-size: 1.4rem; letter-spacing: 0.02em; -webkit-text-stroke: 1.5px #111; color: #fff; background: #3A4A60; }
 .vd-ta-shadow { font-family: Pacifico, cursive; font-size: 1.2rem; text-shadow: 2px 3px 0 rgba(0,0,0,.5); }
+.vd-tstyles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 0.6rem; }
+.vd-tstyles button { display: flex; flex-direction: column; gap: 3px; border: 2px solid transparent; background: none; border-radius: 9px; padding: 0 0 3px; font: inherit; font-size: 0.72rem; cursor: pointer; color: var(--ink); }
+.vd-tstyles button:hover canvas { outline: 2px solid var(--teal); }
+.vd-tstyles canvas { width: 100%; aspect-ratio: 3 / 2; border-radius: 7px; display: block; }
+@media (max-width: 760px) { .vd-tstyles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

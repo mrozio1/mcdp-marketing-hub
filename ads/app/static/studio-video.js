@@ -377,36 +377,168 @@
   }
 
   // text: one drawing routine for the preview and for the picture sent to the renderer
+  // ================================================================ text: laid out letter by letter, so each letter can move,
+  // and drawn the same way in the preview, the style tiles and the pictures sent with the export
+  const FRAME = new Set(C.frameAnims || []);
+  const textPad = L => L.kind === "text" ? [Math.round((L.size || 72) * 1.0), Math.round((L.size || 72) * 1.4)] : [0, 0];
+  const usesFrames = L => L.kind === "text" && ["in", "out", "loop"].some(k => FRAME.has((L.anim || {})[k]));
+  const setFont = (x, L) => { x.font = `${L.bold ? 700 : 400} ${L.size}px "${L.font}", "DejaVu Sans", sans-serif`; };
+  const lineW = (x, str, sp) => x.measureText(str).width + sp * Math.max(0, [...str].length - 1);
   function textLines(x, L) {
-    const pad = L.size * 0.3, maxw = Math.max(10, L.w - pad * 2), out = [];
-    x.font = `${L.bold ? 700 : 400} ${L.size}px "${L.font}", "DejaVu Sans", sans-serif`;
+    const pad = L.size * 0.3, maxw = Math.max(10, L.w - pad * 2), out = [], sp = (L.spacing || 0) * L.size;
+    setFont(x, L);
     String(L.caps ? String(L.text).toUpperCase() : L.text).split("\n").forEach(par => {
       let line = "";
       par.split(/\s+/).forEach(wd => {
         const tryl = line ? line + " " + wd : wd;
-        if (x.measureText(tryl).width > maxw && line) { out.push(line); line = wd; } else line = tryl;
+        if (lineW(x, tryl, sp) > maxw && line) { out.push(line); line = wd; } else line = tryl;
       });
       out.push(line);
     });
     return out;
   }
-  function drawText(x, L) {
-    const lines = textLines(x, L), lh = L.size * 1.2, pad = L.size * 0.3;
-    if (L.fill) {
-      x.fillStyle = L.fill; const r = Math.min(L.w, L.h) * 0.12;
-      x.beginPath(); x.roundRect ? x.roundRect(0, 0, L.w, L.h, r) : x.rect(0, 0, L.w, L.h); x.fill();
-    }
-    x.fillStyle = L.color; x.textBaseline = "top"; x.textAlign = L.align === "left" ? "left" : L.align === "right" ? "right" : "center";
-    let y = (L.h - lh * lines.length) / 2 + (lh - L.size) / 2;
-    const tx = L.align === "left" ? pad : L.align === "right" ? L.w - pad : L.w / 2;
-    const sw = L.stroke ? Math.max(1, L.size * (L.strokew || 0.08)) : 0;
+  const layoutCache = new Map();
+  if (document.fonts) document.fonts.addEventListener("loadingdone", () => { layoutCache.clear(); requestDraw(); });
+  function textLayout(x, L) {
+    const key = [L.text, L.font, L.size, L.bold, L.w, L.h, L.align, L.spacing || 0, L.caps ? 1 : 0].join("|");
+    let lay = layoutCache.get(key); if (lay) return lay;
+    const lines = textLines(x, L), lh = L.size * 1.2, pad = L.size * 0.3, sp = (L.spacing || 0) * L.size;
+    let y = (L.h - lh * lines.length) / 2 + (lh - L.size) / 2, ci = 0, wi = -1;
+    const rows = [], glyphs = [];
     lines.forEach(line => {
-      if (L.shadow) { x.save(); x.fillStyle = "rgba(0,0,0,0.55)"; const o = Math.max(2, L.size * 0.06);
-        if (sw) { x.lineJoin = "round"; x.lineWidth = sw * 2; x.strokeStyle = "rgba(0,0,0,0.55)"; x.strokeText(line, tx + o, y + o); }
-        x.fillText(line, tx + o, y + o); x.restore(); }
-      if (sw) { x.lineJoin = "round"; x.lineWidth = sw * 2; x.strokeStyle = L.stroke; x.strokeText(line, tx, y); }
-      x.fillText(line, tx, y); y += lh;
+      const chars = [...line], w = lineW(x, line, sp);
+      const x0 = L.align === "left" ? pad : L.align === "right" ? L.w - pad - w : (L.w - w) / 2;
+      rows.push({ x0, y, w, text: line });
+      let prevSpace = true;
+      chars.forEach((ch, k) => {
+        const space = /\s/.test(ch); if (!space && prevSpace) wi++;
+        glyphs.push({ ch, x: x0 + x.measureText(chars.slice(0, k).join("")).width + sp * k, y, w: x.measureText(ch).width, space, ci: space ? -1 : ci, word: Math.max(0, wi) });
+        if (!space) ci++; prevSpace = space;
+      });
+      y += lh;
     });
+    lay = { rows, glyphs, n: Math.max(1, ci), nw: Math.max(1, wi + 1), plain: !(L.spacing) };
+    if (layoutCache.size > 200) layoutCache.clear();
+    layoutCache.set(key, lay); return lay;
+  }
+  const rnd = (i, k) => { const v = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
+  // where each letter is, how big and how see-through, at time tl of the layer (only the letter-by-letter animations)
+  function glyphStates(L, lay, tl, len) {
+    const A = L.anim || {}, s_ = L.size, n = lay.n, nw = lay.nw;
+    const st = { bg: 1, cursor: null, glow: 1, shine: null };
+    const one = () => ({ dx: 0, dy: 0, sc: 1, rot: 0, a: 1, hue: null, split: 0 });
+    const gs = lay.glyphs.map(one);
+    if (tl === null || !(FRAME.has(A.in) || FRAME.has(A.out) || FRAME.has(A.loop))) return { gs, st };
+    const [din, dout] = animTimes(A, len);
+    const P = din ? clamp(tl / din, 0, 1) : 1, Qo = dout ? clamp((tl - (len - dout)) / dout, 0, 1) : 0;
+    const E = p => 1 - Math.pow(1 - p, 3), BK = p => 1 + 2.70158 * Math.pow(p - 1, 3) + 1.70158 * Math.pow(p - 1, 2), Q = p => p * p;
+    const stag = (p0, idx, cnt) => { const each = 0.5, gap = cnt > 1 ? (1 - each) / (cnt - 1) : 0; return clamp((p0 - idx * gap) / each, 0, 1); };
+    if (FRAME.has(A.in)) st.bg *= E(P);
+    if (FRAME.has(A.out)) st.bg *= 1 - Q(Qo);
+    lay.glyphs.forEach((g, j) => {
+      const o = gs[j], ci = Math.max(0, g.ci);
+      switch (A.in) {
+        case "letters": { const p = stag(P, ci, n); o.sc *= Math.max(0, BK(p)); o.a *= Math.min(1, p * 3); break; }
+        case "rise": { const p = stag(P, ci, n); o.dy += (1 - E(p)) * s_ * 0.9; o.a *= p; break; }
+        case "dropin": { const p = stag(P, ci, n); o.dy += -(1 - BK(p)) * s_ * 1.1; o.a *= Math.min(1, p * 2); break; }
+        case "lfade": o.a *= stag(P, ci, n); break;
+        case "words": { const p = stag(P, g.word, nw); o.sc *= Math.max(0, BK(p)); o.a *= Math.min(1, p * 3); break; }
+        case "spread": o.dx += (ci - (n - 1) / 2) * s_ * 0.45 * (1 - E(P)); o.a *= P; break;
+        case "scatter": { const p = stag(P, ci, n), r1 = rnd(ci, 1) - 0.5, r2 = rnd(ci, 2) - 0.5;
+          o.dx += r1 * s_ * 4 * (1 - E(p)); o.dy += r2 * s_ * 3 * (1 - E(p)); o.rot += r1 * 2 * (1 - E(p)); o.a *= p; break; }
+        case "flickeron": { const on = P >= 0.9 || rnd(ci, Math.floor(tl * 18)) < P * 0.9; o.a *= on ? 1 : 0.08; break; }
+        case "typecursor": o.a *= ci < Math.floor(P * n) ? 1 : 0; break;
+        case "glitchin": { const f = Math.floor(tl * 24), k = 1 - P; o.dx += (rnd(ci, f) - 0.5) * s_ * 0.5 * k; o.split += s_ * 0.12 * k; o.a *= Math.min(1, P * 1.5 + 0.2); break; }
+      }
+      switch (A.out) {
+        case "lettersout": { const p = stag(Qo, ci, n); o.sc *= 1 - E(p); o.a *= 1 - p; break; }
+        case "fall": { const p = stag(Qo, ci, n); o.dy += Q(p) * s_ * 2.5; o.rot += (rnd(ci, 3) - 0.5) * 1.6 * p; o.a *= 1 - p; break; }
+        case "lfadeout": o.a *= 1 - stag(Qo, ci, n); break;
+        case "wordsout": { const p = stag(Qo, g.word, nw); o.sc *= 1 - E(p); o.a *= 1 - p; break; }
+        case "scatterout": { const p = stag(Qo, ci, n), r1 = rnd(ci, 1) - 0.5, r2 = rnd(ci, 2) - 0.5;
+          o.dx += r1 * s_ * 4 * Q(p); o.dy += r2 * s_ * 3 * Q(p); o.rot += r1 * 2 * Q(p); o.a *= 1 - p; break; }
+        case "flickeroff": { const on = Qo <= 0.1 || rnd(ci, Math.floor(tl * 18)) > Qo * 0.9; o.a *= Qo >= 1 ? 0 : on ? 1 : 0.08; break; }
+        case "glitchout": { const f = Math.floor(tl * 24); o.dx += (rnd(ci, f) - 0.5) * s_ * 0.5 * Qo; o.split += s_ * 0.12 * Qo; o.a *= 1 - Math.max(0, Qo * 1.5 - 0.5); break; }
+      }
+      switch (A.loop) {
+        case "wave": o.dy += -s_ * 0.16 * Math.sin(2 * Math.PI * tl / 1.2 - ci * 0.55); break;
+        case "jitter": { const f = Math.floor(tl * 12) % 6; o.dx += (rnd(ci, f + 10) - 0.5) * s_ * 0.08; o.dy += (rnd(ci, f + 20) - 0.5) * s_ * 0.08; break; }
+        case "swing": o.rot += 0.16 * Math.sin(2 * Math.PI * tl / 1.6 + ci * 0.6); break;
+        case "rainbow": o.hue = ((tl / 2) * 360 + ci * 28) % 360; break;
+        case "glitch": { const m = tl % 1.2; if (m < 0.18) { const f = Math.floor(m * 24); o.dx += (rnd(ci, f + 40) - 0.5) * s_ * 0.3; o.split += s_ * 0.08; } break; }
+      }
+    });
+    if (A.loop === "neon") { const m = tl % 2, dim = (m > 0.3 && m < 0.36) || (m > 0.42 && m < 0.47) || (m > 1.3 && m < 1.35); st.glow = dim ? 0.25 : 1; if (dim) gs.forEach(o => { o.a *= 0.4; }); }
+    if (A.in === "flickeron" && P < 0.9) st.glow = 0.5;
+    if (A.loop === "shine") st.shine = (tl % 1.6) / 1.6;
+    if (A.in === "typecursor" && tl < din) {
+      const shown = Math.floor(P * n), last = [...lay.glyphs].reverse().find(g => g.ci >= 0 && g.ci < shown) || lay.glyphs.find(g => g.ci === 0);
+      if (last && (P < 1 || Math.floor(tl * 2.5) % 2 === 0)) st.cursor = shown ? { x: last.x + last.w + s_ * 0.05, y: last.y } : { x: last.x, y: last.y };
+    }
+    return { gs, st };
+  }
+  // draws a text layer into x, whose origin is the top-left of the layer's box; k = canvas pixels per design pixel
+  function drawText(x, L, tl = null, len = null, k = 1) {
+    setFont(x, L);
+    const lay = textLayout(x, L), s_ = L.size, { gs, st } = glyphStates(L, lay, tl, len ?? layerLen(L));
+    x.textBaseline = "top"; x.textAlign = "left"; x.lineJoin = "round";
+    // the background shape
+    if (L.fill) {
+      x.save(); x.globalAlpha *= st.bg; x.fillStyle = L.fill;
+      const shape = L.bgshape || "box", rr = (X_, Y_, W_, H_, r) => { x.beginPath(); x.roundRect ? x.roundRect(X_, Y_, W_, H_, r) : x.rect(X_, Y_, W_, H_); x.fill(); };
+      if (shape === "box") rr(0, 0, L.w, L.h, Math.min(L.w, L.h) * 0.12);
+      else if (shape === "pill") rr(0, 0, L.w, L.h, Math.min(L.w, L.h) / 2);
+      else lay.rows.forEach(r => { if (!r.text.trim()) return;
+        if (shape === "highlight") rr(r.x0 - s_ * 0.15, r.y + s_ * 0.12, r.w + s_ * 0.3, s_ * 0.86, s_ * 0.1);
+        else rr(r.x0, r.y + s_ * 0.95, r.w, s_ * 0.13, s_ * 0.05); });
+      x.restore();
+    }
+    const plain = lay.plain && gs.every(o => !o.dx && !o.dy && o.sc === 1 && !o.rot && o.a === 1 && o.hue === null && !o.split);
+    // one pass draws every letter (or whole lines, when nothing moves) with draw(text, left, top)
+    const pass = draw => {
+      if (plain) { lay.rows.forEach(r => draw(r.text, r.x0, r.y, null)); return; }
+      lay.glyphs.forEach((g, j) => {
+        const o = gs[j]; if (g.space || o.a <= 0.001 || o.sc <= 0.001) return;
+        x.save(); x.globalAlpha *= Math.min(1, o.a);
+        x.translate(g.x + g.w / 2 + o.dx, g.y + s_ / 2 + o.dy); x.rotate(o.rot); x.scale(o.sc, o.sc);
+        draw(g.ch, -g.w / 2, -s_ / 2, o); x.restore();
+      });
+    };
+    const sw = L.stroke ? Math.max(1, s_ * (L.strokew || 0.08)) : 0;
+    const shade = L.shade || (L.shadow ? "drop" : "none"), sc_ = L.shadec || "#000000";
+    if (shade !== "none") {
+      const offs = shade === "drop" ? [[Math.max(2, s_ * 0.06), Math.max(2, s_ * 0.06)]] : shade === "hard" ? [[s_ * 0.07, s_ * 0.07]]
+        : Array.from({ length: Math.max(2, Math.round(s_ * (shade === "long" ? 0.18 : 0.1))) }, (_, i) => shade === "long" ? [i + 1, i + 1] : [(i + 1) * 0.4, i + 1]);
+      x.save(); x.fillStyle = x.strokeStyle = shade === "drop" ? "rgba(0,0,0,0.55)" : sc_;
+      if (shade === "drop") { x.filter = "none"; }
+      pass((tx, X_, Y_) => offs.forEach(([ox, oy]) => { if (sw || L.stroke2) { x.lineWidth = (sw + (L.stroke2 ? s_ * 0.08 : 0)) * 2; x.strokeText(tx, X_ + ox, Y_ + oy); } x.fillText(tx, X_ + ox, Y_ + oy); }));
+      x.restore();
+    }
+    if (L.stroke2) { x.save(); x.strokeStyle = L.stroke2; x.lineWidth = (sw + s_ * 0.08) * 2; pass((tx, X_, Y_) => x.strokeText(tx, X_, Y_)); x.restore(); }
+    if (sw) { x.save(); x.strokeStyle = L.stroke; x.lineWidth = sw * 2; pass((tx, X_, Y_) => x.strokeText(tx, X_, Y_)); x.restore(); }
+    // the letters, with their gradient or rainbow colour, glow and glitch split
+    const fillFor = (Y_, o) => {
+      if (o && o.hue !== null) return `hsl(${o.hue},95%,62%)`;
+      if (!L.grad) return L.color;
+      const g = x.createLinearGradient(0, Y_, 0, Y_ + s_); g.addColorStop(0, L.color); g.addColorStop(1, L.grad); return g;
+    };
+    x.save();
+    if (L.glow) { x.shadowColor = L.glow; x.shadowBlur = s_ * 0.4 * k * st.glow; }
+    pass((tx, X_, Y_, o) => {
+      if (o && o.split > 0.5) { x.save(); x.shadowBlur = 0; x.globalAlpha *= 0.8; x.fillStyle = "rgba(255,0,80,0.85)"; x.fillText(tx, X_ - o.split, Y_);
+        x.fillStyle = "rgba(0,230,255,0.85)"; x.fillText(tx, X_ + o.split, Y_); x.restore(); }
+      x.fillStyle = fillFor(Y_, o); x.fillText(tx, X_, Y_);
+      if (L.glow && st.glow > 0.5) x.fillText(tx, X_, Y_);
+    });
+    x.restore();
+    if (st.cursor) { x.save(); x.fillStyle = L.color; x.globalAlpha *= 0.9; x.fillRect(st.cursor.x, st.cursor.y + s_ * 0.04, Math.max(2, s_ * 0.07), s_ * 0.95); x.restore(); }
+    if (st.shine !== null) {
+      const [px, py] = textPad(L), bx = -px + (L.w + 2 * px) * (st.shine * 1.6 - 0.3);
+      x.save(); x.globalCompositeOperation = "source-atop";
+      const g = x.createLinearGradient(bx - s_ * 0.9, 0, bx + s_ * 0.9, s_ * 0.6);
+      g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.5, "rgba(255,255,255,0.75)"); g.addColorStop(1, "rgba(255,255,255,0)");
+      x.fillStyle = g; x.fillRect(-px, -py, L.w + 2 * px, L.h + 2 * py); x.restore();
+    }
   }
   function fitTextBox(L) {
     const x = tmp.getContext("2d");
@@ -414,7 +546,7 @@
     L.h = Math.round(Math.max(L.size * 1.3, n * L.size * 1.2 + L.size * 0.5));
   }
   // the same arithmetic as video2.anim_exprs (in, out and loop, with their own lengths)
-  const NO_FADE = ["none", "wipe", "typewriter"];
+  const NO_FADE = ["none", "wipe", "typewriter", ...(C.frameAnims || [])];
   function animTimes(A, len) {
     let din = A.in !== "none" ? (A.din || ANIM_T) : 0, dout = A.out !== "none" ? (A.dout || ANIM_T) : 0;
     if (din + dout > len * 0.9 && din + dout > 0) { const k = len * 0.9 / (din + dout); din *= k; dout *= k; }
@@ -456,9 +588,10 @@
   function drawLayer(L) {
     const tl = t - L.start;
     if (tl < 0 || tl >= layerLen(L)) return;
-    lc.width = Math.max(1, Math.round(L.w * S())); lc.height = Math.max(1, Math.round(L.h * S()));
+    const [px, py] = textPad(L), BW = L.w + 2 * px, BH = L.h + 2 * py;
+    lc.width = Math.max(1, Math.round(BW * S())); lc.height = Math.max(1, Math.round(BH * S()));
     const x = lc.getContext("2d", { willReadFrequently: true }); x.clearRect(0, 0, lc.width, lc.height);
-    if (L.kind === "text") { x.setTransform(S(), 0, 0, S(), 0, 0); drawText(x, L); x.setTransform(1, 0, 0, 1, 0, 0); }
+    if (L.kind === "text") { x.setTransform(S(), 0, 0, S(), px * S(), py * S()); drawText(x, L, tl, layerLen(L), S()); x.setTransform(1, 0, 0, 1, 0, 0); }
     else {
       const el = itemEl(L.id, L.item); if (!ready(el)) return;
       const [sw, sh] = dims(el), cb = cropBox(sw, sh, L.crop);
@@ -481,8 +614,10 @@
     if (an.a <= 0 || an.revealR <= an.revealL) return;
     ctx.save(); ctx.setTransform(S(), 0, 0, S(), 0, 0);
     ctx.translate(L.x + L.w / 2 + an.dx, L.y + L.h / 2 + an.dy); ctx.rotate(L.rot * Math.PI / 180 + an.rot); ctx.scale(an.sc, an.sc);
-    if (an.revealL > 0 || an.revealR < 1) { ctx.beginPath(); ctx.rect(-L.w / 2 + L.w * an.revealL, -L.h / 2, L.w * (an.revealR - an.revealL), L.h); ctx.clip(); }
-    ctx.globalAlpha = an.a; ctx.drawImage(lc, -L.w / 2, -L.h / 2, L.w, L.h);
+    if (an.revealL > 0 || an.revealR < 1) {
+      const l_ = an.revealL > 0 ? -L.w / 2 + L.w * an.revealL : -BW / 2, r_ = an.revealR < 1 ? -L.w / 2 + L.w * an.revealR : BW / 2;
+      ctx.beginPath(); ctx.rect(l_, -BH / 2, Math.max(0, r_ - l_), BH); ctx.clip(); }
+    ctx.globalAlpha = an.a; ctx.drawImage(lc, -BW / 2, -BH / 2, BW, BH);
     ctx.restore();
   }
   function overlays() {
@@ -710,6 +845,78 @@
     if (M) closeSheets(); commit(); requestDraw();
   }
   $$("[data-addtext]").forEach(b => b.addEventListener("click", () => { if (!P.main.length) return say("Add a clip to the main track first."); addText(b.dataset.addtext); }));
+  // ready-made text looks: font, colours, outline, shadow, glow, background and animations together
+  const TSTYLES = [
+    { k: "neon", name: "Neon", sample: "OPEN LATE", font: "Righteous", bold: false, color: "#FFFFFF", glow: "#FF2BD6", caps: true, anim: { in: "flickeron", out: "flickeroff", loop: "neon" } },
+    { k: "outline", name: "Bold outline", sample: "BIG NEWS", font: "Anton", color: "#FFFFFF", stroke: "#111111", strokew: 0.07, caps: true, anim: { in: "letters", out: "lettersout" } },
+    { k: "retro", name: "Retro", sample: "Weekend!", font: "Bungee", color: "#FFD23F", shade: "hard", shadec: "#E4572E", anim: { in: "bounce", out: "fade" } },
+    { k: "pop3d", name: "3D pop", sample: "WOW", font: "Luckiest Guy", color: "#FFFFFF", shade: "3d", shadec: "#7B2CBF", stroke: "#7B2CBF", strokew: 0.04, anim: { in: "dropin", out: "fall" } },
+    { k: "sunset", name: "Sunset", sample: "Golden hour", font: "Poppins", bold: true, color: "#FFC24B", grad: "#FF5E62", anim: { in: "rise", out: "lfadeout" } },
+    { k: "highlight", name: "Highlighter", sample: "Free consult", font: "Montserrat", bold: true, color: "#111111", fill: "#FFE066", bgshape: "highlight", anim: { in: "wipe", out: "fade" } },
+    { k: "pill", name: "Label", sample: "New patients", font: "DM Sans", bold: true, color: "#FFFFFF", fill: C.primary, bgshape: "pill", anim: { in: "pop", out: "popout" } },
+    { k: "typer", name: "Typewriter", sample: "Hello, smile.", font: "Space Grotesk", bold: false, color: "#FFFFFF", anim: { in: "typecursor", out: "fade" } },
+    { k: "script", name: "Script", sample: "Thank you", font: "Great Vibes", bold: false, color: "#FFFFFF", shade: "drop", anim: { in: "lfade", out: "lfadeout" } },
+    { k: "glitch", name: "Glitch", sample: "GLITCH", font: "Bebas Neue", bold: false, color: "#FFFFFF", anim: { in: "glitchin", out: "glitchout", loop: "glitch" } },
+    { k: "rainbow", name: "Rainbow", sample: "Party time", font: "Bangers", bold: false, color: "#FFFFFF", stroke: "#1A1A1A", strokew: 0.05, anim: { in: "letters", loop: "rainbow", out: "fade" } },
+    { k: "underline", name: "Underline", sample: "Meet the team", font: "Playfair Display", bold: true, color: "#FFFFFF", fill: C.accent, bgshape: "underline", anim: { in: "spread", out: "fade" } },
+    { k: "sticker", name: "Sticker", sample: "So fun!", font: "Chewy", bold: false, color: "#FF4D8D", stroke: "#FFFFFF", strokew: 0.09, stroke2: "#1A1A1A", shade: "drop", anim: { in: "bounce", loop: "wiggle", out: "popout" } },
+    { k: "wave", name: "Wavy", sample: "Good vibes", font: "Fredoka", bold: true, color: "#7CF0FF", stroke: "#0A3A5A", strokew: 0.05, anim: { in: "rise", loop: "wave", out: "fade" } },
+    { k: "gold", name: "Elegant gold", sample: "GRAND OPENING", font: "Cinzel", bold: true, color: "#FFF1B8", grad: "#C9A227", spacing: 0.15, caps: true, anim: { in: "spread", loop: "shine", out: "fade" } },
+    { k: "comic", name: "Comic", sample: "POW!", font: "Bangers", bold: false, color: "#FFE600", stroke: "#111111", strokew: 0.06, shade: "hard", shadec: "#111111", anim: { in: "scatter", loop: "jitter", out: "scatterout" } },
+    { k: "long", name: "Long shadow", sample: "Book now", font: "Archivo Black", bold: false, color: "#FFFFFF", shade: "long", shadec: C.primary, anim: { in: "slideup", out: "slidedown" } },
+    { k: "brand", name: "Brand box", sample: "Your brand", font: "Montserrat", bold: true, color: "#FFFFFF", fill: C.primary, bgshape: "box", anim: { in: "words", out: "wordsout" } },
+    { k: "swing", name: "Swing", sample: "Hello!", font: "Pacifico", bold: false, color: "#FFFFFF", shade: "drop", anim: { in: "dropin", loop: "swing", out: "fade" } },
+    { k: "chrome", name: "Shine", sample: "PREMIUM", font: "Archivo Black", bold: false, color: "#FFFFFF", grad: "#9AA4B2", caps: true, anim: { in: "zoomin", loop: "shine", out: "fade" } },
+  ];
+  const STYLE_KEYS = ["font", "bold", "color", "fill", "bgshape", "stroke", "strokew", "stroke2", "shade", "shadec", "glow", "grad", "spacing", "caps"];
+  const STYLE_DEF = { bold: true, fill: "", bgshape: "box", stroke: "", strokew: 0.08, stroke2: "", shade: "none", shadec: "#000000", glow: "", grad: "", spacing: 0, caps: false };
+  function styled(L, st) {
+    STYLE_KEYS.forEach(k => { L[k] = st[k] !== undefined ? st[k] : STYLE_DEF[k] !== undefined ? STYLE_DEF[k] : L[k]; });
+    L.shadow = L.shade === "drop";
+    L.anim = { in: "none", out: "none", loop: "none", din: 0.6, dout: 0.5, ...st.anim };
+    return L;
+  }
+  function applyStyle(k) {
+    const st = TSTYLES.find(x => x.k === k); if (!st) return;
+    if (!P.main.length) return say("Add a clip to the main track first.");
+    let L = curLayer();
+    if (!L || L.kind !== "text") {
+      const start = t, len = Math.max(1, Math.min(4, total() - t || 4));
+      L = { id: uid(), kind: "text", track: nextTrack(start, len), start: +start.toFixed(2), dur: +len.toFixed(2), text: st.sample, size: 100,
+            align: "center", x: P.w * 0.08, y: P.h * 0.4, w: P.w * 0.84, h: 120, rot: 0, crop: noCrop(), opacity: 1, filter: defFilter() };
+      P.layers.push(L); sel = { kind: "layer", id: L.id };
+    }
+    styled(L, st);
+    if (document.fonts) document.fonts.load(`${L.bold ? 700 : 400} 40px "${L.font}"`).then(() => { layoutCache.clear(); fitTextBox(L); requestDraw(); }).catch(() => {});
+    fitTextBox(L); if (M) closeSheets(); commit(); preview(L.start, Math.min(layerLen(L), 2.2));
+  }
+  const tsBox = $("[data-tstyles]");
+  function styleTiles() {
+    if (!tsBox) return;
+    tsBox.innerHTML = TSTYLES.map(st => `<button type="button" data-tstyle="${st.k}" title="${esc(st.name)}"><canvas width="96" height="64" data-tsthumb="${st.k}"></canvas><span>${esc(st.name)}</span></button>`).join("");
+    $$("[data-tsthumb]", tsBox).forEach(c => drawStyleThumb(c, null));
+    if (document.fonts && !styleTiles.asked) { styleTiles.asked = true;
+      Promise.all([...new Set(TSTYLES.map(st => `${st.bold === false ? 400 : 700} 40px "${st.font}"`))].map(f => document.fonts.load(f).catch(() => null)))
+        .then(() => { layoutCache.clear(); $$("[data-tsthumb]", tsBox).forEach(c => drawStyleThumb(c, null)); }); }
+  }
+  function drawStyleThumb(c, tl) {
+    const st = TSTYLES.find(x => x.k === c.dataset.tsthumb), x = c.getContext("2d");
+    const fake = styled({ kind: "text", text: st.sample.length > 10 ? st.sample.split(" ")[0] : st.sample, size: 20, w: 88, h: 40 }, st);
+    x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#2B3A4E"; x.fillRect(0, 0, 96, 64);
+    tmp.width = 96; tmp.height = 64; const t_ = tmp.getContext("2d"); t_.setTransform(1, 0, 0, 1, 0, 0); t_.clearRect(0, 0, 96, 64);
+    t_.translate(4, 12); const len = 3;
+    if (tl !== null) { const an = anim(fake, tl, len); t_.translate(44 + an.dx * 96 / P.w, 20 + an.dy * 96 / P.w); t_.rotate(an.rot); t_.scale(an.sc, an.sc); t_.translate(-44, -20); t_.globalAlpha = an.a; }
+    drawText(t_, fake, tl, len, 1); x.drawImage(tmp, 0, 0);
+  }
+  if (tsBox) {
+    tsBox.addEventListener("click", e => { const b = e.target.closest("[data-tstyle]"); if (b) applyStyle(b.dataset.tstyle); });
+    let raf = 0;
+    tsBox.addEventListener("pointerover", e => { const b = e.target.closest("[data-tstyle]"); if (!b) return; cancelAnimationFrame(raf);
+      const c = b.querySelector("canvas"), t0_ = performance.now();
+      const step = () => { drawStyleThumb(c, ((performance.now() - t0_) / 1000) % 3); raf = requestAnimationFrame(step); }; raf = requestAnimationFrame(step); });
+    tsBox.addEventListener("pointerout", e => { const b = e.target.closest("[data-tstyle]"); if (b && !b.contains(e.relatedTarget)) { cancelAnimationFrame(raf); drawStyleThumb(b.querySelector("canvas"), null); } });
+    if (document.fonts) document.fonts.addEventListener("loadingdone", () => styleTiles());
+  }
 
   // ================================================================ selection on the video: move, resize, rotate, crop
   const selbox = $("[data-selbox]");
@@ -1305,9 +1512,16 @@
           <label class="ed-range">Text colour<input type="color" data-p="color" value="${L.color}"></label>
           <label class="ed-range">Box<input type="color" data-p="fill" value="${L.fill || "#000000"}"><button type="button" class="linklike small" data-nofill>${L.fill ? "No box" : "(none)"}</button></label>
           <div class="vd-swatches">${[C.primary, C.accent, "#FFFFFF", "#1A1A1A"].map(c_ => `<button type="button" style="background:${c_}" data-swatch="${c_}" title="${c_}"></button>`).join("")}</div>
+          ${L.fill ? `<div class="vd-seg">${[["box", "Box"], ["pill", "Pill"], ["highlight", "Highlight"], ["underline", "Underline"]].map(([k_, l_]) =>
+            `<button type="button" data-bgshape="${k_}" class="${(L.bgshape || "box") === k_ ? "on" : ""}">${l_}</button>`).join("")}</div>` : ""}
+          <label class="ed-range">Gradient to<input type="color" data-p="grad" value="${L.grad || "#FFC24B"}"><button type="button" class="linklike small" data-tclear="grad">${L.grad ? "None" : "(none)"}</button></label>
           <label class="ed-range">Outline<input type="color" data-p="stroke" value="${L.stroke || "#000000"}"><button type="button" class="linklike small" data-nostroke>${L.stroke ? "No outline" : "(none)"}</button></label>
           ${L.stroke ? rng("strokew", "Outline thickness", Math.round((L.strokew || 0.08) * 100), 1, 30) : ""}
-          <label class="check vd-check"><input type="checkbox" data-tflag="shadow" ${L.shadow ? "checked" : ""}> Drop shadow</label>
+          ${L.stroke ? `<label class="ed-range">Second outline<input type="color" data-p="stroke2" value="${L.stroke2 || "#111111"}"><button type="button" class="linklike small" data-tclear="stroke2">${L.stroke2 ? "None" : "(none)"}</button></label>` : ""}
+          <label class="ed-range">Glow<input type="color" data-p="glow" value="${L.glow || "#FF2BD6"}"><button type="button" class="linklike small" data-tclear="glow">${L.glow ? "No glow" : "(none)"}</button></label>
+          <label>Shadow<select data-p="shade">${opt([["none", "None"], ["drop", "Soft"], ["hard", "Hard"], ["long", "Long"], ["3d", "3D"]], L.shade || (L.shadow ? "drop" : "none"))}</select></label>
+          ${(L.shade || "none") !== "none" && L.shade !== "drop" ? `<label class="ed-range">Shadow colour<input type="color" data-p="shadec" value="${L.shadec || "#000000"}"></label>` : ""}
+          ${rng("spacing", "Letter spacing", Math.round((L.spacing || 0) * 100), -10, 80)}
           <label class="check vd-check"><input type="checkbox" data-tflag="caps" ${L.caps ? "checked" : ""}> ALL CAPITALS</label>` :
           (L.kind === "video" ? `<div class="st-share-grid"><label>Starts at<input type="number" step="0.1" min="0" data-p="in" value="${L.in}" class="ed-num"></label><label>Ends at<input type="number" step="0.1" data-p="out" value="${L.out}" class="ed-num"></label></div>
             <label>Speed<select data-p="speed">${opt(C.speeds.map(s => [s, s + "×"]), L.speed)}</select></label>${rng("volume", "Volume", Math.round(L.volume * 100), 0, 150)}
@@ -1371,7 +1585,7 @@
     return `<h3 data-sec="anim">Animation</h3>
       <div class="vd-seg vd-animtabs">${[["in", "In"], ["out", "Out"], ["loop", "Loop"]].map(([k, l]) =>
         `<button type="button" data-animtab="${k}" class="${animTab === k ? "on" : ""}">${l}${cur[k] !== "none" ? " •" : ""}</button>`).join("")}</div>
-      <div class="vd-anims">${lists[animTab].filter(([k]) => L.kind === "text" || k !== "typewriter").map(([k, l]) =>
+      <div class="vd-anims">${lists[animTab].filter(([k]) => L.kind === "text" || (k !== "typewriter" && !FRAME.has(k))).map(([k, l]) =>
         `<button type="button" ${attr[animTab]}="${k}" class="${cur[animTab] === k ? "on" : ""}"><canvas width="64" height="64" data-animthumb="${animTab}:${k}"></canvas><span>${esc(l)}</span></button>`).join("")}</div>
       ${animTab !== "loop" && cur[animTab] !== "none" ? rng(`anim.${durKey}`, animTab === "in" ? "How long it takes to come in (seconds)" : "How long it takes to go out (seconds)",
         (L.anim[durKey] || ANIM_T).toFixed(2), 0.15, 3, 0.05) : ""}
@@ -1381,6 +1595,15 @@
   let animThumbRaf = 0;
   function drawAnimThumb(c, tl) {
     const [side, k] = c.dataset.animthumb.split(":"), x = c.getContext("2d");
+    if (FRAME.has(k)) {                                   // letter animations: drawn with the real text engine
+      const fake = { kind: "text", text: "Abc", size: 22, w: 60, h: 30, font: "Montserrat", bold: true, color: "#FFFFFF", glow: k === "neon" || k.startsWith("flicker") ? "#FF2BD6" : "",
+        anim: { in: "none", out: "none", loop: "none", din: 0.8, dout: 0.8 } };
+      fake.anim[side] = k;
+      const len = 2.4, at = side === "in" ? Math.min(tl, len) : side === "out" ? Math.min(len, 1.6 + tl * 0.5) : tl;
+      x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#2B3A4E"; x.fillRect(0, 0, 64, 64);
+      tmp.width = 64; tmp.height = 64; const t_ = tmp.getContext("2d"); t_.setTransform(1, 0, 0, 1, 0, 0); t_.clearRect(0, 0, 64, 64);
+      t_.translate(2, 17); drawText(t_, fake, at, len, 1); x.drawImage(tmp, 0, 0); return;
+    }
     const fake = { kind: "text", text: "Aaaa", opacity: 1, anim: { in: "none", out: "none", loop: "none", din: 0.6, dout: 0.6 } };
     fake.anim[side] = k;
     const len = 2.2, at = side === "in" ? Math.min(tl, len) : side === "out" ? Math.min(len, 1.0 + tl) : tl;
@@ -1472,14 +1695,15 @@
     if (el.dataset.p && el.dataset.p !== "tdur" && target) {
       let v = el.type === "range" || el.type === "number" ? parseFloat(el.value) : el.value, p = el.dataset.p;
       if (p.startsWith("f.")) { target.filter[p.slice(2)] = v / 100; requestDraw(); return; }
-      if (p === "volume" || p === "opacity" || p === "zoom" || p === "strokew") v = v / 100;
+      if (p === "volume" || p === "opacity" || p === "zoom" || p === "strokew" || p === "spacing") v = v / 100;
+      if (p === "shade") { target.shadow = v === "drop"; }
       if (p === "speed") v = parseFloat(v);
       if (p === "bold") v = v === "1";
       if (p === "bg.item") v = v ? +v : null;
       if (p === "in" && c && !c.still) v = clamp(v, 0, c.out - 0.3);
       if (p === "out" && target && !target.still && target.kind !== "text" && target.in !== undefined) v = Math.max(v, (target.in || 0) + 0.3);
       setPath(target, p, v);
-      if (L && L.kind === "text" && ["text", "size", "font", "bold"].includes(p)) fitTextBox(L);
+      if (L && L.kind === "text" && ["text", "size", "font", "bold", "spacing"].includes(p)) fitTextBox(L);
       if (p === "bg.item" && v) ensureItem(v).then(() => requestDraw());
       requestDraw(); placeSel();
       if (el.type !== "range" && el.type !== "color" && el.tagName !== "TEXTAREA") commit(); else commit({ quiet: true });
@@ -1504,7 +1728,10 @@
     if (b.dataset.gosec) { openProps(b.dataset.gosec); return; }
     if (b.dataset.font && L) { L.font = b.dataset.font; fitTextBox(L); document.fonts && document.fonts.load(`${L.bold ? 700 : 400} 40px "${L.font}"`).then(() => { fitTextBox(L); requestDraw(); }).catch(() => {});
       commit(); return; }
-    if (b.hasAttribute("data-nostroke") && L) { L.stroke = ""; commit(); return; }
+    if (b.hasAttribute("data-nostroke") && L) { L.stroke = ""; L.stroke2 = ""; commit(); return; }
+    if (b.dataset.tclear && L) { L[b.dataset.tclear] = ""; commit(); return; }
+    if (b.dataset.bgshape && L) { L.bgshape = b.dataset.bgshape; commit(); return; }
+    if (b.dataset.tstyle) { applyStyle(b.dataset.tstyle); return; }
     if ((b.dataset.ain || b.dataset.aout || b.dataset.aloop) && L) {
       if (b.dataset.ain) L.anim.in = b.dataset.ain; else if (b.dataset.aout) L.anim.out = b.dataset.aout; else L.anim.loop = b.dataset.aloop;
       const [din, dout] = animTimes(L.anim, layerLen(L)); commit();
@@ -1922,19 +2149,39 @@
   function renderState(s) {
     if (!rs) return;
     rs.className = "small vd-render-state";
-    if (s.state === "running") { rs.textContent = `Making the MP4: step ${Math.min(s.step + 1, s.steps)} of ${s.steps}…`; rbtn.disabled = true; }
+    if (s.state === "running") { rs.textContent = s.note || `Making the MP4: step ${Math.min(s.step + 1, s.steps)} of ${s.steps}…`; rbtn.disabled = true; }
     else if (s.state === "done") { rs.innerHTML = `Done (${Math.round(s.length || 0)} s). <a href="/studio/i/${C.iid}">See it</a>`; rbtn.disabled = false; }
     else if (s.state === "error") { rs.textContent = s.error; rs.className = "small vd-render-state st-err"; rbtn.disabled = false; }
     else rs.textContent = "";
   }
   async function pollRender() { clearTimeout(poll); const s = await (await fetch(`/studio/video/${C.iid}/render`)).json(); renderState(s); if (s.state === "running") poll = setTimeout(pollRender, 2000); }
+  function textFrame(L, tl, len) {
+    const [px, py] = textPad(L), c = document.createElement("canvas");
+    c.width = Math.max(2, Math.round((L.w + 2 * px) / 2) * 2); c.height = Math.max(2, Math.round((L.h + 2 * py) / 2) * 2);
+    const x = c.getContext("2d"); x.scale(c.width / (L.w + 2 * px), c.height / (L.h + 2 * py)); x.translate(px, py);
+    drawText(x, L, tl, len, 1);
+    return c;
+  }
+  const pngOf = c => new Promise(r => c.toBlob(r, "image/png"));
   async function textPictures() {
-    const fd = new FormData();
+    const fd = new FormData(), FR = 30;
     await Promise.all([...new Set(P.layers.filter(L => L.kind === "text").map(L => `${L.bold ? 700 : 400} 40px "${L.font}"`))].map(f => document.fonts.load(f).catch(() => null)));
+    layoutCache.clear();
     for (const L of P.layers.filter(L => L.kind === "text")) {
-      const c = document.createElement("canvas"); c.width = Math.max(2, Math.round(L.w / 2) * 2); c.height = Math.max(2, Math.round(L.h / 2) * 2);
-      const x = c.getContext("2d"); x.scale(c.width / L.w, c.height / L.h); drawText(x, L);
-      fd.append(`text_${L.id}`, await new Promise(r => c.toBlob(r, "image/png")), `${L.id}.png`);
+      fd.append(`text_${L.id}`, await pngOf(textFrame(L, null, null)), `${L.id}.png`);
+      if (!usesFrames(L)) continue;
+      const len = layerLen(L), A = L.anim, [din, dout] = animTimes(A, len);
+      const nin = FRAME.has(A.in) ? Math.ceil(din * FR) : 0, nout = FRAME.has(A.out) ? Math.ceil(dout * FR) : 0;
+      const nmid = FRAME.has(A.loop) ? Math.max(1, Math.round((C.loopPeriod[A.loop] || 1) * FR)) : 1;
+      const jobs = [];
+      for (let k = 0; k < nin; k++) jobs.push(["in", k, k / FR]);
+      for (let k = 0; k < nmid; k++) jobs.push(["mid", k, nin / FR + k / FR]);
+      for (let k = 0; k < nout; k++) jobs.push(["out", k, Math.max(0, len - nout / FR) + k / FR]);
+      for (let j = 0; j < jobs.length; j++) {
+        const [seg, k, tt] = jobs[j];
+        if (j % 10 === 0) renderState({ state: "running", step: 0, steps: 1, note: `Preparing the text animation… ${Math.round(j / jobs.length * 100)}%` });
+        fd.append(`tf_${L.id}_${seg}_${k}`, await pngOf(textFrame(L, tt, len)), `${seg}${k}.png`);
+      }
     }
     return fd;
   }
@@ -1974,7 +2221,7 @@
     hist = [JSON.stringify(P)]; hi = 0;
     loadOutro(); fit(); brandPanel(); musicNow(); drawTimeline(); props(); seek(0);
     Object.values(items).forEach(it => { if (it.mask_state === "running") pollBg(it.id); });
-    watchProxies();
+    watchProxies(); styleTiles();
     loadMedia();
     if (C.render && C.render.state === "running") pollRender(); else renderState(C.render || {});
     PPS = M ? 45 : Math.max(15, Math.min(220, (scrollEl.clientWidth - 40) / Math.max(10, total() + 2))); zoomIn.value = toSlider(PPS); drawTimeline();
