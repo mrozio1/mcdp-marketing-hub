@@ -38,7 +38,14 @@ class StockError(RuntimeError):
 
 def keys():
     return {"pixabay": bool(db.get_setting("pixabay_key")), "freesound": bool(db.get_setting("freesound_key")),
-            "pexels": bool(db.get_setting("pexels_key"))}
+            "pexels": bool(db.get_setting("pexels_key")), "unsplash": bool(db.get_setting("unsplash_key"))}
+
+
+def image_provider():
+    """Where template photos and the free photo search come from: Pexels, then Unsplash, then Pixabay (whichever has a key)."""
+    if _tidy_key(db.get_setting("pexels_key")):
+        return "pexels"
+    return "unsplash" if _tidy_key(db.get_setting("unsplash_key")) else "pixabay"
 
 
 def provider():
@@ -54,7 +61,9 @@ def _tidy_key(k):
     return (m.group(1) if m else k).strip() or None
 
 
-def save_keys(pixabay=None, freesound=None, pexels=None):
+def save_keys(pixabay=None, freesound=None, pexels=None, unsplash=None):
+    if unsplash is not None:
+        db.set_setting("unsplash_key", _tidy_key(unsplash))
     if pexels is not None:
         db.set_setting("pexels_key", _tidy_key(pexels))
     if pixabay is not None:
@@ -559,6 +568,70 @@ def pexels_photo_attach(item_id, raw, pid, by=""):
         c.execute("UPDATE studio_items SET folder_id=? WHERE id=?", (photo_folder(pid), item_id))
     _pexels_credit(item_id, hit, "Photo", by)
     return item_id
+
+
+# ------------------------------------------------------------------ Unsplash photos (free; photos stay on Unsplash's servers, as its rules ask)
+UNSPLASH = "https://api.unsplash.com"
+UTM = "utm_source=mcdp_hub&utm_medium=referral"
+
+
+def _unsplash_url(u, hosts=("unsplash.com",)):
+    try:
+        pu = urllib.parse.urlparse(str(u or ""))
+    except ValueError:
+        return ""
+    host = (pu.hostname or "").lower()
+    return str(u) if pu.scheme == "https" and any(host == h or host.endswith("." + h) for h in hosts) else ""
+
+
+def _with_utm(u):
+    return f"{u}{'&' if '?' in u else '?'}{UTM}" if u else ""
+
+
+def unsplash_photo_hit(h, kind="photo"):
+    if not isinstance(h, dict):
+        return None
+    urls, links, user = h.get("urls") or {}, h.get("links") or {}, h.get("user") or {}
+    raw = _unsplash_url(urls.get("raw"))
+    if not raw or not h.get("id"):
+        return None
+    return {"id": str(h["id"])[:40], "provider": "unsplash", "kind": kind, "tags": str(h.get("alt_description") or h.get("description") or "")[:300],
+            "user": str(user.get("name") or "")[:100], "userPage": _with_utm(_unsplash_url((user.get("links") or {}).get("html"))),
+            "page": _with_utm(_unsplash_url(links.get("html"))), "thumb": _unsplash_url(urls.get("small")), "web": _unsplash_url(urls.get("regular")),
+            "file": raw, "w": int(h.get("width") or 0), "h": int(h.get("height") or 0), "dl": _unsplash_url(links.get("download_location"))}
+
+
+def _unsplash_key():
+    key = _tidy_key(db.get_setting("unsplash_key"))
+    if not key:
+        raise StockError("Stock photos need a free Unsplash key. An admin adds it on Connections → Stock and music.")
+    return key
+
+
+def unsplash_photos(q, kind="photo", orientation="", page=1):
+    key = _unsplash_key()
+    q = re.sub(r"\s+", " ", q or "").strip()[:100]
+    if kind == "art":
+        q += " isolated on white background"
+    o = {"horizontal": "landscape", "vertical": "portrait"}.get(orientation, "")
+    page = max(1, min(10, int(page or 1)))
+
+    def fetch():
+        params = {"query": q, "per_page": 30, "page": page, "content_filter": "high", **({"orientation": o} if o else {})}
+        got = _get(UNSPLASH + "/search/photos?" + urllib.parse.urlencode(params), service="Unsplash",
+                   headers={"Authorization": f"Client-ID {key}", "Accept-Version": "v1"})
+        return {"hits": [x for x in (unsplash_photo_hit(h, kind if kind in ("photo", "art") else "photo") for h in got.get("results", [])) if x],
+                "total": got.get("total", 0), "provider": "unsplash"}
+    return _cache(f"uns_{kind}_{o}_{q}_{page}", fetch)
+
+
+def unsplash_used(dl):
+    """Unsplash asks apps to tell it when a photo is used (its download_location address); nothing is downloaded."""
+    url = _unsplash_url(dl, hosts=("api.unsplash.com",))
+    if not url:
+        raise StockError("That isn't an Unsplash address.")
+    _get(url, timeout=15, service="Unsplash", headers={"Authorization": f"Client-ID {_unsplash_key()}", "Accept-Version": "v1"})
+    return True
 
 
 # ------------------------------------------------------------------ music: Freesound (CC0) and the shared Music folder

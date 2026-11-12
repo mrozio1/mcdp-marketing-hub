@@ -180,13 +180,15 @@ SAFE = ("Photorealistic photograph, natural light, warm and welcoming, high qual
         "If people appear, they are relaxed in an everyday moment, shown naturally, not posing as patients.")
 
 
-def prompt_for(practice, kit, focus, idea=""):
+def prompt_for(practice, kit, focus, idea="", plain=False):
     k = kit or {}
     style = " ".join(brand.lines(k, "image_style")) if k.get("image_style") else ""
     place = brand.lines(k, "locations")[:1]
     kind = "orthodontic" if "ortho" in practice["name"].lower() else "dental"
     scene = idea.strip() or (f"a scene that suggests {focus.strip()}" if (focus or "").strip()
                              else f"a bright, modern, friendly {kind} practice")
+    if plain:                                 # a template's scene (pumpkins, autumn leaves…): just the scene, kept safe
+        return (f"{scene}. " + SAFE)[:1900]
     return (f"{scene}, for a family {kind} practice" + (f" in {place[0]}" if place else "") + ". "
             + (f"Style: {style}. " if style else "") + SAFE)[:1900]
 
@@ -197,7 +199,7 @@ IDEAS = ("a bright, modern {kind} office reception with plants and natural light
          "a welcoming treatment room with large windows and calm colors, empty, tidy")
 
 
-def generate(practice, focus="", n=3, kit=None, by="", idea=""):
+def generate(practice, focus="", n=3, kit=None, by="", idea="", plain=False):
     """Make n images and store them in the practice's library as 'generated'. Returns asset ids."""
     Image, _, _ = _pil()
     kit = kit or brand.kit(practice["id"])
@@ -205,7 +207,7 @@ def generate(practice, focus="", n=3, kit=None, by="", idea=""):
     ids = []
     for i in range(max(1, min(4, n))):
         scene = idea or ("" if (focus or "").strip() and i == 0 else IDEAS[i % len(IDEAS)].format(kind=kind))
-        prompt = prompt_for(practice, kit, focus, scene)
+        prompt = prompt_for(practice, kit, focus, scene, plain)
         b64 = _cf_generate(prompt)
         try:
             img = Image.open(io.BytesIO(base64.b64decode(b64)))

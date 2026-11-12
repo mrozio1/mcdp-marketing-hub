@@ -71,7 +71,7 @@
         </div>
         {% endif %}
         <p class="small muted" data-tpl-empty hidden></p>
-        <p class="small muted ed-tpl-credit">Photo spots fill with the practice's own photos where their names match (team, office, patients), otherwise with free pictures from <a href="https://www.pexels.com/" target="_blank" rel="noopener">Pexels</a> (or Pixabay). Select one and use "Try another photo" to swap it.</p>
+        <p class="small muted ed-tpl-credit">Photo spots fill with the practice's own photos where their names match (team, office, patients), otherwise with free photos from {% if photo_source == 'unsplash' %}<a href="https://unsplash.com/?utm_source=mcdp_hub&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a>{% elif photo_source == 'pexels' %}<a href="https://www.pexels.com/" target="_blank" rel="noopener">Pexels</a>{% else %}<a href="https://pixabay.com/" target="_blank" rel="noopener">Pixabay</a>{% endif %}{% if ai_on and is_practice %}, and scenes with no photo found are made with the free AI picture service{% endif %}. Select one and use "Try another photo" to swap it.</p>
       </section>
 
       <section id="ed-p-brand" data-panel="brand" hidden>
@@ -114,7 +114,7 @@
             <span class="ed-pxrow"><input type="search" name="q" placeholder="e.g. autumn leaves, toothbrush, beach" aria-label="Search free photos">
             <select name="kind" aria-label="What kind"><option value="photo">Photos</option><option value="art">Cut-out drawings</option></select>
             <button class="btn btn-small" type="submit">Search</button></span></label>
-          <p class="small muted">From <a href="https://www.pexels.com/" target="_blank" rel="noopener">Pexels</a> (or Pixabay), free to use. A picture you pick is saved to the brand's Stock photos folder.</p>
+          <p class="small muted">{% if photo_source == 'unsplash' %}From <a href="https://unsplash.com/?utm_source=mcdp_hub&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a>, free to use. Photos stay on Unsplash's servers and keep their credit.{% else %}From <a href="{{ 'https://www.pexels.com/' if photo_source == 'pexels' else 'https://pixabay.com/' }}" target="_blank" rel="noopener">{{ 'Pexels' if photo_source == 'pexels' else 'Pixabay' }}</a>, free to use. A picture you pick is saved to the brand's Stock photos folder.{% endif %}</p>
           <div data-px-results></div>
         </form>
         {% endif %}
@@ -240,7 +240,7 @@
 <script type="application/json" id="ed-config">{{ {
   "iid": it.id, "pid": it.practice_id, "w": it.width, "h": it.height, "title": it.title, "canEdit": can_edit,
   "colors": colors, "fonts": fonts, "brand": brand_name, "logo": logo, "fresh": fresh == 1, "isPractice": is_practice,
-  "status": it.status, "back": "/studio/i/" ~ it.id, "favs": tpl_favs or [], "hasTeam": (templates|length) > 0
+  "status": it.status, "back": "/studio/i/" ~ it.id, "favs": tpl_favs or [], "hasTeam": (templates|length) > 0, "aiOn": ai_on, "photoSource": photo_source
 }|tojson }}</script>
 <script src="/static/vendor/fabric-5.3.0.min.js"></script>
 <script src="/static/studio-templates.js?v={{ static_v }}"></script>

@@ -4476,7 +4476,8 @@ def studio_edit(request: Request, iid: int, fresh: int = 0):
                 look=look, colors=kit_colors, fonts=studio.brand_fonts(pid if pid is not None else studio.MCDP),
                 font_list=studio.FONTS, sizes=studio.SIZES, fresh=fresh, statuses=studio.STATUSES,
                 templates=studio.templates(pid), ai_on=ai.available(), is_practice=bool(pid),
-                logo=(images.logo(pid) or {}).get("id") if pid else None, tpl_favs=_tpl_favs(request))
+                logo=(images.logo(pid) or {}).get("id") if pid else None, tpl_favs=_tpl_favs(request),
+                photo_source=stock.image_provider())
 
 
 def _tpl_favs_key(request: Request):
@@ -4690,8 +4691,15 @@ async def studio_ai_image(request: Request):
     idea = (j.get("idea") or "").strip()[:300]
     if not idea:
         return JSONResponse({"error": "Describe the picture."}, status_code=422)
+    tag = re.sub(r"\s+", " ", str(j.get("tag") or "")).strip()[:80]
+    if tag:                                   # a template's photo idea: reuse the picture already made for it
+        made = [a for a in images.assets(p["id"], "generated") if (a.get("label") or "") == tag]
+        n = int(j.get("n") or 0)
+        if made and n < len(made):
+            a = made[n]
+            return {"src": f"/brand-images/{a['id']}?full=1", "thumb": f"/brand-images/{a['id']}", "w": a["width"], "h": a["height"], "name": tag}
     try:
-        ids = await asyncio.to_thread(images.generate, p, idea, 1, None, actor(request), idea)
+        ids = await asyncio.to_thread(images.generate, p, tag or idea, 1, None, actor(request), idea, bool(j.get("plain")))
     except images.ImageError as e:
         return JSONResponse({"error": str(e)}, status_code=422)
     a = images.asset(ids[0])
@@ -5211,15 +5219,31 @@ async def studio_stock_videos(request: Request, q: str = "", page: int = 1, o: s
 
 @app.get("/studio/stock/images")
 async def studio_stock_images(request: Request, q: str = "", kind: str = "photo", o: str = "", page: int = 1):
-    """Photos and cut-out illustrations from Pixabay for the picture designer (cached a day, as Pixabay asks)."""
+    """Photos (and drawings) for the picture designer from Pexels, Unsplash or Pixabay, whichever has a key (cached a day)."""
     if not authed(request):
         return JSONResponse({}, status_code=401)
     try:
-        if stock.provider() == "pexels":
+        prov = stock.image_provider()
+        if prov == "pexels":
             return await asyncio.to_thread(stock.pexels_photos, q, kind, o, page)
+        if prov == "unsplash":
+            return await asyncio.to_thread(stock.unsplash_photos, q, kind, o, page)
         return {**(await asyncio.to_thread(stock.pixabay_images, q, kind, o, page)), "provider": "pixabay"}
     except stock.StockError as e:
         return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
+
+
+@app.post("/studio/stock/unsplash/used")
+async def studio_stock_unsplash_used(request: Request):
+    """A photo from Unsplash went into a design: tell Unsplash (its rules ask for this)."""
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    try:
+        await asyncio.to_thread(stock.unsplash_used, j.get("dl"))
+    except stock.StockError as e:
+        return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
+    return {"ok": True}
 
 
 def _img_row(iid):
@@ -5268,7 +5292,8 @@ def studio_stock_browser_key(request: Request):
     if not authed(request) or not can_edit_now(request):
         return JSONResponse({"error": "Sign in again."}, status_code=401)
     return JSONResponse({"pixabay": stock._tidy_key(db.get_setting("pixabay_key")) or "", "pexels": stock._tidy_key(db.get_setting("pexels_key")) or "",
-                         "provider": stock.provider()}, headers={"Cache-Control": "no-store"})
+                         "unsplash": stock._tidy_key(db.get_setting("unsplash_key")) or "",
+                         "provider": stock.provider(), "images": stock.image_provider()}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/studio/stock/videos/{hit_id}/attach")
@@ -5336,15 +5361,16 @@ def studio_music_list(request: Request, q: str = ""):
 
 @app.post("/connections/stock")
 def connections_stock(request: Request, pixabay_key: str = Form(""), freesound_key: str = Form(""), pexels_key: str = Form(""),
-                      clear: str = Form("")):
+                      unsplash_key: str = Form(""), clear: str = Form("")):
     if (r := guard(request)):
         return r
-    if clear in ("pixabay", "freesound", "pexels"):
+    if clear in ("pixabay", "freesound", "pexels", "unsplash"):
         stock.save_keys(**{clear: ""})
         flash(request, "Key removed.")
     else:
         stock.save_keys(pixabay=pixabay_key if pixabay_key.strip() else None,
                         freesound=freesound_key if freesound_key.strip() else None,
-                        pexels=pexels_key if pexels_key.strip() else None)
+                        pexels=pexels_key if pexels_key.strip() else None,
+                        unsplash=unsplash_key if unsplash_key.strip() else None)
         flash(request, "Saved. Stock photos, video and music search use these in the Studio.")
     return RedirectResponse("/connections#stock", status_code=303)

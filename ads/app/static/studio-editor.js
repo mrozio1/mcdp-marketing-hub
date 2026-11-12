@@ -8,7 +8,7 @@
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const W = C.w, H = C.h, U = Math.min(W, H) / 100;             // U: 1% of the short side, for layouts
   const PROPS = ["name", "role", "frame", "selectable", "evented", "lockMovementX", "lockMovementY", "lockScalingX",
-                 "lockScalingY", "lockRotation", "hasControls", "upper", "rawText", "stock", "credit"];
+                 "lockScalingY", "lockRotation", "hasControls", "upper", "rawText", "stock", "credit", "creditUrl"];
   const NEUTRALS = ["#1A1A1A", "#FFFFFF", "#F4F1EA", "#5B5852"];
   const P = C.colors[0] || "#0F7471", A = C.colors[1] || "#D9A441";
   let fonts = { ...C.fonts };
@@ -594,13 +594,25 @@
     web: r.webformatURL, file: r.largeImageURL || r.webformatURL, w: r.imageWidth, h: r.imageHeight, kind });
   const pexHit = (r, kind) => { const s2 = r.src || {}; return { id: r.id, provider: "pexels", tags: String(r.alt || ""), user: String(r.photographer || ""),
     page: r.url, thumb: s2.small || s2.tiny, web: s2.large || s2.medium, file: s2.large2x || s2.large || s2.original, w: r.width, h: r.height, kind }; };
-  const sourceName = h => (h && h.provider === "pexels" ? "Pexels" : "Pixabay");
+  const unsHit = (r, kind) => { const u = r.urls || {}, l = r.links || {}, us = r.user || {}, utm = x => (x ? `${x}${x.includes("?") ? "&" : "?"}utm_source=mcdp_hub&utm_medium=referral` : "");
+    return { id: String(r.id), provider: "unsplash", kind, tags: String(r.alt_description || r.description || ""), user: String(us.name || ""),
+             userPage: utm((us.links || {}).html), page: utm(l.html), thumb: u.small, web: u.regular, file: u.raw, w: r.width, h: r.height, dl: l.download_location }; };
+  const sourceName = h => ({ pexels: "Pexels", unsplash: "Unsplash", ai: "AI" })[h && h.provider] || "Pixabay";
+  // Unsplash photos are shown from Unsplash's own servers (its rules), sized for this design
+  const unsSized = (h, w) => `${h.file}${h.file.includes("?") ? "&" : "?"}w=${Math.round(Math.min(2400, w))}&fit=max&fm=jpg&q=80`;
   const orientOf = o => { const w = o.getScaledWidth(), h = o.getScaledHeight(); return w > h * 1.2 ? "horizontal" : h > w * 1.2 ? "vertical" : ""; };
   async function pxDirectSearch(q, kind, o) {
     if (pxKeys === null) { const r = await fetch("/studio/stock/browser-key").catch(() => null); pxKeys = r && r.ok ? await r.json() : {}; }
-    if (!pxKeys.pexels && !pxKeys.pixabay) { pxOff = true; return []; }
+    if (!pxKeys.pexels && !pxKeys.pixabay && !pxKeys.unsplash) { pxOff = true; return []; }
     const wait = Math.max(0, pxLast + 700 - Date.now()); pxLast = Date.now() + wait;      // both allow a search every second or so
     if (wait) await new Promise(r => setTimeout(r, wait));
+    if (!pxKeys.pexels && pxKeys.unsplash) {
+      const params = { query: kind === "art" ? `${q} isolated on white background` : q, per_page: 30, content_filter: "high" };
+      if (o) params.orientation = o === "horizontal" ? "landscape" : "portrait";
+      const r = await fetch(`https://api.unsplash.com/search/photos?${new URLSearchParams(params)}`, { headers: { Authorization: `Client-ID ${pxKeys.unsplash}`, "Accept-Version": "v1" } });
+      if (!r.ok) throw new Error(`Unsplash said HTTP ${r.status}`);
+      return ((await r.json()).results || []).map(x => unsHit(x, kind)).filter(x => x.file);
+    }
     if (pxKeys.pexels) {
       const params = { query: kind === "art" ? `${q} isolated on white background` : q, per_page: 30 };
       if (o) params.orientation = o === "horizontal" ? "landscape" : "portrait";
@@ -614,9 +626,10 @@
     if (!r.ok) throw new Error(`Pixabay said HTTP ${r.status}`);
     return ((await r.json()).hits || []).map(x => pxHit(x, kind)).filter(x => x.file);
   }
-  function stockFind(q, kind = "photo", o = "") {
+  function stockFind(q, kind = "photo", o = "", cachedOnly = false) {
     const ck = `mcdp_px2_${kind}_${o}_${q}`.toLowerCase();
     if (pxFinds.has(ck)) return pxFinds.get(ck);
+    if (cachedOnly) { const hit = store.get(ck); return Promise.resolve(hit && hit.at > Date.now() - 864e5 ? hit.hits : []); }
     const job = (async () => {
       const hit = store.get(ck);
       if (hit && hit.at > Date.now() - 864e5) return hit.hits;
@@ -648,17 +661,24 @@
   }
   const seedOf = str => [...String(str)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
   // the picture for one spot: { src, thumb, own?, hit? }, or null
-  async function pickFor(spot, n) {
+  async function pickFor(spot, n, cachedOnly = false) {
     const st = spot.stock, i = (st.i != null ? st.i : n) | 0;
     const own = await ownPhotos(st.own);
     if (own.length && i < own.length) { const m = own[i % own.length]; return { src: m.src, thumb: m.thumb, own: true, i }; }
-    let hits = await stockFind(st.q, st.kind, st.kind === "art" ? "" : orientOf(spot));
-    if (st.kind === "art" && spot._darkPage) hits = hits.filter(h => h.provider !== "pexels");
+    let hits = await stockFind(st.q, st.kind, st.kind === "art" ? "" : orientOf(spot), cachedOnly);
+    if (st.kind === "art" && spot._darkPage) hits = hits.filter(h => h.provider !== "pexels" && h.provider !== "unsplash");
     if (!hits.length) return own.length ? { src: own[i % own.length].src, thumb: own[i % own.length].thumb, own: true, i } : null;
     const h = hits[(i - own.length + hits.length * 4) % Math.min(hits.length, 12)];
     return { hit: h, thumb: st.kind === "art" ? h.web : h.web, i };
   }
-  async function bringIn(h) {                  // a Pixabay picture into the brand's library: { src, id }
+  async function bringIn(h) {                  // a stock picture into the design: { src } (Pixabay and Pexels are saved to the library first)
+    if (h.provider === "unsplash") {
+      const ping = JSON.stringify({ dl: h.dl });
+      fetch("/studio/stock/unsplash/used", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: ping })
+        .then(r => { if (!r.ok && pxKeys && pxKeys.unsplash && h.dl) fetch(h.dl, { headers: { Authorization: `Client-ID ${pxKeys.unsplash}` } }).catch(() => {}); })
+        .catch(() => {});
+      return { src: unsSized(h, Math.max(W, H)) };
+    }
     const body = { hit: h.provider === "pexels" ? h : pxRaw(h), pid: C.pid };
     let r = await fetch("/studio/stock/images/import", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
     let j = await r.json().catch(() => ({}));
@@ -693,7 +713,18 @@
   }
   const darkBg = c => { const m = /^#?([0-9a-f]{6})$/i.exec(typeof c === "string" ? c : ""); if (!m) return false;
     const n = parseInt(m[1], 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) < 110; };
-  const artBlend = got => (got && got.hit && got.hit.provider === "pexels" && got.hit.kind === "art" ? { globalCompositeOperation: "multiply" } : {});
+  // Pexels and Unsplash have no cut-outs: their drawings are objects on white, laid on with multiply so the white drops away
+  const artBlend = got => (got && got.hit && (got.hit.provider === "pexels" || got.hit.provider === "unsplash") && got.hit.kind === "art" ? { globalCompositeOperation: "multiply" } : {});
+  const PEOPLE = /smil|woman|women|\bman\b|\bmen\b|kid|child|family|teen|girl|boy|people|doctor|team|mother|father|mom|dad|couple|friend|selfie|receptionist|portrait|patient|baby|hug|high five/i;
+  const aiOk = spot => C.aiOn && C.isPractice && spot.stock && spot.stock.kind === "photo" && !PEOPLE.test(spot.stock.q) && !spot.stock.own;
+  async function aiFor(spot, n) {               // a picture made with the free AI service, kept under the idea so it's reused
+    say("No stock photo for this spot: making one with AI (about 20 s)…");
+    const r = await fetch("/studio/ai/image", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ pid: C.pid, idea: `a photograph of ${spot.stock.q}, natural light, no people, no text`, tag: `Template: ${spot.stock.q}`, plain: true, n }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "The AI picture didn't work.");
+    return { src: j.src, ai: true, i: n };
+  }
   let fillGen = 0;
   async function fillStock() {
     const gen = ++fillGen, spots = canvas.getObjects().filter(o => o.stock && o.type !== "image");
@@ -705,12 +736,13 @@
       spot._darkPage = dark;
       const k = n++;
       try {
-        const got = await pickFor(spot, seedOf(`${spot.stock.q}|${k}`) % 3);
+        let got = await pickFor(spot, seedOf(`${spot.stock.q}|${k}`) % 3);
+        if (!got && aiOk(spot) && gen === fillGen) got = await aiFor(spot, 0).catch(() => null);
         if (!got || gen !== fillGen || !canvas.getObjects().includes(spot)) continue;
-        const row = got.own ? { src: got.src } : await bringIn(got.hit);
+        const row = got.own || got.ai ? { src: got.src } : await bringIn(got.hit);
         if (gen !== fillGen || !canvas.getObjects().includes(spot)) return;
         const img = await loadImage(row.src);
-        placeInSpot(img, spot, { stock: { ...spot.stock, i: got.i }, credit: got.hit ? `${got.hit.kind === "art" ? "Drawing" : "Photo"} by ${got.hit.user} on ${sourceName(got.hit)}` : "", ...(got.hit && got.hit.provider === "pexels" && got.hit.kind === "art" ? { globalCompositeOperation: "multiply" } : {}) });
+        placeInSpot(img, spot, { stock: { ...spot.stock, i: got.i, ai: !!got.ai }, creditUrl: got.hit ? got.hit.userPage || got.hit.page || "" : "", credit: got.ai ? "Made with AI" : got.hit ? `${got.hit.kind === "art" ? "Drawing" : "Photo"} by ${got.hit.user} on ${sourceName(got.hit)}` : "", ...artBlend(got) });
         const idx = canvas.getObjects().indexOf(spot);
         quiet = true; canvas.remove(spot); canvas.insertAt(img, Math.max(0, idx)); quiet = false;
         canvas.requestRenderAll(); done++;
@@ -727,11 +759,12 @@
     try {
       const spot = o, next = { ...o.stock, i: ((o.stock.i | 0) + 1) };
       const tmp = { stock: next, _darkPage: darkBg(canvas.backgroundColor), getScaledWidth: () => (o.frame ? o.frame.w : o.getScaledWidth()), getScaledHeight: () => (o.frame ? o.frame.h : o.getScaledHeight()) };
-      const got = await pickFor(tmp, next.i);
+      let got = await pickFor(tmp, next.i);
+      if ((!got || (o.stock.ai && !got.own)) && aiOk(o)) got = await aiFor(o, o.stock.ai ? next.i : 0);
       if (!got) throw new Error("No other pictures for that idea.");
-      const row = got.own ? { src: got.src } : await bringIn(got.hit);
+      const row = got.own || got.ai ? { src: got.src } : await bringIn(got.hit);
       const img = await loadImage(row.src);
-      placeInSpot(img, spot.frame ? spot : spot, { stock: { ...next, i: got.i }, credit: got.hit ? `${got.hit.kind === "art" ? "Drawing" : "Photo"} by ${got.hit.user} on ${sourceName(got.hit)}` : "", ...(got.hit && got.hit.provider === "pexels" && got.hit.kind === "art" ? { globalCompositeOperation: "multiply" } : {}) });
+      placeInSpot(img, spot.frame ? spot : spot, { stock: { ...next, i: got.i, ai: !!got.ai }, creditUrl: got.hit ? got.hit.userPage || got.hit.page || "" : "", credit: got.ai ? "Made with AI" : got.hit ? `${got.hit.kind === "art" ? "Drawing" : "Photo"} by ${got.hit.user} on ${sourceName(got.hit)}` : "", ...artBlend(got) });
       const idx = canvas.getObjects().indexOf(spot);
       quiet = true; canvas.remove(spot); canvas.insertAt(img, Math.max(0, idx)); quiet = false;
       canvas.setActiveObject(img); canvas.requestRenderAll(); record(); say("");
@@ -745,7 +778,8 @@
     const dark = darkBg(sc.backgroundColor);
     for (const spot of objs.filter(o => o.stock)) {
       const k = n++; spot._darkPage = dark;
-      const got = await pickFor(spot, seedOf(`${spot.stock.q}|${k}`) % 3).catch(() => null);
+      // Unsplash allows few searches an hour, so previews only show pictures already found
+      const got = await pickFor(spot, seedOf(`${spot.stock.q}|${k}`) % 3, C.photoSource === "unsplash").catch(() => null);
       if (!got || !isCurrent()) continue;
       const img = await loadPlain(got.thumb || got.src);
       if (!img || !isCurrent()) continue;
@@ -775,7 +809,7 @@
         const row = await bringIn(h);
         const target = canvas.getActiveObject();
         const img = await addImage(row.src, (h.tags.split(",")[0] || "Photo").trim());
-        if (img) { img.set({ stock: { q, kind, i }, credit: `${kind === "art" ? "Drawing" : "Photo"} by ${h.user} on ${sourceName(h)}` }); syncCtx(); }
+        if (img) { img.set({ stock: { q, kind, i }, creditUrl: h.userPage || h.page || "", credit: `${kind === "art" ? "Drawing" : "Photo"} by ${h.user} on ${sourceName(h)}` }); syncCtx(); }
         say("");
       } catch (err) { say(""); alertBar(err.message); }
     })));
@@ -852,7 +886,15 @@
     $("[data-ctx-common]").hidden = !any;
     const sw = $("[data-stock-swap]"), one = any && its.length === 1 && its[0].stock;
     if (sw) { sw.hidden = !one; if (one) sw.textContent = its[0].stock.kind === "art" ? "Try another drawing" : "Try another photo"; }
-    const cr = $("[data-credit]"); if (cr) { cr.hidden = !(any && its.length === 1 && its[0].credit); cr.textContent = any && its[0] ? its[0].credit || "" : ""; }
+    const cr = $("[data-credit]");
+    if (cr) {
+      const f0 = any && its.length === 1 ? its[0] : null;
+      cr.hidden = !(f0 && f0.credit); cr.textContent = "";
+      if (f0 && f0.credit) {
+        if (f0.creditUrl && /^https:\/\//.test(f0.creditUrl)) { const a = document.createElement("a"); a.href = f0.creditUrl; a.target = "_blank"; a.rel = "noopener"; a.textContent = f0.credit; cr.appendChild(a); }
+        else cr.textContent = f0.credit;
+      }
+    }
     props.hidden = !any || its.length !== 1;
     if (!any) return;
     const f = its[0];

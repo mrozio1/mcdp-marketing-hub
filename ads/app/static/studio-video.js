@@ -2035,7 +2035,7 @@
     stockQ = { q: f.q.value.trim(), page: 1 }; box.innerHTML = `<p class="small muted">Searching…</p>`;
     let j;
     try { j = await stockSearch(stockQ.q, f.o.value); }
-    catch (err) { box.innerHTML = `<p class="small st-err">${esc(err.message)}</p>`; return; }
+    catch (err) { box.innerHTML = `<p class="small st-err">${esc(err.message)}</p><p class="small muted">You can still use “Find video on Pixabay” below: download a clip there and drop it into Media.</p>`; return; }
     box.innerHTML = "";
     if (!j.hits.length) { box.innerHTML = `<p class="small muted">Nothing found; try other words.</p>`; return; }
     j.hits.forEach(h => {
@@ -2101,6 +2101,12 @@
     });
     if (!j.hits.length) ul.innerHTML = `<li class="small muted">Nothing found; try other words.</li>`;
     ul.insertAdjacentHTML("beforeend", `<li class="small muted">From <a href="https://freesound.org" target="_blank" rel="noopener">Freesound</a>, Creative Commons 0.</li>`);
+  });
+  const pxvBtn = $("[data-pixabay-video]");
+  if (pxvBtn) pxvBtn.addEventListener("click", () => {
+    const q = ($("[data-stock-form]").q.value || "").trim();
+    const w = Math.min(760, window.screen.availWidth * 0.45);
+    window.open(`https://pixabay.com/videos/search/${encodeURIComponent(q)}/`, "pixabay_video", `popup,width=${Math.round(w)},height=${Math.round(window.screen.availHeight * 0.85)},left=${Math.round(window.screen.availWidth - w)},top=40`);
   });
   const pxBtn = $("[data-pixabay-music]");
   if (pxBtn) pxBtn.addEventListener("click", () => {

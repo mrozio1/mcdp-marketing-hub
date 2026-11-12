@@ -186,7 +186,9 @@
   <h2>Stock photos, video and music <span class="muted small">· searched inside the Studio</span></h2>
   <p class="small">All keys are free. With a Pexels key, photo spots in templates, the free photo search and stock video use Pexels; without one they use Pixabay. Without either, those searches are switched off; the shared Music folder still works.</p>
   <form method="post" action="/connections/stock" class="stack">
-    <label><span>Pexels key <span class="muted small">(photos and video, recommended; {{ 'saved' if stock_keys.pexels else 'not set' }})</span></span>
+    <label><span>Unsplash access key <span class="muted small">(photos for templates and the free photo search; {{ 'saved' if stock_keys.unsplash else 'not set' }})</span></span>
+      <input name="unsplash_key" type="password" autocomplete="off" placeholder="{{ 'Paste a new key only to replace it' if stock_keys.unsplash else '' }}"></label>
+    <label><span>Pexels key <span class="muted small">(photos and video, when Pexels hands out keys again; {{ 'saved' if stock_keys.pexels else 'not set' }})</span></span>
       <input name="pexels_key" type="password" autocomplete="off" placeholder="{{ 'Paste a new key only to replace it' if stock_keys.pexels else '' }}"></label>
     <label><span>Pixabay key <span class="muted small">(stock video; {{ 'saved' if stock_keys.pixabay else 'not set' }})</span></span>
       <input name="pixabay_key" type="password" autocomplete="off" placeholder="{{ 'Paste a new key only to replace it' if stock_keys.pixabay else '' }}"></label>
@@ -196,7 +198,8 @@
   </form>
   <details class="how">
     <summary>Where do I get these?</summary>
-    <p><strong>Pexels (recommended):</strong> make a free account at pexels.com, open <strong>pexels.com/api</strong>, choose “Your API key”, fill in the short form (e.g. “MCDP Hub, marketing designs for our practices”), and copy the key it shows.</p>
+    <p><strong>Unsplash:</strong> make a free account, open <strong>unsplash.com/oauth/applications</strong>, choose “New Application”, accept the API guidelines, name it (e.g. “MCDP Hub”), and copy the <strong>Access Key</strong> (not the secret). New apps get 50 searches an hour; searches are kept a day, which is plenty for a small team. To raise the limit, ask for production access on the same page. Unsplash photos stay on Unsplash's servers (its rules ask for that), so they aren't copied into the library.</p>
+    <p><strong>Pexels:</strong> new keys are paused for now. If you get one later, make a free account at pexels.com, open <strong>pexels.com/api</strong>, choose “Your API key”, fill in the short form (e.g. “MCDP Hub, marketing designs for our practices”), and copy the key it shows.</p>
     <p><strong>Pixabay:</strong> its bot protection now turns away searches from other websites and servers, so it often won't work from the hub. Sign in at pixabay.com, open <strong>pixabay.com/api/docs</strong>, and copy the key shown under “Parameters” (it's filled in once you're signed in).</p>
     <p><strong>Freesound:</strong> sign in at freesound.org, open <strong>freesound.org/apiv2/apply</strong>, create credentials (any name, e.g. “MCDP Hub”), and copy the <strong>Client secret/API key</strong>.</p>
     <p>Pixabay's API doesn't include music, so tracks from pixabay.com/music are downloaded there and dropped into the editor's Music panel, which saves them to the shared Music folder for every brand.</p>

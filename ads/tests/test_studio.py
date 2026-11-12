@@ -815,3 +815,48 @@ def test_pexels_photos_and_videos(env, monkeypatch, tmp_path):
         assert key["provider"] == "pexels" and key["pexels"] == "test-pexels-key"
     finally:
         db.set_setting("pexels_key", "")
+
+
+def test_unsplash_photos_and_ai_fill(env, monkeypatch):
+    from app import stock, images as imgs
+    ed, pid, db = env["ed"], env["schulz"], env["db"]
+    photo = {"id": "aBc123", "width": 5000, "height": 3333, "alt_description": "pumpkins on a wooden table",
+             "urls": {"raw": "https://images.unsplash.com/photo-1?ixid=x1", "regular": "https://images.unsplash.com/photo-1?ixid=x1&w=1080",
+                      "small": "https://images.unsplash.com/photo-1?ixid=x1&w=400"},
+             "links": {"html": "https://unsplash.com/photos/aBc123", "download_location": "https://api.unsplash.com/photos/aBc123/download?ixid=x1"},
+             "user": {"name": "Cara", "links": {"html": "https://unsplash.com/@cara"}}}
+    seen = []
+
+    def fake_get(url, timeout=30, service="", headers=None):
+        seen.append((url, headers))
+        return {"results": [photo, {"id": "bad", "urls": {"raw": "https://evil.example/x"}}], "total": 2} if "/search/" in url else {"url": "ok"}
+    monkeypatch.setattr(stock, "_get", fake_get)
+    db.set_setting("pexels_key", "")
+    db.set_setting("unsplash_key", "test-unsplash")
+    try:
+        assert stock.image_provider() == "unsplash"
+        j = ed.get("/studio/stock/images?q=pumpkins&kind=photo&o=vertical").json()
+        h = j["hits"]
+        assert j["provider"] == "unsplash" and len(h) == 1 and h[0]["user"] == "Cara" and "utm_source=mcdp_hub" in h[0]["page"]
+        assert seen[-1][1]["Authorization"] == "Client-ID test-unsplash" and "orientation=portrait" in seen[-1][0] and "content_filter=high" in seen[-1][0]
+        assert ed.post("/studio/stock/unsplash/used", json={"dl": h[0]["dl"]}).json() == {"ok": True}
+        assert ed.post("/studio/stock/unsplash/used", json={"dl": "https://evil.example/ping"}).status_code == 422
+        assert ed.get("/studio/stock/browser-key").json()["images"] == "unsplash"
+        iid, _ = make_design(ed, pid, title="Unsplash test")
+        assert '"photoSource": "unsplash"' in ed.get(f"/studio/edit/{iid}").text
+    finally:
+        db.set_setting("unsplash_key", "")
+    # AI pictures for a template idea are made once and reused
+    made = []
+
+    def fake_generate(p, focus="", n=3, kit=None, by="", idea="", plain=False):
+        made.append((focus, idea, plain))
+        return [imgs._save(p["id"], "generated", __import__("PIL.Image", fromlist=["Image"]).new("RGB", (64, 64), (200, 120, 40)), label=focus[:80], by=by)]
+    monkeypatch.setattr(imgs, "generate", fake_generate)
+    body = {"pid": pid, "idea": "a photograph of pumpkins, no people", "tag": "Template: pumpkins", "plain": True}
+    a = ed.post("/studio/ai/image", json=body).json()
+    b = ed.post("/studio/ai/image", json=body).json()
+    assert a["src"] == b["src"] and len(made) == 1 and made[0][2] is True
+    c = ed.post("/studio/ai/image", json={**body, "n": 1}).json()          # "try another": a new one
+    assert c["src"] != a["src"] and len(made) == 2
+    assert imgs.prompt_for({"name": "Schulz Orthodontics", "id": pid}, {}, "", "pumpkins on a porch", True).startswith("pumpkins on a porch. ")
