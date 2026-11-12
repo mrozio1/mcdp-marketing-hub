@@ -5207,6 +5207,55 @@ async def studio_stock_videos(request: Request, q: str = "", page: int = 1, o: s
         return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
 
 
+@app.get("/studio/stock/images")
+async def studio_stock_images(request: Request, q: str = "", kind: str = "photo", o: str = "", page: int = 1):
+    """Photos and cut-out illustrations from Pixabay for the picture designer (cached a day, as Pixabay asks)."""
+    if not authed(request):
+        return JSONResponse({}, status_code=401)
+    try:
+        return await asyncio.to_thread(stock.pixabay_images, q, kind, o, page)
+    except stock.StockError as e:
+        return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
+
+
+def _img_row(iid):
+    n = studio.item(iid)
+    return {"id": iid, "src": f"/studio/img/{iid}", "thumb": f"/studio/t/{iid}", "w": n["width"], "h": n["height"], "name": n["title"]}
+
+
+@app.post("/studio/stock/images/import")
+async def studio_stock_image_import(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    pid = _brand_in(j.get("pid"))
+    pid = pid if pid is not None else studio.MCDP
+    try:
+        iid = await asyncio.to_thread(stock.image_import, j.get("hit"), pid, actor(request))
+    except stock.StockError as e:
+        return JSONResponse({"error": str(e), "blocked": e.blocked}, status_code=422)
+    except studio.StudioError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return _img_row(iid)
+
+
+@app.post("/studio/stock/images/attach")
+async def studio_stock_image_attach(request: Request):
+    if not authed(request):
+        return JSONResponse({"error": "Sign in again."}, status_code=401)
+    j = await request.json()
+    pid = _brand_in(j.get("pid"))
+    pid = pid if pid is not None else studio.MCDP
+    try:
+        it = studio.item(int(j.get("item") or 0))
+        if not it or it["practice_id"] != pid or it["kind"] != "image":
+            raise stock.StockError("That picture isn't in this brand's library.")
+        iid = await asyncio.to_thread(stock.image_attach, it["id"], j.get("hit"), pid, actor(request))
+    except (stock.StockError, studio.StudioError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    return _img_row(iid)
+
+
 @app.get("/studio/stock/browser-key")
 def studio_stock_browser_key(request: Request):
     """When Pixabay's firewall turns the NAS away, the editor searches from the person's browser with the team's key."""

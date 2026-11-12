@@ -8,7 +8,7 @@
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const W = C.w, H = C.h, U = Math.min(W, H) / 100;             // U: 1% of the short side, for layouts
   const PROPS = ["name", "role", "frame", "selectable", "evented", "lockMovementX", "lockMovementY", "lockScalingX",
-                 "lockScalingY", "lockRotation", "hasControls", "upper", "rawText"];
+                 "lockScalingY", "lockRotation", "hasControls", "upper", "rawText", "stock", "credit"];
   const NEUTRALS = ["#1A1A1A", "#FFFFFF", "#F4F1EA", "#5B5852"];
   const P = C.colors[0] || "#0F7471", A = C.colors[1] || "#D9A441";
   let fonts = { ...C.fonts };
@@ -212,7 +212,14 @@
   // page, is made a little smaller until it fits.
   function settle(objs) {
     const tx = objs.filter(o => o.type === "textbox" && !o.keep);
+    const want = new Map(tx.map(o => [o, o.width]));      // a long word makes a text box wider than planned
     tx.forEach(o => o.initDimensions());
+    tx.forEach(o => {
+      const w = want.get(o), min = o.fontSize * 0.5;
+      for (let n = 0; n < 16 && o.fontSize > min && (o.width > w + 1 || o.left + o.width > W); n++) {
+        o.set({ fontSize: Math.round(o.fontSize * 0.93), width: w }); o.initDimensions();
+      }
+    });
     const over = (a, b) => a.left < b.left + b.width && b.left < a.left + a.width;
     for (let pass = 0; pass < 3; pass++) {
       tx.forEach(a => {
@@ -227,6 +234,7 @@
     }
   }
   async function applyTemplate(key) {
+    fillGen++;
     const t = T[key].build();
     quiet = true;
     canvas.clear(); canvas.setBackgroundColor(t.bg, () => {});
@@ -246,6 +254,7 @@
     canvas.getObjects().forEach(o => o.initDimensions && o.initDimensions());
     settle(canvas.getObjects());
     quiet = false; canvas.renderAll(); record(); checkSoon();
+    fillStock();
   }
   // ---- the template panel: categories, search, favourites, live previews in this brand and size
   const builtins = $("[data-builtins]");
@@ -354,6 +363,8 @@
     }
     sc.renderAll();
     b.dataset.drawn = drawGen;
+    const gen = drawGen;
+    previewStock(sc, t.objs, () => el._sc === sc && gen === drawGen);
   }
   const io = "IntersectionObserver" in window ? new IntersectionObserver(es => es.forEach(en => {
     if (en.isIntersecting && en.target.dataset.drawn != drawGen) drawOne(en.target);
@@ -566,6 +577,194 @@
     if (dz) { dz.addEventListener("dragover", e => e.preventDefault()); dz.addEventListener("drop", e => { e.preventDefault(); upload([...e.dataTransfer.files]); }); }
   }
 
+  // ---------------------------------------------------------------- free photos and drawings (Pixabay), and the practice's own
+  // Template photo spots and drawings carry  stock: { q, kind: "photo" | "art", own?: "team" | "office" | "patient" }.
+  // The practice's own matching photos come first; otherwise Pixabay's results (cached a day, as Pixabay asks).
+  // A picture that's used is saved once into the brand's "Stock photos" folder so the design only holds the hub's own
+  // pictures; previews show Pixabay's own preview sizes.
+  const store = {
+    get: k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
+  let pxKey = null, pxDirect = !!store.get("mcdp_px_direct"), pxOff = false, pxLast = 0;
+  const pxFinds = new Map();
+  const pxRaw = h => ({ id: h.id, tags: h.tags, user: h.user, pageURL: h.page, previewURL: h.thumb, webformatURL: h.web,
+    largeImageURL: h.file, imageWidth: h.w, imageHeight: h.h, type: h.kind === "art" ? "illustration" : "photo" });
+  const pxHit = (r, kind) => ({ id: r.id, tags: String(r.tags || ""), user: String(r.user || ""), page: r.pageURL, thumb: r.previewURL,
+    web: r.webformatURL, file: r.largeImageURL || r.webformatURL, w: r.imageWidth, h: r.imageHeight, kind });
+  const orientOf = o => { const w = o.getScaledWidth(), h = o.getScaledHeight(); return w > h * 1.2 ? "horizontal" : h > w * 1.2 ? "vertical" : ""; };
+  async function pxDirectSearch(q, kind, o) {
+    if (pxKey === null) { const r = await fetch("/studio/stock/browser-key").catch(() => null); pxKey = r && r.ok ? (await r.json()).pixabay : ""; }
+    if (!pxKey) { pxOff = true; return []; }
+    const wait = Math.max(0, pxLast + 700 - Date.now()); pxLast = Date.now() + wait;      // Pixabay allows about 100 searches a minute
+    if (wait) await new Promise(r => setTimeout(r, wait));
+    const params = { key: pxKey, q, safesearch: "true", per_page: 30, orientation: o || "all", image_type: kind === "art" ? "illustration" : "photo" };
+    if (kind === "art") params.colors = "transparent";
+    const r = await fetch(`https://pixabay.com/api/?${new URLSearchParams(params)}`);
+    if (!r.ok) throw new Error(`Pixabay said HTTP ${r.status}`);
+    return ((await r.json()).hits || []).map(x => pxHit(x, kind)).filter(x => x.file);
+  }
+  function stockFind(q, kind = "photo", o = "") {
+    const ck = `mcdp_px_${kind}_${o}_${q}`.toLowerCase();
+    if (pxFinds.has(ck)) return pxFinds.get(ck);
+    const job = (async () => {
+      const hit = store.get(ck);
+      if (hit && hit.at > Date.now() - 864e5) return hit.hits;
+      if (pxOff) return [];
+      let hits = null;
+      if (!pxDirect) {
+        const r = await fetch(`/studio/stock/images?${new URLSearchParams({ q, kind, o })}`).catch(() => null);
+        const j = r ? await r.json().catch(() => ({})) : {};
+        if (r && r.ok) hits = j.hits;
+        else if (j.blocked) { pxDirect = true; store.set("mcdp_px_direct", true); }     // the NAS is turned away: search from here
+        else { pxOff = /key/i.test(j.error || ""); return []; }
+      }
+      if (!hits) hits = await pxDirectSearch(q, kind, o).catch(() => []);
+      if (hits.length) store.set(ck, { at: Date.now(), hits: hits.slice(0, 16) });
+      return hits.slice(0, 16);
+    })();
+    pxFinds.set(ck, job);
+    return job;
+  }
+  // the practice's own photos for a subject, matched on their names and folders
+  const OWN = { team: /team|staff|doctor|\bdr\b|orthodontist|assistant|crew|hygienist/i, office: /office|building|lobby|clinic|reception|front desk|exterior/i,
+                patient: /patient|smile|braces|aligner|kid|teen|family|debond/i };
+  let ownMedia = null;
+  async function ownPhotos(subject) {
+    if (!subject || !OWN[subject]) return [];
+    if (!ownMedia) { const r = await fetch(`/studio/media?pid=${C.pid === null ? "" : C.pid}`).catch(() => null); ownMedia = r && r.ok ? await r.json() : {}; }
+    const all = [...(ownMedia.photos || []), ...(ownMedia.library || []).filter(m => !/stock photos|design uploads/i.test(m.folder || ""))];
+    return all.filter(m => OWN[subject].test(`${m.name || ""} ${m.folder || ""}`));
+  }
+  const seedOf = str => [...String(str)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+  // the picture for one spot: { src, thumb, own?, hit? }, or null
+  async function pickFor(spot, n) {
+    const st = spot.stock, i = (st.i != null ? st.i : n) | 0;
+    const own = await ownPhotos(st.own);
+    if (own.length && i < own.length) { const m = own[i % own.length]; return { src: m.src, thumb: m.thumb, own: true, i }; }
+    const hits = await stockFind(st.q, st.kind, st.kind === "art" ? "" : orientOf(spot));
+    if (!hits.length) return own.length ? { src: own[i % own.length].src, thumb: own[i % own.length].thumb, own: true, i } : null;
+    const h = hits[(i - own.length + hits.length * 4) % Math.min(hits.length, 12)];
+    return { hit: h, thumb: st.kind === "art" ? h.web : h.web, i };
+  }
+  async function bringIn(h) {                  // a Pixabay picture into the brand's library: { src, id }
+    const body = { hit: pxRaw(h), pid: C.pid };
+    let r = await fetch("/studio/stock/images/import", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
+    let j = await r.json().catch(() => ({}));
+    if (!r.ok && j.blocked) {                  // the NAS can't download from Pixabay: this browser fetches it and uploads it
+      const fr = await fetch(h.file); if (!fr.ok) throw new Error(`Pixabay said HTTP ${fr.status}`);
+      const blob = await fr.blob(), ext = /png/i.test(blob.type) ? "png" : "jpg";
+      const fd = new FormData(); fd.append("file", new File([blob], `pixabay-${h.id}.${ext}`, { type: blob.type || "image/jpeg" }));
+      const ur = await fetch(`/studio/designs/${C.iid}/upload`, { method: "POST", body: fd, headers: { Accept: "application/json" } });
+      const uj = await ur.json().catch(() => ({})); if (!ur.ok) throw new Error(uj.error || "The picture didn't upload.");
+      r = await fetch("/studio/stock/images/attach", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ ...body, item: uj.id }) });
+      j = await r.json().catch(() => ({}));
+    }
+    if (!r.ok) throw new Error(j.error || "That picture didn't come in.");
+    media = null;
+    return j;
+  }
+  // put a picture where a spot (photo frame or drawing placeholder) is; returns the new object
+  function placeInSpot(img, spot, extra) {
+    if (spot.role === "photo" || spot.frame) {
+      const fr = spot.frame ? { ...spot.frame } : frameOf(spot);
+      const s2 = Math.max(fr.w / img.width, fr.h / img.height);
+      img.set({ scaleX: s2, scaleY: s2, left: fr.x + (fr.w - img.width * s2) / 2, top: fr.y + (fr.h - img.height * s2) / 2,
+                frame: fr, role: "photo", name: "Photo", clipPath: clipFor(fr), lockRotation: true, ...extra });
+    } else {
+      const bw = spot.getScaledWidth(), bh = spot.getScaledHeight(), s2 = Math.min(bw / img.width, bh / img.height);
+      const mid = spot.originX === "center";            // centred boxes keep their middle; others their top left
+      img.set({ scaleX: s2, scaleY: s2, originX: mid ? "center" : "left", originY: mid ? "center" : "top",
+                left: mid ? spot.left : spot.left + (bw - img.width * s2) / 2, top: mid ? spot.top : spot.top + (bh - img.height * s2) / 2,
+                angle: spot.angle || 0, flipX: !!spot.flipX, opacity: spot.opacity ?? 1, role: "art", name: spot.name || "Drawing", ...extra });
+    }
+    return img;
+  }
+  let fillGen = 0;
+  async function fillStock() {
+    const gen = ++fillGen, spots = canvas.getObjects().filter(o => o.stock && o.type !== "image");
+    if (!spots.length || !C.canEdit) return;
+    say("Finding photos for this layout…");
+    let n = 0, done = 0;
+    for (const spot of spots) {
+      const k = n++;
+      try {
+        const got = await pickFor(spot, seedOf(`${spot.stock.q}|${k}`) % 3);
+        if (!got || gen !== fillGen || !canvas.getObjects().includes(spot)) continue;
+        const row = got.own ? { src: got.src } : await bringIn(got.hit);
+        if (gen !== fillGen || !canvas.getObjects().includes(spot)) return;
+        const img = await loadImage(row.src);
+        placeInSpot(img, spot, { stock: { ...spot.stock, i: got.i }, credit: got.hit ? `${got.hit.kind === "art" ? "Drawing" : "Photo"} by ${got.hit.user} on Pixabay` : "" });
+        const idx = canvas.getObjects().indexOf(spot);
+        quiet = true; canvas.remove(spot); canvas.insertAt(img, Math.max(0, idx)); quiet = false;
+        canvas.requestRenderAll(); done++;
+      } catch (e) { /* that spot keeps its colour placeholder */ }
+    }
+    if (gen !== fillGen) return;
+    if (done) { record(); say(spots.length > done ? "Some photo spots are left for you to fill" : ""); }
+    else say(pxOff ? "Add a free Pixabay key (Connections → Stock and music) to fill photo spots automatically" : "");
+  }
+  // "Try another": the next photo or drawing for the same idea
+  async function swapStock(o) {
+    if (!o || !o.stock) return;
+    const btn = $("[data-stock-swap]"); btn.disabled = true; say("Finding another…");
+    try {
+      const spot = o, next = { ...o.stock, i: ((o.stock.i | 0) + 1) };
+      const tmp = { stock: next, getScaledWidth: () => (o.frame ? o.frame.w : o.getScaledWidth()), getScaledHeight: () => (o.frame ? o.frame.h : o.getScaledHeight()) };
+      const got = await pickFor(tmp, next.i);
+      if (!got) throw new Error("No other pictures for that idea.");
+      const row = got.own ? { src: got.src } : await bringIn(got.hit);
+      const img = await loadImage(row.src);
+      placeInSpot(img, spot.frame ? spot : spot, { stock: { ...next, i: got.i }, credit: got.hit ? `${got.hit.kind === "art" ? "Drawing" : "Photo"} by ${got.hit.user} on Pixabay` : "" });
+      const idx = canvas.getObjects().indexOf(spot);
+      quiet = true; canvas.remove(spot); canvas.insertAt(img, Math.max(0, idx)); quiet = false;
+      canvas.setActiveObject(img); canvas.requestRenderAll(); record(); say("");
+    } catch (e) { say(e.message); }
+    btn.disabled = false;
+  }
+  // previews: Pixabay's own preview pictures, drawn into the small tiles
+  const loadPlain = src => new Promise(res => fabric.Image.fromURL(src, img => res(img && img.width ? img : null)));
+  async function previewStock(sc, objs, isCurrent) {
+    let n = 0;
+    for (const spot of objs.filter(o => o.stock)) {
+      const k = n++;
+      const got = await pickFor(spot, seedOf(`${spot.stock.q}|${k}`) % 3).catch(() => null);
+      if (!got || !isCurrent()) continue;
+      const img = await loadPlain(got.thumb || got.src);
+      if (!img || !isCurrent()) continue;
+      placeInSpot(img, spot, {});
+      const idx = sc.getObjects().indexOf(spot);
+      sc.remove(spot); sc.insertAt(img, Math.max(0, idx));
+      sc.renderAll();
+    }
+  }
+  // free photo search in the Photos panel
+  const pxForm = $("[data-px-form]");
+  const swapBtn = $("[data-stock-swap]");
+  if (swapBtn) swapBtn.addEventListener("click", () => swapStock(canvas.getActiveObject()));
+  if (pxForm) pxForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    const q = pxForm.q.value.trim(), kind = pxForm.kind.value, out = $("[data-px-results]");
+    if (!q) return;
+    out.innerHTML = `<p class="small muted">Searching…</p>`;
+    const hits = await stockFind(q, kind, "").catch(() => []);
+    out.innerHTML = "";
+    if (!hits.length) { out.innerHTML = `<p class="small muted">${pxOff ? "Free photo search needs a Pixabay key: an admin adds it on Connections → Stock and music." : "Nothing found. Try other words."}</p>`; return; }
+    const g = document.createElement("div"); g.className = "ed-media-grid";
+    hits.forEach((h, i) => g.appendChild(tile({ thumb: h.thumb, name: `${h.tags} (by ${h.user} on Pixabay)` }, async () => {
+      if (!C.canEdit) return;
+      say("Bringing it in from Pixabay…");
+      try {
+        const row = await bringIn(h);
+        const target = canvas.getActiveObject();
+        const img = await addImage(row.src, (h.tags.split(",")[0] || "Photo").trim());
+        if (img) { img.set({ stock: { q, kind, i }, credit: `${kind === "art" ? "Drawing" : "Photo"} by ${h.user} on Pixabay` }); syncCtx(); }
+        say("");
+      } catch (err) { say(""); alertBar(err.message); }
+    })));
+    out.appendChild(g);
+  });
+
   // AI picture
   const aiImg = $("[data-ai-image]");
   if (aiImg) aiImg.addEventListener("submit", async e => {
@@ -634,6 +833,9 @@
     $("[data-ctx-text]").hidden = !(any && its.every(isText));
     $("[data-ctx-fill]").hidden = !(any && its.every(x => x.type !== "image"));
     $("[data-ctx-common]").hidden = !any;
+    const sw = $("[data-stock-swap]"), one = any && its.length === 1 && its[0].stock;
+    if (sw) { sw.hidden = !one; if (one) sw.textContent = its[0].stock.kind === "art" ? "Try another drawing" : "Try another photo"; }
+    const cr = $("[data-credit]"); if (cr) { cr.hidden = !(any && its.length === 1 && its[0].credit); cr.textContent = any && its[0] ? its[0].credit || "" : ""; }
     props.hidden = !any || its.length !== 1;
     if (!any) return;
     const f = its[0];

@@ -2049,3 +2049,12 @@ button.vd-lab:hover { background: #F2F0EB; }
 .vd-tstyles button:hover canvas { outline: 2px solid var(--teal); }
 .vd-tstyles canvas { width: 100%; aspect-ratio: 3 / 2; border-radius: 7px; display: block; }
 @media (max-width: 760px) { .vd-tstyles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.ed-swap { margin-left: 0.4rem; }
+.ed-credit { margin-left: 0.4rem; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-pxform { margin: 0 0 1rem; display: grid; gap: 0.4rem; }
+.ed-pxform label > span:first-child { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 0.3rem; }
+.ed-pxrow { display: flex; gap: 0.35rem; }
+.ed-pxrow input { flex: 1 1 auto; min-width: 0; padding: 0.4rem 0.55rem; border: 1px solid var(--hair); border-radius: 6px; font: inherit; font-size: 0.85rem; }
+.ed-pxrow select { padding: 0.3rem; font: inherit; font-size: 0.8rem; }
+.ed-tpl-credit { margin-top: 1rem; }

@@ -721,3 +721,44 @@ def test_template_library_and_favourites(env):
     assert ed.post("/studio/template-favs", data={"key": "../etc"}).status_code == 422
     from fastapi.testclient import TestClient
     assert TestClient(env["main"].app).post("/studio/template-favs", data={"key": "b:offer"}).status_code == 401
+
+
+def test_stock_photos_for_templates(env, monkeypatch, tmp_path):
+    from app import stock
+    ed, studio, pid = env["ed"], env["studio"], env["schulz"]
+
+    def fake_download(url, suffix):
+        assert url.startswith("https://cdn.pixabay.com/")
+        p = tmp_path / f"dl{suffix}"
+        p.write_bytes(png_bytes(640, 480))
+        return str(p)
+    monkeypatch.setattr(stock, "_download", fake_download)
+    hit = {"id": 4242, "tags": "autumn leaves, fall", "user": "maple", "pageURL": "https://pixabay.com/photos/leaves-4242/",
+           "previewURL": "https://cdn.pixabay.com/photo/p_150.jpg", "webformatURL": "https://cdn.pixabay.com/photo/p_640.jpg",
+           "largeImageURL": "https://cdn.pixabay.com/photo/p_1280.jpg", "imageWidth": 1280, "imageHeight": 853, "type": "photo"}
+    r = ed.post("/studio/stock/images/import", json={"pid": pid, "hit": hit})
+    assert r.status_code == 200, r.text
+    iid = r.json()["id"]
+    it = studio.item(iid)
+    assert it["kind"] == "image" and it["source"] == "pixabay" and "Pixabay" in it["title"] and "maple" in it["notes"]
+    assert studio.folder(it["folder_id"])["name"] == "Stock photos"
+    assert ed.post("/studio/stock/images/import", json={"pid": pid, "hit": hit}).json()["id"] == iid      # once per brand
+    assert ed.get(r.json()["src"]).status_code == 200
+    # only Pixabay's own addresses
+    bad = {**hit, "id": 9, "largeImageURL": "https://evil.example/x.jpg", "webformatURL": "https://evil.example/y.jpg"}
+    assert ed.post("/studio/stock/images/import", json={"pid": pid, "hit": bad}).status_code == 422
+    # when the NAS is turned away the browser uploads the picture, and attach credits it (or swaps in the copy it already has)
+    did, _ = make_design(ed, pid, title="Stock test")
+    up = ed.post(f"/studio/designs/{did}/upload", files={"file": ("p.png", png_bytes(300, 200), "image/png")}).json()
+    j = ed.post("/studio/stock/images/attach", json={"pid": pid, "item": up["id"], "hit": {**hit, "id": 777}}).json()
+    assert j["id"] == up["id"] and studio.folder(studio.item(up["id"])["folder_id"])["name"] == "Stock photos"
+    up2 = ed.post(f"/studio/designs/{did}/upload", files={"file": ("p.png", png_bytes(300, 200), "image/png")}).json()
+    assert ed.post("/studio/stock/images/attach", json={"pid": pid, "item": up2["id"], "hit": {**hit, "id": 777}}).json()["id"] == up["id"]
+    # another brand's picture can't be attached to this one
+    assert ed.post("/studio/stock/images/attach", json={"pid": env["havens"], "item": up["id"], "hit": hit}).status_code == 422
+    # search without a key explains itself
+    env["db"].set_setting("pixabay_key", "")
+    r = ed.get("/studio/stock/images?q=leaves&kind=art")
+    assert r.status_code == 422 and "Pixabay key" in r.json()["error"]
+    page = ed.get(f"/studio/edit/{did}").text
+    assert "data-px-form" in page and "data-stock-swap" in page

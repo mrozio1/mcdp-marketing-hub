@@ -71,6 +71,7 @@
         </div>
         {% endif %}
         <p class="small muted" data-tpl-empty hidden></p>
+        <p class="small muted ed-tpl-credit">Photo spots fill with the practice's own photos where their names match (team, office, patients), otherwise with free pictures from <a href="https://pixabay.com/" target="_blank" rel="noopener">Pixabay</a>. Select one and use "Try another photo" to swap it.</p>
       </section>
 
       <section id="ed-p-brand" data-panel="brand" hidden>
@@ -105,6 +106,16 @@
           <label><span>Make a picture with AI</span><textarea name="idea" rows="2" maxlength="300" placeholder="Autumn leaves on a sunny porch, warm light"></textarea></label>
           <button class="btn btn-small" type="submit">Make it</button>
           <p class="small muted">No faces of patients, teeth close-ups or text in AI pictures; they're added to the practice's AI images.</p>
+        </form>
+        {% endif %}
+        {% if can_edit %}
+        <form class="ed-pxform" data-px-form>
+          <label><span>Free photos and drawings</span>
+            <span class="ed-pxrow"><input type="search" name="q" placeholder="e.g. autumn leaves, toothbrush, beach" aria-label="Search free photos">
+            <select name="kind" aria-label="What kind"><option value="photo">Photos</option><option value="art">Cut-out drawings</option></select>
+            <button class="btn btn-small" type="submit">Search</button></span></label>
+          <p class="small muted">From <a href="https://pixabay.com/" target="_blank" rel="noopener">Pixabay</a>, free to use. A picture you pick is saved to the brand's Stock photos folder.</p>
+          <div data-px-results></div>
         </form>
         {% endif %}
         <div data-photos></div>
@@ -163,6 +174,8 @@
           <button type="button" class="ed-icon" data-align="center" title="Centre"><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2"><path d="M4 6h16M7 12h10M5 18h14"/></svg></button>
           <button type="button" class="ed-icon" data-align="right" title="Align right"><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2"><path d="M4 6h16M10 12h10M6 18h14"/></svg></button>
         </div>
+        <button type="button" class="btn btn-small btn-quiet ed-swap" data-stock-swap hidden>Try another photo</button>
+        <span class="small muted ed-credit" data-credit hidden></span>
         <label class="ed-color" data-ctx-fill hidden title="Colour"><span class="vh">Colour</span><input type="color" data-prop="fill"></label>
         <div class="ed-ctx-common" data-ctx-common hidden>
           <span class="ed-sep"></span>

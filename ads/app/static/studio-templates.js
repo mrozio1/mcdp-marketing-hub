@@ -156,10 +156,26 @@ window.MCDPTemplates = function (k) {
   const logoAt = (pos, size = 0.16) => ({ br: { x: 0.93, y: 0.94, size, anchor: "br" }, tl: { x: 0.07, y: 0.06, size, anchor: "tl" } })[pos];
 
   // ---------------------------------------------------------------- photo spots (placeholders until a photo is dropped in)
+  // o.q: what the photo should show (searched on Pixabay); o.own: team | office | patient (the practice's own photos come first)
   const spotFill = (c = P) => grad(tint(c, 0.62), tint(A, 0.55));
-  const photo = (x, y, w, h, o = {}) => frame({ left: x, top: y, width: w, height: h, fill: spotFill(o.tone), strokeWidth: 0, strokeDashArray: null, name: "Photo frame", ...o });
-  const photoShape = (name, x, y, w, h, o = {}) => path(SHAPE[name], x, y, w, h, { fill: spotFill(o.tone), name: "Photo frame", role: "photo", ...o });
-  const photoCircle = (cx, cy, r, o = {}) => circleFrame({ left: cx - r, top: cy - r, radius: r, fill: spotFill(o.tone), strokeWidth: 0, strokeDashArray: null, ...o });
+  const stk = o => { const { q, own, tone, i, ...rest } = o; return q ? { ...rest, stock: { q, kind: "photo", own: own || "", ...(i != null ? { i } : {}) } } : rest; };
+  const photo = (x, y, w, h, o = {}) => frame({ left: x, top: y, width: w, height: h, fill: spotFill(o.tone), strokeWidth: 0, strokeDashArray: null, name: "Photo frame", ...stk(o) });
+  const photoShape = (name, x, y, w, h, o = {}) => path(SHAPE[name], x, y, w, h, { fill: spotFill(o.tone), name: "Photo frame", role: "photo", ...stk(o) });
+  const photoCircle = (cx, cy, r, o = {}) => circleFrame({ left: cx - r, top: cy - r, radius: r, fill: spotFill(o.tone), strokeWidth: 0, strokeDashArray: null, ...stk(o) });
+  // a cut-out drawing (leaves, pumpkins, ornaments…) from Pixabay in place of a drawn shape; the shape stays if none is found
+  const art = (obj, q, i = 0) => { obj.set({ stock: { q, kind: "art", i }, role: "art", name: "Drawing" }); return obj; };
+  const artBox = (q, x, y, w, h, i = 0, o = {}) => art(box(x, y, w, h, "rgba(0,0,0,0)", { name: "Drawing", ...o }), q, i);
+  // torn paper: a card with a hand-torn edge
+  const tornD = seed => { const r = rnd(seed), j = () => r() * 2.6; let d = `M${j()} ${j()} `;
+    for (let x = 4; x <= 100; x += 4) d += `L${x} ${j()} `; for (let y = 4; y <= 100; y += 4) d += `L${100 - j()} ${y} `;
+    for (let x = 96; x >= 0; x -= 4) d += `L${x} ${100 - j()} `; for (let y = 96; y > 0; y -= 4) d += `L${j()} ${y} `; return d + "Z"; };
+  const torn = (seed, x, y, w, h, fill = CREAM, o = {}) => path(tornD(seed), x, y, w, h, { fill, shadow: shadow(2.4, 0.9, 0.22), name: "Torn paper", ...o });
+  const shadeUp = (a = 0.75) => layer(grad("rgba(0,0,0,0)", `rgba(0,0,0,${a})`, "down", [{ offset: 0.25, color: "rgba(0,0,0,0)" }, { offset: 1, color: `rgba(0,0,0,${a})` }]), { name: "Shade" });
+  const dim = (a = 0.45) => layer(`rgba(0,0,0,${a})`, { name: "Shade" });
+  const bokeh = (seed, n, color) => scatter(seed, n, (x, y, s, r) => dot(x, y, s * (0.3 + r() * 0.5), color, { opacity: 0.15 + r() * 0.25, name: "Bokeh" }));
+  // drawings tucked into the four corners, half off the page (centred boxes, so they turn about their middle)
+  const corners = (q, size = 0.42, i = 0) => [[0.06, 0.05, 20], [0.94, 0.06, 110], [0.07, 0.94, -70], [0.93, 0.95, 200]]
+    .map(([x, y, a], n) => artBox(q, W * x, H * y, S * size, S * size, i + (n % 2), { angle: a, originX: "center", originY: "center" }));
   // a brand-colour wash laid over a photo (multiply): duotone-style photos that match the kit
   const wash = (x, y, w, h, color, op = 0.45, o = {}) => box(x, y, w, h, color, { opacity: op, globalCompositeOperation: "multiply", name: "Colour wash", ...o });
   const polaroid = (x, y, w, h, o = {}) => {
@@ -251,7 +267,7 @@ window.MCDPTemplates = function (k) {
   // ================================================================ basics
   add("blank", "Blank", "basics", () => ({ bg: PAPER, objs: [] }));
   add("photo", "Photo and headline", "basics", () => { const { vis, txt } = pic(0.58); return { bg: PAPER, objs: [
-    photo(vis.x, vis.y, vis.w, vis.h),
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "happy family smiling outdoors", own: "patient" }),
     ...flow(txt, [{ k: "eyebrow", t: "From our team", after: 1.4 }, { k: "h1", t: "Grateful for every smile", size: 8.5 }, { k: "body", t: "Thank you for trusting us with your family's smiles.", wf: 0.8 }]),
   ], logo: logoAt("br", 0.14) }; });
   add("bold", "Bold statement", "basics", () => ({ bg: P, objs: [
@@ -265,20 +281,20 @@ window.MCDPTemplates = function (k) {
     ...flow({ x: W * 0.08, y: H * 0.3, w: W * 0.84, h: H * 0.5 }, [{ k: "h1", t: "A smile is the prettiest thing you can wear.", size: 8.5, c: PD }, { k: "swash", w: 26, after: 2 }, { k: "sub", t: "Our team" }]),
   ], logo: logoAt("br", 0.14) }));
   add("split", "Photo split", "basics", () => { const { vis, txt } = pic(0.5); return { bg: P, objs: [
-    photo(vis.x, vis.y, vis.w, vis.h), wash(vis.x, vis.y, vis.w, vis.h, P, 0.25),
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "modern dental clinic", own: "office" }), wash(vis.x, vis.y, vis.w, vis.h, P, 0.25),
     ...flow(txt, [{ k: "eyebrow", t: "Welcome", c: AL, after: 1.4 }, { k: "h1", t: "Smiles made here", size: 11, c: PAPER }, { k: "body", t: "Gentle, modern care for the whole family.", c: tint(P, 0.75) }, { k: "cta", t: "Book a visit" }], "left", "center"),
   ], logo: logoAt("tl", 0.13) }; });
   add("arch", "Arch photo", "basics", () => ({ bg: AXL, objs: [
     grain(0.05), dot(W * 0.82, H * 0.16, S * 0.12, AL), dot(W * 0.14, H * 0.6, S * 0.06, PL),
-    photoShape("arch", W * 0.5 - S * 0.3, H * 0.07, S * 0.6, H * 0.5),
+    photoShape("arch", W * 0.5 - S * 0.3, H * 0.07, S * 0.6, H * 0.5, { q: "happy child smiling", own: "patient" }),
     ...flow({ x: W * 0.1, y: H * 0.62, w: W * 0.8, h: H * 0.3 }, [{ k: "script", t: "hello", size: 9, after: 0 }, { k: "h1", t: "Smiles start here", size: 9 }, { k: "body", t: "We can't wait to meet you." }], "center"),
   ] }));
   add("collage", "Photo collage", "basics", () => {
     const g = U * 1.6, top = H * (wide ? 0.08 : 0.06), hh = H * (wide ? 0.84 : 0.58), w1 = W * (wide ? 0.32 : 0.5);
     return { bg: PAPER, objs: [
-      photo(W * 0.06, top, w1 - g, hh, { rx: U * 2, ry: U * 2 }),
-      photo(W * 0.06 + w1, top, W * 0.88 - w1, (hh - g) / 2, { rx: U * 2, ry: U * 2, tone: A }),
-      photo(W * 0.06 + w1, top + (hh + g) / 2, W * 0.88 - w1, (hh - g) / 2, { rx: U * 2, ry: U * 2 }),
+      photo(W * 0.06, top, w1 - g, hh, { rx: U * 2, ry: U * 2, q: "dental office", own: "team" }),
+      photo(W * 0.06 + w1, top, W * 0.88 - w1, (hh - g) / 2, { rx: U * 2, ry: U * 2, tone: A, q: "coffee cups friends", own: "team", i: 1 }),
+      photo(W * 0.06 + w1, top + (hh + g) / 2, W * 0.88 - w1, (hh - g) / 2, { rx: U * 2, ry: U * 2, q: "high five", own: "office", i: 2 }),
       ...(wide ? [] : flow({ x: W * 0.06, y: top + hh + H * 0.05, w: W * 0.88, h: H * 0.25 }, [{ k: "h1", t: "A week at the office", size: 8 }, { k: "body", t: "Smiles, high fives and a lot of laughs." }])),
     ], logo: logoAt("br", 0.13) };
   });
@@ -293,7 +309,7 @@ window.MCDPTemplates = function (k) {
     ]),
   ], logo: logoAt("br", 0.14) }));
   add("announce", "Big announcement", "basics", () => ({ bg: PD, objs: [
-    photo(0, 0, W, H), wash(0, 0, W, H, P, 0.6), layer(grad("rgba(0,0,0,0)", "rgba(0,0,0,0.55)", "down"), { name: "Shade" }),
+    photo(0, 0, W, H, { q: "confetti celebration" }), wash(0, 0, W, H, P, 0.6), layer(grad("rgba(0,0,0,0)", "rgba(0,0,0,0.55)", "down"), { name: "Shade" }),
     ...flow({ x: W * 0.08, y: H * 0.45, w: W * 0.84, h: H * 0.45 }, [{ k: "pill", t: "Big news", after: 2.4 }, { k: "h1", t: "Something exciting is coming", size: 10, c: PAPER }, { k: "body", t: "Stay tuned. You'll hear it here first.", c: tint(P, 0.85) }], "left", "bottom"),
   ], logo: logoAt("tl", 0.14) }));
 
@@ -314,12 +330,13 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.13) }), { months: [12, 1] });
   add("valentine", "Valentine's Day", "seasonal", () => ({ bg: AXL, objs: [
     texture("dots", A, U * 4, 0.18),
-    ...scatter(11, 12, (x, y, s, r) => shape("heart", x, y, s, { fill: r() < 0.5 ? A : tint(P, 0.35), angle: (r() - 0.5) * 40 }), [{ x: 0.06, y: 0.26, w: 0.88, h: 0.5 }]),
+    ...scatter(11, 10, (x, y, s, r) => shape("heart", x, y, s, { fill: r() < 0.5 ? A : tint(P, 0.35), angle: (r() - 0.5) * 40 }), [{ x: 0.06, y: 0.26, w: 0.88, h: 0.5 }]),
+    artBox("watercolor heart", W * 0.66, H * 0.04, S * 0.3, S * 0.3, 0, { angle: 12 }),
     box(W * 0.1, H * 0.28, W * 0.8, H * 0.44, PAPER, { rx: U * 3, ry: U * 3, shadow: shadow(), name: "Card" }),
     ...flow({ x: W * 0.14, y: H * 0.28, w: W * 0.72, h: H * 0.44 }, [{ k: "script", t: "We love", size: 8, after: 0 }, { k: "h1", t: "your smile", size: 11, c: PD }, { k: "sub", t: "Happy Valentine's Day!", size: 4 }], "center", "center"),
   ], logo: logoAt("br", 0.13) }), { months: [1, 2] });
   add("valentine2", "Valentine photo heart", "seasonal", () => ({ bg: tint(A, 0.86), objs: [
-    grain(0.05), photoShape("heart", W * 0.5 - S * 0.3, H * 0.08, S * 0.6, S * 0.56),
+    grain(0.05), photoShape("heart", W * 0.5 - S * 0.3, H * 0.08, S * 0.6, S * 0.56, { q: "pink roses" }),
     shape("heart", W * 0.5 + S * 0.2, H * 0.06, S * 0.1, { fill: A }), shape("sparkle", W * 0.5 - S * 0.34, H * 0.1 + S * 0.42, S * 0.07, { fill: P }),
     ...flow({ x: W * 0.08, y: H * 0.1 + S * 0.62, w: W * 0.84, h: H * 0.3 }, [{ k: "h1", t: "You make us smile", size: 9, c: PD }, { k: "body", t: "Happy Valentine's Day from all of us." }], "center"),
   ] }), { months: [1, 2] });
@@ -333,12 +350,13 @@ window.MCDPTemplates = function (k) {
   add("stpatricks", "St. Patrick's Day", "seasonal", () => ({ bg: PAPER, objs: [
     texture("gingham", P, U * 8, 0.12),
     ...scatter(17, 9, (x, y, s, r) => shape("shamrock", x, y, s * 1.2, { fill: r() < 0.6 ? P : tint(P, 0.45), angle: (r() - 0.5) * 50 }), [{ x: 0.08, y: 0.26, w: 0.84, h: 0.52 }]),
+    artBox("shamrock", W * 0.74, H * 0.74, S * 0.24, S * 0.24, 0, { angle: 14 }),
     dot(W * 0.5, H * 0.52, S * 0.3, PAPER, { shadow: shadow(), name: "Badge" }),
     ...flow({ x: W * 0.5 - S * 0.26, y: H * 0.52 - S * 0.26, w: S * 0.52, h: S * 0.52 }, [{ k: "script", t: "lucky", size: 9, after: 0 }, { k: "h1", t: "to have you", size: 7.5 }, { k: "eyebrow", t: "Happy St. Patrick's Day", size: 2.4 }], "center", "center"),
   ], logo: logoAt("br", 0.12) }), { months: [3] });
   add("spring", "Spring", "seasonal", () => { const { vis, txt } = pic(0.5); return { bg: PXL, objs: [
-    photoShape(wide ? "blob" : "archflip", vis.x + vis.w * 0.08, vis.y + (wide ? vis.h * 0.1 : 0), vis.w * 0.84, vis.h * (wide ? 0.8 : 0.95)),
-    ...[[0.06, 0.06], [0.82, 0.38], [0.14, 0.42]].map(([x, y], i) => shape("flower", W * x, H * y, S * (0.07 + i * 0.02), { fill: i % 2 ? A : tint(A, 0.4), name: "Flower" })),
+    photoShape(wide ? "blob" : "archflip", vis.x + vis.w * 0.08, vis.y + (wide ? vis.h * 0.1 : 0), vis.w * 0.84, vis.h * (wide ? 0.8 : 0.95), { q: "spring blossoms" }),
+    ...[[0.06, 0.06], [0.82, 0.38], [0.14, 0.42]].map(([x, y], i) => art(shape("flower", W * x, H * y, S * (0.1 + i * 0.02), { fill: i % 2 ? A : tint(A, 0.4), name: "Flower" }), "watercolor flower", i % 2)),
     ...flow(txt, [{ k: "script", t: "Spring into", size: 8, after: 0 }, { k: "h1", t: "a brighter smile", size: 9.5 }, { k: "body", t: "Book a spring check-up and start the season fresh." }, { k: "cta", t: "Book now" }], wide ? "left" : "center", "center"),
   ], logo: logoAt("br", 0.12) }; }, { months: [3, 4] });
   add("easter", "Easter", "seasonal", () => ({ bg: CREAM, objs: [
@@ -354,7 +372,7 @@ window.MCDPTemplates = function (k) {
     shape("egg", W * 0.74, H * 0.08, S * 0.18, { fill: A, angle: 12 }), shape("egg", W * 0.84, H * 0.2, S * 0.12, { fill: tint(P, 0.4), angle: -14 }),
   ], logo: logoAt("br", 0.12) }), { months: [3, 4] });
   add("mothersday", "Mother's Day", "seasonal", () => ({ bg: tint(A, 0.86), objs: [
-    grain(0.05), photoCircle(W * 0.5, H * 0.08 + S * 0.24, S * 0.24),
+    grain(0.05), photoCircle(W * 0.5, H * 0.08 + S * 0.24, S * 0.24, { q: "mother and child" }),
     ring(W * 0.5, H * 0.08 + S * 0.24, S * 0.27, A, U * 0.4),
     shape("flower", W * 0.5 + S * 0.15, H * 0.08 + S * 0.36, S * 0.13, { fill: A, name: "Flower" }),
     ...flow({ x: W * 0.1, y: H * 0.08 + S * 0.56, w: W * 0.8, h: H * 0.35 }, [{ k: "script", t: "Happy", size: 8, after: 0 }, { k: "h1", t: "Mother's Day", size: 10, c: PD }, { k: "body", t: "To the moms who remind us to brush: thank you." }], "center"),
@@ -362,7 +380,7 @@ window.MCDPTemplates = function (k) {
   add("mothersday2", "Mother's Day collage", "seasonal", () => ({ bg: PAPER, objs: [
     texture("dots", A, U * 4, 0.2),
     box(W * 0.2, H * 0.1, W * 0.34, H * 0.34, tint(P, 0.7), { angle: -8, name: "Card" }),
-    ...polaroid(W * 0.44, H * 0.08, W * 0.4, H * 0.32), ...polaroid(W * 0.12, H * 0.18, W * 0.34, H * 0.26, { tone: A }),
+    ...polaroid(W * 0.44, H * 0.08, W * 0.4, H * 0.32, { q: "mother daughter hug" }), ...polaroid(W * 0.12, H * 0.18, W * 0.34, H * 0.26, { tone: A, q: "flowers bouquet" }),
     ...flow({ x: W * 0.08, y: H * 0.6, w: W * 0.84, h: H * 0.3 }, [{ k: "h1", t: "Moms make the best smiles", size: 8, c: PD }, { k: "body", t: "Tag a mom who deserves a day off today." }], "center"),
   ], logo: logoAt("br", 0.12) }), { months: [5] });
   add("smileday", "National Smile Day", "seasonal", () => ({ bg: AXL, objs: [
@@ -382,7 +400,7 @@ window.MCDPTemplates = function (k) {
     ...flow(full(0.14), [{ k: "h1", t: "Remembering and honouring", size: 8.5, c: PD }, { k: "rule", w: 10, after: 3 }, { k: "body", t: "Our office is closed Monday for Memorial Day. We'll see you Tuesday." }], "center", "center"),
   ], logo: logoAt("br", 0.12) }), { months: [5] });
   add("fathersday", "Father's Day", "seasonal", () => { const { vis, txt } = pic(0.55); return { bg: PDD, objs: [
-    photo(vis.x, vis.y, vis.w, vis.h), wash(vis.x, vis.y, vis.w, vis.h, P, 0.35), patch("stripes", txt.x, txt.y - U * 2, U * 18, U * 2.2, A, U * 2, 0.7),
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "father and son outdoors" }), wash(vis.x, vis.y, vis.w, vis.h, P, 0.35), patch("stripes", txt.x, txt.y - U * 2, U * 18, U * 2.2, A, U * 2, 0.7),
     ...flow({ ...txt, y: txt.y + U * 3 }, [{ k: "h1", t: "Happy Father's Day", size: 10, c: PAPER }, { k: "body", t: "Here's to the dads who never miss a check-up.", c: tint(P, 0.75) }], "left", "center"),
   ], logo: logoAt("br", 0.12) }; }, { months: [6] });
   add("summer", "Summer smiles", "seasonal", () => ({ bg: tint(A, 0.85), objs: [
@@ -404,7 +422,7 @@ window.MCDPTemplates = function (k) {
   ] }), { months: [7] });
   add("backtoschool", "Back to school", "seasonal", () => ({ bg: PAPER, objs: [
     texture("grid", P, U * 6, 0.12), box(0, 0, W * 0.04, H, A, { name: "Margin band" }),
-    shape("apple", W * 0.76, H * 0.07, S * 0.15, { fill: RED, name: "Apple" }), shape("pencil", W * 0.8, H * 0.74, S * 0.14, { fill: A, name: "Pencil" }),
+    art(shape("apple", W * 0.74, H * 0.06, S * 0.18, { fill: RED, name: "Apple" }), "red apple"), art(shape("pencil", W * 0.78, H * 0.72, S * 0.16, { fill: A, name: "Pencil" }), "pencil"),
     ...flow({ x: W * 0.12, y: H * 0.14, w: W * 0.72, h: H * 0.68 }, [{ k: "script", t: "Back to school,", size: 7, hand: true, after: 0 }, { k: "h1", t: "back to smiles", size: 11 }, { k: "body", t: "Book an after-school appointment before the calendar fills up.", c: INK }, { k: "cta", t: "Book after school" }], "left", "center"),
   ], logo: logoAt("br", 0.12) }), { months: [8, 9] });
   add("schoollist", "Back-to-school checklist", "seasonal", () => ({ bg: PL, objs: [
@@ -416,7 +434,8 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.11) }), { months: [8, 9] });
   add("fall", "Fall", "seasonal", () => ({ bg: CREAM, objs: [
     grain(0.06),
-    ...scatter(43, 12, (x, y, s, r) => shape(r() < 0.5 ? "maple" : "leaf", x, y, s * 1.1, { fill: [A, shade(A, 0.2), tint(A, 0.3), tint(P, 0.3)][Math.floor(r() * 4)], angle: r() * 360 }), [{ x: 0.06, y: 0.24, w: 0.88, h: 0.54 }]),
+    ...scatter(43, 8, (x, y, s, r) => shape(r() < 0.5 ? "maple" : "leaf", x, y, s * 0.8, { fill: [A, shade(A, 0.2), tint(A, 0.3), tint(P, 0.3)][Math.floor(r() * 4)], angle: r() * 360 }), [{ x: 0.06, y: 0.24, w: 0.88, h: 0.54 }]),
+    artBox("autumn leaf", W * 0.72, -S * 0.06, S * 0.36, S * 0.36, 0, { angle: 0 }), artBox("autumn leaf", -S * 0.08, H - S * 0.3, S * 0.36, S * 0.36, 1),
     ...flow({ x: W * 0.1, y: H * 0.26, w: W * 0.8, h: H * 0.5 }, [{ k: "script", t: "Fall in love", size: 8, after: 0 }, { k: "h1", t: "with your smile", size: 11 }, { k: "body", t: "Autumn appointments are filling fast. Book yours today." }], "center", "center"),
   ], logo: logoAt("br", 0.12) }), { months: [9, 10] });
   add("hygienemonth", "Dental Hygiene Month", "seasonal", () => ({ bg: PAPER, objs: [
@@ -431,7 +450,7 @@ window.MCDPTemplates = function (k) {
   add("halloween", "Halloween", "seasonal", () => ({ bg: PDD, objs: [
     layer(radial(shade(P, 0.4), shade(P, 0.75))),
     shape("moon", W * 0.74, H * 0.06, S * 0.18, { fill: AXL, name: "Moon" }),
-    shape("pumpkin", W * 0.05, H * 0.72, S * 0.24, { fill: A }), shape("pumpkin", W * 0.72, H * 0.76, S * 0.18, { fill: tint(A, 0.25) }),
+    art(shape("pumpkin", W * 0.04, H * 0.7, S * 0.26, { fill: A }), "pumpkin", 0), art(shape("pumpkin", W * 0.72, H * 0.74, S * 0.2, { fill: tint(A, 0.25) }), "pumpkin", 1),
     ...scatter(31, 8, (x, y, s) => shape("star", x, y, s * 0.45, { fill: tint(A, 0.5), opacity: 0.8 }), [{ x: 0.05, y: 0.2, w: 0.9, h: 0.5 }]),
     ...flow({ x: W * 0.08, y: H * 0.2, w: W * 0.84, h: H * 0.5 }, [{ k: "script", t: "Brace yourself,", size: 7, c: AL, after: 0 }, { k: "h1", t: "it's Halloween!", size: 11, c: PAPER }, { k: "body", t: "Skip the sticky, chewy and hard candy. Chocolate that melts is the braces-friendly treat.", c: tint(P, 0.78) }], "left", "center"),
   ], logo: logoAt("tl", 0.12) }), { months: [10] });
@@ -443,11 +462,11 @@ window.MCDPTemplates = function (k) {
   ] }), { months: [10, 11] });
   add("thanksgiving", "Thanksgiving", "seasonal", () => ({ bg: CREAM, objs: [
     grain(0.06),
-    ...scatter(41, 12, (x, y, s, r) => shape(r() < 0.5 ? "maple" : "leaf", x, y, s * 1.1, { fill: [A, tint(A, 0.3), shade(A, 0.2), tint(P, 0.3)][Math.floor(r() * 4)], angle: r() * 360 }), [{ x: 0.06, y: 0.26, w: 0.88, h: 0.5 }]),
+    ...corners("autumn leaves", 0.4),
     ...flow({ x: W * 0.1, y: H * 0.28, w: W * 0.8, h: H * 0.46 }, [{ k: "script", t: "Thankful", size: 11, after: 0 }, { k: "h1", t: "for you", size: 11 }, { k: "sub", t: "Happy Thanksgiving from our family to yours", size: 4 }], "center", "center"),
   ], logo: logoAt("br", 0.12) }), { months: [11] });
   add("grateful", "Grateful photo", "seasonal", () => { const { vis, txt } = pic(0.55); return { bg: PAPER, objs: [
-    photo(vis.x, vis.y, vis.w, vis.h), wash(vis.x, vis.y, vis.w, vis.h, A, 0.25),
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "autumn table setting" }), wash(vis.x, vis.y, vis.w, vis.h, A, 0.25),
     shape("maple", txt.x + txt.w - S * 0.12, txt.y, S * 0.12, { fill: A, angle: 18 }),
     ...flow(txt, [{ k: "script", t: "grateful", size: 10, after: 0 }, { k: "h1", t: "for every smile", size: 8.5 }, { k: "body", t: "Thank you for letting us be part of your family's story." }], "left", "center"),
   ], logo: logoAt("br", 0.12) }; }, { months: [11] });
@@ -463,13 +482,14 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.12) }), { months: [11, 12] });
   add("holidays", "Happy holidays", "seasonal", () => ({ bg: P, objs: [
     layer(radial(tint(P, 0.1), shade(P, 0.35))),
-    ...scatter(53, 12, (x, y, s) => snowflake(x + s / 2, y + s / 2, s * 0.5, tint(P, 0.55)), [{ x: 0.04, y: 0.28, w: 0.92, h: 0.46 }, { x: 0, y: 0.82, w: 1, h: 0.18 }]),
+    ...scatter(53, 8, (x, y, s) => snowflake(x + s / 2, y + s / 2, s * 0.5, tint(P, 0.55)), [{ x: 0.04, y: 0.28, w: 0.92, h: 0.46 }, { x: 0, y: 0.82, w: 1, h: 0.18 }]),
+    artBox("christmas ornament", W * 0.1, -S * 0.02, S * 0.22, S * 0.3, 0), artBox("christmas ornament", W * 0.72, -S * 0.04, S * 0.2, S * 0.28, 1),
     ...flow({ x: W * 0.08, y: H * 0.3, w: W * 0.84, h: H * 0.42 }, [{ k: "script", t: "Happy", size: 9, c: AL, after: 0 }, { k: "h1", t: "holidays", size: 14, c: PAPER }, { k: "sub", t: "From our family to yours", c: tint(A, 0.25), size: 4 }], "center", "center"),
     NAME({ x: 0, y: H * 0.88, w: W }, { textAlign: "center", fill: tint(P, 0.7) }),
   ] }), { months: [12] });
   add("seasons", "Season's greetings card", "seasonal", () => ({ bg: tint(P, 0.9), objs: [
     texture("gingham", P, U * 7, 0.14),
-    ...polaroid(W * 0.5 - S * 0.3, H * 0.07, S * 0.6, S * 0.46),
+    ...polaroid(W * 0.5 - S * 0.3, H * 0.07, S * 0.6, S * 0.46, { q: "christmas tree lights" }),
     shape("gift", W * 0.5 + S * 0.2, H * 0.07 + S * 0.42, S * 0.16, { fill: A, angle: 8, name: "Gift" }),
     ...flow({ x: W * 0.08, y: H * 0.1 + S * 0.66, w: W * 0.84, h: H * 0.25 }, [{ k: "script", t: "Season's greetings", size: 8, c: PD, after: 1 }, { k: "body", t: "Warm wishes from all of us." }], "center"),
   ] }), { months: [12] });
@@ -509,7 +529,7 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.12) }));
   add("referral", "Refer a friend", "offers", () => ({ bg: tint(A, 0.85), objs: [
     texture("dots", A, U * 4, 0.2), ...confetti(29, 12, [{ x: 0.06, y: 0.3, w: 0.88, h: 0.62 }]),
-    shape("gift", W * 0.5 - S * 0.15, H * 0.06, S * 0.3, { fill: P, shadow: shadow(2, 0.8), name: "Gift" }),
+    art(shape("gift", W * 0.5 - S * 0.15, H * 0.06, S * 0.3, { fill: P, shadow: shadow(2, 0.8), name: "Gift" }), "gift box"),
     ...flow({ x: W * 0.1, y: H * 0.08 + S * 0.34, w: W * 0.8, h: H * 0.5 }, [{ k: "script", t: "Share the smile", size: 7, after: 0 }, { k: "h1", t: "Refer a friend, get a $50 gift card", size: 8, c: PD }, { k: "body", t: "When someone you send our way starts treatment, we'll say thanks." }, { k: "cta", t: "Ask at your next visit", fill: P }], "center"),
   ] }));
   add("limited", "Limited time", "offers", () => ({ bg: PDD, objs: [
@@ -530,12 +550,12 @@ window.MCDPTemplates = function (k) {
       { k: "list", items: ["Exam with the doctor", "Digital x-rays and photos", "A personal treatment plan"], size: 4 }, { k: "cta", t: "Book your visit", fill: P }], "left", "center"),
   ], logo: logoAt("br", 0.12) }));
   add("siblings", "Family discount", "offers", () => ({ bg: PXL, objs: [
-    ...[0.28, 0.5, 0.72].map((x, i) => photoCircle(W * x, H * 0.2, S * (i === 1 ? 0.13 : 0.1), { tone: i === 1 ? P : A })),
+    ...[0.28, 0.5, 0.72].map((x, i) => photoCircle(W * x, H * 0.2, S * (i === 1 ? 0.13 : 0.1), { tone: i === 1 ? P : A, q: ["brother sister smiling", "happy family portrait", "kids smiling"][i], own: "patient", i })),
     ...flow({ x: W * 0.08, y: H * 0.4, w: W * 0.84, h: H * 0.5 }, [{ k: "script", t: "Smiles run in the family", size: 7, after: 0.4 }, { k: "h1", t: "Save 10% on each sibling", size: 9, c: PD }, { k: "body", t: "Brothers, sisters, parents: when more than one of you starts treatment, everyone saves." }, { k: "cta", t: "Ask about family savings", fill: P }], "center"),
   ], logo: logoAt("br", 0.12) }));
   add("aligners", "Clear aligners", "offers", () => { const { vis, txt } = pic(0.48); return { bg: PAPER, objs: [
     box(vis.x, vis.y, vis.w, vis.h, grad(PL, AXL), { name: "Colour block" }),
-    photoShape("blob2", vis.x + vis.w * 0.15, vis.y + vis.h * 0.1, vis.w * 0.7, vis.h * 0.8),
+    photoShape("blob2", vis.x + vis.w * 0.15, vis.y + vis.h * 0.1, vis.w * 0.7, vis.h * 0.8, { q: "woman smiling portrait" }),
     ...flow(txt, [{ k: "pill", t: "New", fill: P, after: 2 }, { k: "h1", t: "Straighten your smile, invisibly", size: 8.5 }, { k: "body", t: "Clear aligners fit your life: removable, comfortable and nearly invisible." }, { k: "cta", t: "See if you're a fit" }], "left", "center"),
   ], logo: logoAt("br", 0.12) }; });
   add("whitening", "Free whitening", "offers", () => ({ bg: P, objs: [
@@ -551,7 +571,7 @@ window.MCDPTemplates = function (k) {
   ] }));
   add("contest", "Photo contest", "offers", () => ({ bg: AXL, objs: [
     texture("dots", A, U * 4, 0.2),
-    ...polaroid(W * 0.5 - S * 0.25, H * 0.06, S * 0.5, S * 0.38),
+    ...polaroid(W * 0.5 - S * 0.25, H * 0.06, S * 0.5, S * 0.38, { q: "big smile laughing", own: "patient" }),
     shape("crown", W * 0.5 + S * 0.16, H * 0.02, S * 0.13, { fill: A, angle: 16, name: "Crown" }),
     ...flow({ x: W * 0.08, y: H * 0.1 + S * 0.5, w: W * 0.84, h: H * 0.32 }, [{ k: "h1", t: "Best smile contest", size: 9, c: PD }, { k: "body", t: "Post your brightest smile, tag us and use our hashtag. Winner gets a $50 gift card!" }], "center"),
   ] }));
@@ -668,17 +688,17 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.12) }));
   add("team", "Meet the team", "news", () => ({ bg: CREAM, objs: [
     grain(0.05), dot(W * 0.5 + S * 0.2, H * 0.08 + S * 0.08, S * 0.08, AL), dot(W * 0.5 - S * 0.25, H * 0.08 + S * 0.38, S * 0.05, PL),
-    photoShape("arch", W * 0.5 - S * 0.2, H * 0.06, S * 0.4, S * 0.48),
+    photoShape("arch", W * 0.5 - S * 0.2, H * 0.06, S * 0.4, S * 0.48, { q: "doctor portrait smiling", own: "team" }),
     ...flow({ x: W * 0.1, y: H * 0.06 + S * 0.52, w: W * 0.8, h: H * 0.38 }, [{ k: "script", t: "Meet", size: 6.5, after: 0 }, { k: "h1", t: "Dr. Jordan", size: 9 }, { k: "eyebrow", t: "Orthodontist", c: MUTED, after: 1.8 }, { k: "body", t: "Loves hiking with her two kids and has never met a smoothie she didn't like." }], "center"),
   ] }));
   add("teamqa", "Team spotlight Q&A", "news", () => { const { vis, txt } = pic(0.44); return { bg: PAPER, objs: [
-    box(vis.x, vis.y, vis.w, vis.h, AXL, { name: "Colour block" }), photoCircle(vis.x + vis.w / 2, vis.y + vis.h / 2, Math.min(vis.w, vis.h) * 0.36),
+    box(vis.x, vis.y, vis.w, vis.h, AXL, { name: "Colour block" }), photoCircle(vis.x + vis.w / 2, vis.y + vis.h / 2, Math.min(vis.w, vis.h) * 0.36, { q: "receptionist smiling", own: "team" }),
     ...flow(txt, [{ k: "eyebrow", t: "Team spotlight", after: 1 }, { k: "h1", t: "Sam, treatment coordinator", size: 6.5 },
       { k: "sub", t: "Favourite snack?", size: 3.6, c: P, after: 0.6 }, { k: "body", t: "Anything with peanut butter." }, { k: "sub", t: "Best part of the job?", size: 3.6, c: P, after: 0.6 }, { k: "body", t: "Braces-off day, every time." }], "left", "center"),
   ], logo: logoAt("br", 0.11) }; });
   add("welcome", "Welcome aboard", "news", () => ({ bg: P, objs: [
     layer(radial(tint(P, 0.12), shade(P, 0.3))), ...confetti(71, 16, [{ x: 0.1, y: 0.04, w: 0.8, h: 0.92 }], [A, tint(A, 0.4), PAPER, tint(P, 0.5)]),
-    photoCircle(W * 0.5, H * 0.1 + S * 0.2, S * 0.2, { stroke: PAPER, strokeWidth: U * 1, strokeDashArray: null }),
+    photoCircle(W * 0.5, H * 0.1 + S * 0.2, S * 0.2, { stroke: PAPER, strokeWidth: U * 1, strokeDashArray: null, q: "doctor portrait", own: "team" }),
     ...flow({ x: W * 0.1, y: H * 0.1 + S * 0.46, w: W * 0.8, h: H * 0.4 }, [{ k: "script", t: "Please welcome", size: 6.5, c: AL, after: 0 }, { k: "h1", t: "Dr. Morgan Lee", size: 10, c: PAPER }, { k: "body", t: "Our newest orthodontist. Say hi at your next visit!", c: tint(P, 0.8) }], "center"),
   ] }));
   add("event", "Event", "news", () => ({ bg: PAPER, objs: [
@@ -700,7 +720,7 @@ window.MCDPTemplates = function (k) {
     ...flow({ x: W * 0.5 - S * 0.32, y: H * 0.5 - S * 0.32, w: S * 0.64, h: S * 0.64 }, [{ k: "eyebrow", t: "Celebrating", c: AL, after: 0 }, { k: "big", t: "10", size: 28, c: PAPER, after: 0 }, { k: "script", t: "years of smiles", size: 7, c: AL }], "center", "center"),
   ] }));
   add("newoffice", "New location", "news", () => { const { vis, txt } = pic(0.48); return { bg: PAPER, objs: [
-    photo(vis.x, vis.y, vis.w, vis.h), wash(vis.x, vis.y, vis.w, vis.h, P, 0.2),
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "modern office building", own: "office" }), wash(vis.x, vis.y, vis.w, vis.h, P, 0.2),
     shape("pin", vis.x + vis.w * 0.5 - S * 0.07, vis.y + vis.h * 0.5 - S * 0.1, S * 0.14, { fill: A, shadow: shadow(2, 1, 0.3), name: "Map pin" }),
     ...flow(txt, [{ k: "pill", t: "Now open", fill: P, after: 2 }, { k: "h1", t: "Our new office", size: 9.5 }, { k: "body", t: "123 Main Street. Same great team, more room for smiles." }, { k: "cta", t: "Get directions" }], "left", "center"),
   ], logo: logoAt("br", 0.12) }; });
@@ -711,7 +731,7 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.12) }));
   add("community", "Community event", "news", () => ({ bg: AXL, objs: [
     texture("stripes", A, U * 8, 0.1),
-    ...polaroid(W * 0.08, H * 0.08, W * 0.4, H * 0.3), ...polaroid(W * 0.52, H * 0.14, W * 0.4, H * 0.3, { tone: A }),
+    ...polaroid(W * 0.08, H * 0.08, W * 0.4, H * 0.3, { q: "fun run race", own: "team" }), ...polaroid(W * 0.52, H * 0.14, W * 0.4, H * 0.3, { tone: A, q: "running shoes", i: 1 }),
     ...flow({ x: W * 0.08, y: H * 0.58, w: W * 0.84, h: H * 0.32 }, [{ k: "script", t: "Proud to sponsor", size: 6.5, after: 0 }, { k: "h1", t: "the spring fun run", size: 8.5, c: PD }, { k: "body", t: "Thanks to everyone who came out to cheer!" }]),
   ], logo: logoAt("br", 0.11) }));
   add("reviewask", "Leave us a review", "news", () => ({ bg: PAPER, objs: [
@@ -721,8 +741,8 @@ window.MCDPTemplates = function (k) {
   ], logo: logoAt("br", 0.11) }));
   add("birthday", "Team birthday", "news", () => ({ bg: tint(P, 0.88), objs: [
     texture("dots", P, U * 4, 0.12),
-    ...[[0.1, A], [0.22, P], [0.78, tint(A, 0.3)]].map(([x, c], i) => shape("balloon", W * x, H * (0.08 + i * 0.04), S * 0.14, { fill: c, name: "Balloon" })),
-    photoCircle(W * 0.5, H * 0.08 + S * 0.22, S * 0.2),
+    ...[[0.1, A], [0.22, P], [0.78, tint(A, 0.3)]].map(([x, c], i) => art(shape("balloon", W * x, H * (0.06 + i * 0.04), S * 0.16, { fill: c, name: "Balloon" }), "balloons", i % 2)),
+    photoCircle(W * 0.5, H * 0.08 + S * 0.22, S * 0.2, { q: "birthday cake", own: "team" }),
     ...flow({ x: W * 0.1, y: H * 0.1 + S * 0.46, w: W * 0.8, h: H * 0.36 }, [{ k: "script", t: "Happy birthday,", size: 7, after: 0 }, { k: "h1", t: "Taylor!", size: 11, c: PD }, { k: "body", t: "Wish our favourite assistant a great day in the comments." }], "center"),
   ] }));
 
@@ -734,12 +754,12 @@ window.MCDPTemplates = function (k) {
   add("review2", "Review card", "patients", () => ({ bg: P, objs: [
     layer(grad(tint(P, 0.1), shade(P, 0.3))), texture("dots", PAPER, U * 4, 0.08),
     box(W * 0.08, H * 0.14, W * 0.84, H * 0.64, PAPER, { rx: U * 3, ry: U * 3, shadow: shadow(3, 1.4, 0.25), name: "Card" }),
-    photoCircle(W * 0.5, H * 0.14, S * 0.08, { stroke: PAPER, strokeWidth: U * 0.8, strokeDashArray: null }),
+    photoCircle(W * 0.5, H * 0.14, S * 0.08, { stroke: PAPER, strokeWidth: U * 0.8, strokeDashArray: null, q: "smiling woman portrait", own: "patient" }),
     ...flow({ x: W * 0.14, y: H * 0.14 + S * 0.1, w: W * 0.72, h: H * 0.64 - S * 0.12 }, [{ k: "stars", size: 5, after: 2 }, { k: "body", t: "“Paste a real patient review here.”", size: 4, c: INK }, { k: "sub", t: "Patient's first name", size: 3.6 }], "center", "center"),
     textbox("What our patients say", { ...td("subhead"), fontSize: Math.round(U * 4), left: W * 0.08, top: H * 0.84, width: W * 0.84, textAlign: "center", fill: PAPER }),
   ] }));
   add("bracesoff", "Braces off day!", "patients", () => ({ bg: PAPER, objs: [
-    texture("dots", A, U * 4, 0.14), ...polaroid(W * 0.5 - S * 0.3, H * 0.06, S * 0.6, S * 0.4),
+    texture("dots", A, U * 4, 0.14), ...polaroid(W * 0.5 - S * 0.3, H * 0.06, S * 0.6, S * 0.4, { q: "teenager smiling", own: "patient" }),
     ...confetti(97, 16, [{ x: 0.12, y: 0.06, w: 0.76, h: 0.56 }, { x: 0.05, y: 0.66, w: 0.9, h: 0.3 }]),
     ...flow({ x: W * 0.08, y: H * 0.06 + S * 0.56, w: W * 0.84, h: H * 0.9 - S * 0.56 }, [{ k: "h1", t: "Braces off day!", size: 10 }, { k: "script", t: "Congratulations, Emma!", size: 6 }], "center"),
   ], logo: logoAt("br", 0.11) }));
@@ -759,7 +779,7 @@ window.MCDPTemplates = function (k) {
   add("patientmonth", "Patient of the month", "patients", () => ({ bg: tint(P, 0.9), objs: [
     texture("plus", P, U * 6, 0.1),
     shape("seal", W * 0.5 - S * 0.28, H * 0.05, S * 0.56, { fill: A, name: "Badge" }),
-    photoCircle(W * 0.5, H * 0.05 + S * 0.28, S * 0.22, { stroke: PAPER, strokeWidth: U * 0.8, strokeDashArray: null }),
+    photoCircle(W * 0.5, H * 0.05 + S * 0.28, S * 0.22, { stroke: PAPER, strokeWidth: U * 0.8, strokeDashArray: null, q: "boy smiling", own: "patient" }),
     ...flow({ x: W * 0.1, y: H * 0.07 + S * 0.58, w: W * 0.8, h: H * 0.34 }, [{ k: "eyebrow", t: "Patient of the month", c: P, after: 1 }, { k: "h1", t: "Congrats, Liam!", size: 9.5 }, { k: "body", t: "Perfect brushing checks all month long. Keep it up!" }], "center"),
   ] }));
   add("thankyou", "Thank you", "patients", () => ({ bg: A, objs: [
@@ -771,19 +791,19 @@ window.MCDPTemplates = function (k) {
     const g = wide ? [3, 2] : tall ? [2, 3] : [2, 2], gap = U * 2, cw = (W * 0.84 - gap * (g[0] - 1)) / g[0], ch = (H * 0.64 - gap * (g[1] - 1)) / g[1];
     const frames = [];
     for (let r = 0; r < g[1]; r++) for (let c = 0; c < g[0]; c++)
-      frames.push(photo(W * 0.08 + c * (cw + gap), H * 0.2 + r * (ch + gap), cw, ch, { rx: U * 2, ry: U * 2, tone: (r + c) % 2 ? A : P }));
+      frames.push(photo(W * 0.08 + c * (cw + gap), H * 0.2 + r * (ch + gap), cw, ch, { rx: U * 2, ry: U * 2, tone: (r + c) % 2 ? A : P, q: "smiling people", own: "patient", i: frames.length }));
     return { bg: CREAM, objs: [grain(0.05), ...flow({ x: W * 0.08, y: H * 0.04, w: W * 0.84, h: H * 0.14 }, [{ k: "script", t: "Smiles we love", size: 8, after: 0 }], "center", "center"), ...frames,
       textbox("Want to see yours here? Tag us!", { ...td("body"), left: W * 0.08, width: W * 0.84, top: H * 0.88, textAlign: "center", fill: MUTED })] };
   });
   add("spotlight", "Patient spotlight", "patients", () => { const { vis, txt } = pic(0.5); return { bg: PAPER, objs: [
     box(vis.x, vis.y, vis.w, vis.h, P, { name: "Colour block" }), patch("dots", vis.x, vis.y, vis.w, vis.h, PAPER, U * 4, 0.12),
-    photoShape("blob", vis.x + vis.w * 0.14, vis.y + vis.h * 0.1, vis.w * 0.72, vis.h * 0.8),
+    photoShape("blob", vis.x + vis.w * 0.14, vis.y + vis.h * 0.1, vis.w * 0.72, vis.h * 0.8, { q: "girl smiling portrait", own: "patient" }),
     ...flow(txt, [{ k: "eyebrow", t: "Patient spotlight", after: 1 }, { k: "h1", t: "Meet Ava", size: 9 }, { k: "body", t: "Soccer goalie, artist and proud owner of a brand-new smile." }, { k: "sub", t: "Favourite band colour: purple", size: 3.6, c: P }], "left", "center"),
   ], logo: logoAt("br", 0.11) }; });
   add("selfie", "Show us your smile", "patients", () => ({ bg: AXL, objs: [
     texture("stripes", A, U * 8, 0.1),
     box(W * 0.18, H * 0.06, W * 0.64, H * 0.66, INK, { rx: U * 5, ry: U * 5, shadow: shadow(), name: "Phone" }),
-    photo(W * 0.21, H * 0.06 + U * 4, W * 0.58, H * 0.66 - U * 8, { rx: U * 3, ry: U * 3 }),
+    photo(W * 0.21, H * 0.06 + U * 4, W * 0.58, H * 0.66 - U * 8, { rx: U * 3, ry: U * 3, q: "selfie smiling friends", own: "patient" }),
     shape("heart", W * 0.7, H * 0.56, S * 0.1, { fill: A, angle: 12 }), shape("heart", W * 0.76, H * 0.5, S * 0.06, { fill: P, angle: -10 }),
     ...flow({ x: W * 0.08, y: H * 0.76, w: W * 0.84, h: H * 0.2 }, [{ k: "h1", t: "Show us your smile!", size: 7.5, c: PD }, { k: "body", t: "Post a selfie and tag us for a chance to be featured." }], "center", "center"),
   ] }));
@@ -791,6 +811,112 @@ window.MCDPTemplates = function (k) {
     layer(radial(tint(P, 0.15), shade(P, 0.35))), ...confetti(113, 22, [{ x: 0.06, y: 0.2, w: 0.88, h: 0.62 }], [A, tint(A, 0.4), PAPER]),
     ...flow(full(0.1), [{ k: "big", t: "1,000", size: 22, c: PAPER, after: 0.6 }, { k: "script", t: "smiles and counting", size: 8, c: AL, after: 2 }, { k: "body", t: "Thank you for every high five along the way.", c: tint(P, 0.8) }], "center", "center"),
   ], logo: logoAt("br", 0.12) }));
+
+  // ================================================================ photo-led layouts (real photos and drawings fill in when the template is picked)
+  // a full-bleed photo under a dark fade, with the words at the bottom (or the middle)
+  const hero = (q, items, o = {}) => () => ({ bg: PDD, objs: [
+    photo(0, 0, W, H, { q, own: o.own, tone: o.tone }), ...(o.wash ? [wash(0, 0, W, H, o.wash, 0.35)] : []), o.mid ? dim(o.dim || 0.42) : shadeUp(o.dim || 0.78),
+    ...(o.extra ? o.extra() : []),
+    ...flow(o.mid ? full(0.12) : { x: W * 0.08, y: H * 0.42, w: W * 0.84, h: H * 0.48 }, items, o.align || (o.mid ? "center" : "left"), o.mid ? "center" : "bottom"),
+  ], logo: logoAt(o.logo || "tl", 0.13) });
+  // a photo behind a torn paper card holding the words
+  const tornCard = (q, items, o = {}) => () => {
+    const cw = wide ? W * 0.5 : W * 0.78, ch = wide ? H * 0.74 : H * (tall ? 0.42 : 0.56), cx = (W - cw) / 2, cy = wide ? (H - ch) / 2 : H * (tall ? 0.46 : 0.36);
+    return { bg: PD, objs: [photo(0, 0, W, H, { q, own: o.own }), dim(0.18), torn(o.seed || 5, cx, cy, cw, ch, o.paper || CREAM),
+      ...(o.extra ? o.extra(cx, cy, cw, ch) : []),
+      ...flow({ x: cx + cw * 0.1, y: cy + ch * 0.1, w: cw * 0.8, h: ch * 0.8 }, items, "center", "center")], logo: logoAt("br", 0.12) };
+  };
+  // drawings around a plain card: leaves, flowers, ornaments…
+  const framed = (artQ, items, o = {}) => () => ({ bg: o.bg || CREAM, objs: [
+    ...(o.texture ? [o.texture()] : [grain(0.05)]), ...corners(artQ, o.size || 0.46),
+    ...flow(full(0.2), items, "center", "center"),
+  ], ...(o.logo ? { logo: logoAt(o.logo, 0.11) } : {}) });
+  // one big drawing with words across it
+  const feature = (artQ, items, o = {}) => () => ({ bg: o.bg || CREAM, objs: [
+    ...(o.texture ? [o.texture()] : [grain(0.05)]),
+    artBox(artQ, W * 0.5, H * (o.ay || 0.52), S * (o.size || 0.78), S * (o.size || 0.78), 0, { originX: "center", originY: "center" }),
+    ...flow(o.col || full(0.1), items, "center", o.v || "center"),
+  ], logo: logoAt("br", 0.11) });
+  const caps = (t, size = 13, c = PAPER) => ({ k: "h1", t: t.toUpperCase(), size, c, lh: 0.95, sp: 20 });
+
+  // ---- holidays and seasonal
+  add("tgphoto", "Thanksgiving table", "seasonal", hero("thanksgiving dinner table", [{ k: "script", t: "Happy", size: 9, c: AL, after: 0 }, caps("Thanksgiving", 12), { k: "rule", w: 12, after: 2.4 }, { k: "body", t: "May your heart be as full as your plate.", c: PAPER, size: 3.8 }, { k: "pill", t: "From all of us", fill: A }]), { months: [11] });
+  add("tgleaves", "Thanksgiving leaf frame", "seasonal", framed("autumn leaves", [{ k: "script", t: "Happy", size: 10, after: 0 }, caps("Thanksgiving", 11, PD), { k: "body", t: "Wishing you good food, warm hearts and grateful moments." }, { k: "pill", t: "From " + C.brand, fill: P, size: 2.6 }]), { months: [11] });
+  add("tgpumpkin", "Painted pumpkin", "seasonal", feature("pumpkin", [{ k: "script", t: "grateful", size: 12, c: PAPER, after: 0, o: { shadow: shadow(1.4, 0.4, 0.35) } }, { k: "script", t: "& thankful", size: 9, c: PAPER, o: { shadow: shadow(1.4, 0.4, 0.35) } }], { col: { x: W * 0.1, y: H * 0.4, w: W * 0.8, h: H * 0.26 } }), { months: [11] });
+  add("tgtorn", "Thankful torn paper", "seasonal", tornCard("autumn leaves", [{ k: "script", t: "thankful", size: 11, after: 0 }, caps("for you", 9, PD), { k: "rule", w: 10, after: 2 }, { k: "body", t: "Happy Thanksgiving from our family to yours." }], { seed: 11 }), { months: [11] });
+  add("tgdark", "Thanksgiving dark leaves", "seasonal", () => ({ bg: INK, objs: [
+    texture("grain", "#FFFFFF", U * 6, 0.04),
+    ...[0.1, 0.38, 0.66, 0.94].flatMap((x, i) => [artBox("autumn leaves", W * x, H * 0.04, S * 0.26, S * 0.26, i % 2, { originX: "center", originY: "center", angle: i * 40 }),
+      artBox("autumn leaves", W * x, H * 0.96, S * 0.26, S * 0.26, (i + 1) % 2, { originX: "center", originY: "center", angle: 180 + i * 30 })]),
+    box(W * 0.18, H * 0.3, W * 0.64, H * 0.4, "transparent", { stroke: tint(A, 0.4), strokeWidth: U * 0.3, name: "Frame line" }),
+    ...flow({ x: W * 0.2, y: H * 0.32, w: W * 0.6, h: H * 0.36 }, [{ k: "eyebrow", t: "Happy", c: PAPER, after: 1 }, caps("Thanks", 12, A), caps("giving", 12, A)], "center", "center"),
+  ] }), { months: [11] });
+  add("hwphoto", "Halloween photo", "seasonal", hero("halloween pumpkins", [{ k: "script", t: "Happy", size: 8, c: AL, after: 0 }, caps("Halloween", 12), { k: "body", t: "Braces tip: skip the sticky, chewy and hard candy. Melty chocolate is the friendliest treat.", c: PAPER, size: 3.5 }]), { months: [10] });
+  add("hwframe", "Halloween frame", "seasonal", framed("halloween pumpkin", [{ k: "eyebrow", t: "Have a spooktacular", c: PAPER, after: 1 }, caps("Halloween", 11, A), { k: "body", t: "Costumes welcome at every appointment this week!", c: tint(P, 0.8) }], { bg: PDD, texture: () => texture("dots", PAPER, U * 5, 0.05), size: 0.42 }), { months: [10] });
+  add("fallphoto", "Autumn photo", "seasonal", hero("autumn forest", [{ k: "script", t: "Hello", size: 10, c: AL, after: 0 }, caps("Fall", 16), { k: "body", t: "Cozy sweaters, crisp air and healthy smiles.", c: PAPER, size: 3.8 }], { mid: true }), { months: [9, 10] });
+  add("xmasphoto", "Merry & bright", "seasonal", hero("christmas lights bokeh", [{ k: "script", t: "Merry", size: 11, c: PAPER, after: 0 }, caps("& bright", 11, AL), { k: "body", t: "Wishing you a joyful holiday season.", c: PAPER, size: 3.8 }], { mid: true, wash: P, extra: () => bokeh(131, 10, AL) }), { months: [12] });
+  add("xmasframe", "Ornament frame", "seasonal", () => ({ bg: CREAM, objs: [
+    texture("dots", P, U * 5, 0.08),
+    ...[0.16, 0.38, 0.62, 0.84].map((x, i) => artBox("christmas ornament", W * x - S * 0.09, -S * 0.02 + (i % 2) * S * 0.06, S * 0.18, S * 0.24, i % 2)),
+    ...flow({ x: W * 0.1, y: H * 0.32, w: W * 0.8, h: H * 0.5 }, [{ k: "script", t: "Season's", size: 10, after: 0 }, caps("Greetings", 11, PD), { k: "rule", w: 10, after: 2 }, { k: "body", t: "Thank you for a wonderful year of smiles." }], "center", "center"),
+    artBox("pine branch", W * 0.5, H * 0.94, S * 0.7, S * 0.3, 0, { originX: "center", originY: "center" }),
+  ], logo: logoAt("br", 0.11) }), { months: [12] });
+  add("xmastorn", "Holiday torn paper", "seasonal", tornCard("christmas gifts", [{ k: "script", t: "Happy", size: 9, after: 0 }, caps("holidays", 10, PD), { k: "body", t: "Our office is closed Dec 24 to 26." }], { seed: 17, extra: (x, y, w) => [artBox("holly", x + w - S * 0.12, y - S * 0.08, S * 0.22, S * 0.22, 0)] }), { months: [12] });
+  add("winterphoto", "Snowy day", "seasonal", hero("snowy pine forest", [{ k: "script", t: "Let it snow", size: 9, c: PAPER, after: 0 }, caps("Winter smiles", 9), { k: "body", t: "Stay warm out there. We're open regular hours all season.", c: PAPER, size: 3.6 }]), { months: [1, 2] });
+  add("nyphoto", "New Year fireworks", "seasonal", hero("fireworks night sky", [{ k: "script", t: "Cheers to", size: 9, c: AL, after: 0 }, caps("a new year", 11), { k: "body", t: "Here's to a year of healthy, happy smiles.", c: PAPER, size: 3.8 }], { mid: true }), { months: [12, 1] });
+  add("valphoto", "Valentine torn paper", "seasonal", tornCard("red roses", [{ k: "script", t: "We love", size: 10, after: 0 }, caps("your smile", 10, PD), { k: "body", t: "Happy Valentine's Day!" }], { seed: 23, paper: PAPER, extra: (x, y, w, h) => [artBox("watercolor heart", x - S * 0.06, y + h - S * 0.14, S * 0.2, S * 0.2, 0, { angle: -14 })] }), { months: [2] });
+  add("springframe", "Spring flowers frame", "seasonal", framed("watercolor flowers", [{ k: "script", t: "Hello", size: 11, after: 0 }, caps("Spring", 13, PD), { k: "body", t: "Fresh season, fresh smile. Book your spring check-up." }, { k: "cta", t: "Book now", fill: P }], { bg: PXL, size: 0.44 }), { months: [3, 4] });
+  add("easterphoto", "Easter photo", "seasonal", tornCard("easter eggs pastel", [{ k: "script", t: "Hoppy", size: 10, after: 0 }, caps("Easter", 11, PD), { k: "body", t: "Wishing you a sweet (but not too sweet) holiday." }], { seed: 29, paper: PAPER }), { months: [3, 4] });
+  add("momphoto", "Mother's Day flowers", "seasonal", framed("watercolor flowers", [{ k: "script", t: "Happy", size: 9, after: 0 }, caps("Mother's Day", 9, PD), { k: "body", t: "To the moms who remind us to brush: thank you." }], { bg: tint(A, 0.9), size: 0.4 }), { months: [5] });
+  add("summerphoto", "Summer beach", "seasonal", hero("beach summer", [{ k: "script", t: "Summer", size: 11, c: PAPER, after: 0 }, caps("smiles", 13), { k: "body", t: "Enjoy the break and keep brushing!", c: PAPER, size: 3.8 }], { mid: true, dim: 0.28 }), { months: [6, 7, 8] });
+  add("july4photo", "4th of July photo", "seasonal", hero("american flag", [{ k: "script", t: "Happy", size: 9, c: PAPER, after: 0 }, caps("4th of July", 11), { k: "body", t: "Our office is closed today. Have a safe, happy holiday!", c: PAPER, size: 3.6 }]), { months: [7] });
+  add("schoolphoto", "Back to school flat lay", "seasonal", tornCard("school supplies flat lay", [{ k: "script", t: "Back to school,", size: 7, hand: true, after: 0 }, caps("back to smiles", 8, PD), { k: "body", t: "After-school appointments fill fast. Book yours today." }, { k: "cta", t: "Book now", fill: P }], { seed: 31, paper: PAPER }), { months: [8, 9] });
+
+  // ---- special offers
+  add("consultphoto", "Free consult photo", "offers", () => { const { vis, txt } = pic(0.52); return { bg: CREAM, objs: [
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "smiling young woman", own: "patient" }),
+    shape("seal", vis.x + vis.w - S * 0.26, vis.y + vis.h - S * 0.2, S * 0.22, { fill: A, angle: -10, shadow: shadow(), name: "Badge" }),
+    textbox("FREE", { ...td("heading"), fontSize: Math.round(S * 0.055), left: vis.x + vis.w - S * 0.26, top: vis.y + vis.h - S * 0.2 + S * 0.08, width: S * 0.22, textAlign: "center", fill: PAPER, angle: -10, name: "Badge text" }),
+    ...flow(txt, [{ k: "eyebrow", t: "This month only", after: 1.2 }, { k: "h1", t: "Your first consult is on us", size: 8.5 }, { k: "body", t: "Meet the doctor, see your options and get a plan." }, { k: "cta", t: "Book a free consult", fill: P }], "left", "center"),
+  ], logo: logoAt("tl", 0.13) }; });
+  add("giftphoto", "Gift card photo", "offers", tornCard("gift box ribbon", [{ k: "eyebrow", t: "The gift of a smile", after: 1.2 }, { k: "big", t: "$50", size: 18, c: P, after: 1 }, { k: "body", t: "Gift cards toward treatment, whitening or retainers. Ask at the front desk." }], { seed: 37, paper: PAPER }));
+  add("giveawayphoto", "Giveaway photo", "offers", hero("electric toothbrush", [{ k: "pill", t: "Giveaway", after: 2 }, { k: "h1", t: "Win an electric toothbrush!", size: 9, c: PAPER }, { k: "list", items: ["Follow us", "Like this post", "Tag a friend"], mark: "num", size: 3.8, c: PAPER, mc: A }]));
+  add("alignerphoto", "Clear aligners photo", "offers", hero("clear aligner", [{ k: "eyebrow", t: "Nearly invisible", c: AL, after: 1 }, { k: "h1", t: "Straighten your smile on your schedule", size: 8.5, c: PAPER }, { k: "cta", t: "See if you're a fit" }], { wash: P }));
+  add("summerspecial", "Summer special photo", "offers", tornCard("summer sunglasses beach", [{ k: "script", t: "Summer special", size: 8, after: 0 }, caps("$300 off", 12, PD), { k: "body", t: "Start treatment by August 31." }, { k: "cta", t: "Book a free consult", fill: P }], { seed: 41, paper: PAPER }), { months: [6, 7, 8] });
+
+  // ---- fun facts and tips
+  add("factphoto", "Fact over photo", "facts", () => ({ bg: PAPER, objs: [
+    photo(0, 0, W, H, { q: "toothbrush toothpaste" }), wash(0, 0, W, H, P, 0.3),
+    box(W * 0.08, H * (wide ? 0.12 : 0.4), wide ? W * 0.5 : W * 0.84, H * (wide ? 0.76 : 0.52), PAPER, { rx: U * 3, ry: U * 3, shadow: shadow(3, 1.2, 0.25), name: "Card" }),
+    ...flow({ x: W * 0.13, y: H * (wide ? 0.12 : 0.4), w: wide ? W * 0.4 : W * 0.74, h: H * (wide ? 0.76 : 0.52) }, [{ k: "script", t: "Did you know?", size: 7, after: 0.6 }, { k: "h1", t: "Enamel is the hardest substance in your body.", size: 6.5, c: PD }, { k: "body", t: "But it can't grow back, so protect it with fluoride toothpaste." }], "left", "center"),
+  ], logo: logoAt("br", 0.11) }));
+  add("snackphoto", "Snack swap photo", "facts", () => { const { vis, txt } = pic(0.46); return { bg: CREAM, objs: [
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "healthy snacks fruit yogurt" }),
+    ...flow(txt, [{ k: "eyebrow", t: "Braces-friendly snack swaps", after: 1.4 }, { k: "list", items: ["Popcorn → cheese cubes", "Caramel → yogurt", "Whole apple → apple slices", "Hard candy → smoothie"], size: 3.8 }], "left", "center"),
+  ], logo: logoAt("br", 0.11) }; });
+  add("brushart", "Brushing tip drawing", "facts", feature("toothbrush", [{ k: "pill", t: "Tip of the week", fill: P, after: 2 }, { k: "h1", t: "Angle your brush at 45° to the gums", size: 8, c: PD }, { k: "body", t: "Small circles, two minutes, twice a day." }], { size: 0.5, ay: 0.26, col: { x: W * 0.1, y: H * 0.5, w: W * 0.8, h: H * 0.4 }, v: "top", bg: PXL, texture: () => texture("dots", P, U * 4, 0.1) }));
+  add("waterphoto", "Water tip photo", "facts", hero("glass of water", [{ k: "eyebrow", t: "Quick tip", c: AL, after: 1 }, { k: "h1", t: "Sip water after snacks", size: 9, c: PAPER }, { k: "body", t: "It rinses away food and sugar until you can brush.", c: PAPER, size: 3.6 }], { wash: P }));
+
+  // ---- practice news
+  add("officephoto", "Our office", "news", hero("modern dental clinic", [{ k: "pill", t: "Come see us", after: 2 }, { k: "h1", t: "Bright, comfy and made for smiles", size: 9, c: PAPER }, { k: "body", t: "Free parking, Wi-Fi and the best coffee in town.", c: PAPER, size: 3.6 }], { own: "office" }));
+  add("teamphoto", "Team photo", "news", () => { const { vis, txt } = pic(0.6); return { bg: P, objs: [
+    photo(vis.x, vis.y, vis.w, vis.h, { q: "dental team", own: "team" }), patch("stripes", txt.x, txt.y - U * 1.5, U * 16, U * 2, A, U * 2, 0.8),
+    ...flow({ ...txt, y: txt.y + U * 2 }, [{ k: "script", t: "Meet", size: 7, c: AL, after: 0 }, { k: "h1", t: "the team behind your smile", size: 8, c: PAPER }], "left", "center"),
+  ], logo: logoAt("br", 0.12) }; });
+  add("hiringphoto", "We're hiring photo", "news", tornCard("dental office", [{ k: "script", t: "Join our team", size: 7, after: 0 }, caps("We're hiring", 10, PD), { k: "list", items: ["Orthodontic assistant", "Front desk coordinator"], size: 3.6 }, { k: "cta", t: "Apply today", fill: P }], { seed: 43, paper: PAPER, own: "office" }));
+  add("partyphoto", "Celebration photo", "news", hero("party balloons confetti", [{ k: "script", t: "You're invited", size: 7, c: AL, after: 0 }, { k: "h1", t: "Patient appreciation party", size: 9, c: PAPER }, { k: "pill", t: "Sat, June 14 · 11 to 2", fill: A }], { mid: true }));
+  add("closedphoto", "Snow day photo", "news", hero("snow storm", [{ k: "pill", t: "Weather update", after: 2 }, { k: "h1", t: "Our office is closed today", size: 9.5, c: PAPER }, { k: "body", t: "We'll call to reschedule. Stay safe and warm!", c: PAPER, size: 3.6 }]));
+
+  // ---- patients and reviews
+  add("patientphoto", "Patient spotlight photo", "patients", hero("teenager smiling", [{ k: "eyebrow", t: "Patient spotlight", c: AL, after: 1 }, { k: "h1", t: "Meet Jordan", size: 10, c: PAPER }, { k: "body", t: "Soccer star, honor roll and a brand-new smile.", c: PAPER, size: 3.6 }], { own: "patient" }));
+  add("reviewphoto", "Review over photo", "patients", () => ({ bg: PD, objs: [
+    photo(0, 0, W, H, { q: "happy woman smiling", own: "patient" }), dim(0.25),
+    box(W * 0.08, H * (wide ? 0.14 : 0.5), wide ? W * 0.52 : W * 0.84, H * (wide ? 0.72 : 0.42), PAPER, { rx: U * 3, ry: U * 3, shadow: shadow(3, 1.2, 0.3), name: "Card" }),
+    ...flow({ x: W * 0.13, y: H * (wide ? 0.14 : 0.5), w: wide ? W * 0.42 : W * 0.74, h: H * (wide ? 0.72 : 0.42) }, [{ k: "stars", size: 5, after: 2 }, { k: "body", t: "“Paste a real patient review here. Their own words work best.”", size: 4, c: INK }, { k: "sub", t: "Patient's first name", size: 3.6 }], "left", "center"),
+  ], logo: logoAt("tl", 0.12) }));
+  add("bracesoffphoto", "Braces off celebration", "patients", tornCard("teenager smiling", [{ k: "script", t: "Braces off!", size: 10, after: 0 }, caps("Congrats, Emma", 8, PD), { k: "body", t: "18 months of hard work. Look at that smile!" }], { seed: 47, paper: PAPER, own: "patient",
+    extra: (x, y, w, h) => confetti(149, 10, [{ x: x / W, y: y / H, w: w / W, h: h / H }]) }));
+  add("thanksphoto", "Thank you photo", "patients", hero("thank you card flowers", [{ k: "script", t: "thank you", size: 13, c: PAPER, after: 1 }, { k: "body", t: "For trusting us with your family's smiles.", c: PAPER, size: 3.8 }], { mid: true }));
 
   return { CATS, T, ACCENT_FONTS, tint, shade };
 };

@@ -264,6 +264,102 @@ def pixabay_attach(item_id, raw, by=""):
     return item_id
 
 
+# ------------------------------------------------------------------ Pixabay photos and illustrations (the picture designer's templates)
+PIXABAY_IMG = "https://pixabay.com/api/"
+IMG_KINDS = {"photo": {"image_type": "photo"},
+             "art": {"image_type": "illustration", "colors": "transparent"}}        # cut-out drawings: leaves, pumpkins…
+
+
+def pixabay_image_hit(h):
+    """One picture from Pixabay's API answer: a small preview, a web size and the large (up to 1280) file."""
+    if not isinstance(h, dict):
+        return None
+    try:
+        hid = int(h.get("id"))
+    except (TypeError, ValueError):
+        return None
+    large = _pixabay_url(h.get("largeImageURL")) or _pixabay_url(h.get("webformatURL"))
+    if not large:
+        return None
+    try:
+        w, hh = int(h.get("imageWidth") or 0), int(h.get("imageHeight") or 0)
+    except (TypeError, ValueError):
+        w, hh = 0, 0
+    return {"id": hid, "tags": str(h.get("tags", ""))[:300], "user": str(h.get("user", ""))[:100],
+            "page": _pixabay_url(h.get("pageURL")), "thumb": _pixabay_url(h.get("previewURL")),
+            "web": _pixabay_url(h.get("webformatURL")), "file": large, "w": w, "h": hh,
+            "kind": "art" if str(h.get("type", "")) in ("illustration", "vector/svg", "vector") else "photo"}
+
+
+def pixabay_images(q, kind="photo", orientation="", page=1):
+    key = _tidy_key(db.get_setting("pixabay_key"))
+    if not key:
+        raise StockError("Stock photo search needs a free Pixabay key. An admin adds it on Connections → Stock and music.")
+    q = re.sub(r"\s+", " ", q or "").strip()[:100]
+    kind = kind if kind in IMG_KINDS else "photo"
+    orientation = orientation if orientation in ("horizontal", "vertical") else "all"
+    page = max(1, min(10, int(page or 1)))
+
+    def fetch():
+        params = {"key": key, "q": q, "safesearch": "true", "per_page": 30, "page": page, "orientation": orientation, **IMG_KINDS[kind]}
+        got = _get(PIXABAY_IMG + "?" + urllib.parse.urlencode(params), service="Pixabay")
+        return {"hits": [x for x in map(pixabay_image_hit, got.get("hits", [])) if x], "total": got.get("totalHits", 0)}
+    return _cache(f"pxi_{kind}_{orientation}_{q}_{page}", fetch)
+
+
+def photo_folder(pid):
+    return studio.add_folder(pid, "Stock photos", "Pixabay")
+
+
+def _have_image(hit_id, pid):
+    with db.conn() as c:
+        r = c.execute("SELECT id FROM studio_items WHERE canva_id=? AND practice_id IS ? AND trashed_at IS NULL",
+                      (f"pixabay-img:{int(hit_id)}", pid)).fetchone()
+    return r[0] if r else None
+
+
+def _image_credit(iid, hit, by):
+    what = "Illustration" if hit["kind"] == "art" else "Photo"
+    title = (hit["tags"].split(",")[0].strip() or f"Stock {what.lower()}").capitalize()
+    studio.update(iid, by, title=f"{title} (Pixabay)",
+                  notes=f"{what} by {hit['user']} on Pixabay ({hit['page']}). Free to use under the Pixabay Content License.")
+    with db.conn() as c:
+        c.execute("UPDATE studio_items SET source='pixabay', canva_id=?, canva_url=? WHERE id=?", (f"pixabay-img:{hit['id']}", hit["page"], iid))
+
+
+def image_import(raw, pid, by=""):
+    """Save a Pixabay picture into the brand's 'Stock photos' folder (once per brand) and return its library id.
+    raw: the hit as the editor got it (from the hub's search or straight from Pixabay); only Pixabay addresses are fetched."""
+    hit = pixabay_image_hit(raw)
+    if not hit:
+        raise StockError("That doesn't look like a Pixabay picture.")
+    have = _have_image(hit["id"], pid)
+    if have:
+        return have
+    ext = ".png" if hit["file"].lower().split("?")[0].endswith(".png") else ".jpg"
+    path = _download(hit["file"], ext)
+    title = (hit["tags"].split(",")[0].strip() or "Stock photo").capitalize()
+    iid = studio.add_file(path, f"{title}{ext}", pid, photo_folder(pid), by=by, mime="image/png" if ext == ".png" else "image/jpeg",
+                          title=f"{title} (Pixabay)", source="pixabay")
+    _image_credit(iid, hit, by)
+    return iid
+
+
+def image_attach(item_id, raw, pid, by=""):
+    """A Pixabay picture the browser downloaded and uploaded itself: credit it, or swap in the copy the brand already has."""
+    hit = pixabay_image_hit(raw)
+    if not hit:
+        raise StockError("That doesn't look like a Pixabay picture.")
+    have = _have_image(hit["id"], pid)
+    if have and have != item_id:
+        studio.trash(item_id, by)
+        return have
+    with db.conn() as c:
+        c.execute("UPDATE studio_items SET folder_id=? WHERE id=?", (photo_folder(pid), item_id))
+    _image_credit(item_id, hit, by)
+    return item_id
+
+
 # ------------------------------------------------------------------ music: Freesound (CC0) and the shared Music folder
 def music_folder():
     return studio.add_folder(studio.MCDP, "Music", "Studio")
