@@ -700,12 +700,14 @@ def master_reports(request: Request, kind: str = "month", key: str = ""):
     if (r := guard(request)):
         return r
     kind = "week" if kind == "week" else "month"
-    rep = master_report.build(kind, key or None)
+    look = master_report.brand()
+    rep = master_report.build(kind, key or None, pal=look["pal"])
     opts = master_report.week_options() if kind == "week" else master_report.month_options()
     if rep["period"]["key"] not in [k for k, _ in opts]:
         opts = [(rep["period"]["key"], rep["period"]["label"])] + opts
     return page(request, "master_report.html", rep=rep, options=opts, money=master_report.money, num=master_report.num,
-                pct=master_report.pct, meter=master_report.meter, colors=master_report.COLOR, cats_order=master_report.CATS)
+                pct=master_report.pct, meter=master_report.meter, colors=look["pal"], cats_order=master_report.CATS,
+                look=look)
 
 
 @app.get("/practices", response_class=HTMLResponse)

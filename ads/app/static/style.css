@@ -894,12 +894,12 @@ details.tool > summary { cursor: pointer; }
 .rp { display: grid; gap: 1.25rem; }
 .rp-page, .rp-card { background: var(--paper); border: 1px solid var(--hair); border-radius: 12px; padding: 2rem 2.25rem; position: relative; overflow: hidden; }
 .rp-cover { min-height: 60rem; display: flex; flex-direction: column; gap: 1.6rem; }
-.rp-cover-mark { position: absolute; inset: 0; pointer-events: none; opacity: 0.10; z-index: 0;
-  background: url("/static/mcdp-mark.png") no-repeat right -9% bottom -6% / auto 82%; }
+.rp-cover-mark { position: absolute; inset: 0; pointer-events: none; opacity: 0.09; z-index: 0; background: var(--rp-p, #1A1A1A);
+  -webkit-mask: url("/static/mcdp-mark.png") no-repeat right -9% bottom -6% / auto 82%; mask: url("/static/mcdp-mark.png") no-repeat right -9% bottom -6% / auto 82%; }
 .rp-cover > *:not(.rp-cover-mark) { position: relative; z-index: 1; }
 .rp-brand { font-family: var(--serif); font-size: 1.15rem; margin: 0 0 2.5rem; letter-spacing: 0.01em; }
 .rp-cover h1 { font-size: clamp(2.4rem, 5vw, 3.3rem); margin: 0; }
-.rp-period { font-family: var(--serif); font-size: 1.6rem; margin: 0.35rem 0 0.25rem; color: #0F7471; }
+.rp-period { font-family: var(--rp-hf, var(--serif)), var(--serif); font-size: 1.6rem; margin: 0.35rem 0 0.25rem; color: var(--rp-d, #0F7471); }
 .rp-meta { color: var(--ink-soft); font-size: 0.85rem; margin: 0; }
 .rp-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin: 0; border-top: 1px solid var(--hair); border-left: 1px solid var(--hair); }
 .rp-kpi { padding: 0.9rem 1rem; border-right: 1px solid var(--hair); border-bottom: 1px solid var(--hair); background: rgba(255,255,255,0.75); }
@@ -908,7 +908,7 @@ details.tool > summary { cursor: pointer; }
 .rp-kpi-v { font-family: var(--serif); font-size: 1.9rem; line-height: 1.15; margin-top: 0.2rem !important; }
 .rp-kpi-s { font-size: 0.82rem; color: var(--ink-soft); }
 .rp-chg { font-size: 0.78rem; margin-top: 0.2rem !important; font-weight: 600; }
-.rp-chg.good { color: #0F7471; } .rp-chg.bad { color: #B5334A; } .rp-chg.flat { color: var(--ink-soft); }
+.rp-chg.good { color: var(--rp-good, #2E7D52); } .rp-chg.bad { color: var(--rp-bad, #B5334A); } .rp-chg.flat { color: var(--ink-soft); }
 .rp-cover-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1.75rem; }
 .rp-h { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.09em; font-family: inherit; font-weight: 600; color: var(--ink-soft); margin: 0 0 0.6rem; }
 .rp-text { margin: 0 0 0.6rem; line-height: 1.55; font-size: 0.95rem; }
@@ -934,7 +934,7 @@ details.tool > summary { cursor: pointer; }
 .rp-hl { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-top: 0.7rem; border-top: 1px dashed var(--hair); padding-top: 0.6rem; }
 .rp-hl ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.3rem; font-size: 0.8rem; line-height: 1.35; }
 .rp-hl-h { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin: 0 0 0.3rem; }
-.rp-hl-h.good { color: #0F7471; } .rp-hl-h.bad { color: #B5334A; }
+.rp-hl-h.good { color: var(--rp-good, #2E7D52); } .rp-hl-h.bad { color: var(--rp-bad, #B5334A); }
 .rp-practices { display: grid; gap: 1.25rem; }
 .rp-practices > .rp-sec-head { background: transparent; margin-bottom: 0; }
 .rp-card { padding: 1.4rem 1.6rem; display: flex; flex-direction: column; gap: 0.9rem; }
@@ -956,8 +956,8 @@ details.tool > summary { cursor: pointer; }
 .rp-notes { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.4rem; font-size: 0.8rem; line-height: 1.4; }
 .rp-notes li { padding-left: 1.1rem; position: relative; }
 .rp-notes li::before { position: absolute; left: 0; top: 0; font-weight: 700; }
-.rp-note-good::before { content: "▲"; color: #0F7471; font-size: 0.7rem; }
-.rp-note-todo::before { content: "→"; color: #9A5B2E; }
+.rp-note-good::before { content: "▲"; color: var(--rp-good, #2E7D52); font-size: 0.7rem; }
+.rp-note-todo::before { content: "→"; color: var(--rp-ad, #9A5B2E); }
 .rp-foot { font-size: 0.72rem; color: var(--ink-soft); text-align: center; padding: 0.5rem 0 1rem; }
 @media (max-width: 760px) {
   .rp-kpis { grid-template-columns: 1fr 1fr; }
@@ -978,7 +978,7 @@ details.tool > summary { cursor: pointer; }
   .rp { display: block; }
   .rp-page, .rp-card { border: 0; border-radius: 0; padding: 0; box-shadow: none; }
   .rp-cover { height: 9.95in; min-height: 0; break-after: page; gap: 0.2in; }
-  .rp-cover-mark { background-position: right -0.6in bottom -0.3in; background-size: auto 7.4in; }
+  .rp-cover-mark { opacity: 0.06; -webkit-mask-position: right -0.6in bottom -0.3in; mask-position: right -0.6in bottom -0.3in; -webkit-mask-size: auto 7.4in; mask-size: auto 7.4in; }
   .rp-brand { margin-bottom: 0.35in; }
   .rp-cover h1 { font-size: 2.6rem; }
   .rp-kpi { padding: 0.1in 0.14in; }
@@ -2087,3 +2087,41 @@ button.vd-lab:hover { background: #F2F0EB; }
 .coday-hols { list-style: none; padding: 0; margin: 0 0 .8rem; display: grid; gap: .25rem; }
 .coday-hols li { display: flex; justify-content: space-between; gap: .6rem; align-items: center; border-bottom: 1px solid #EDF1F2; padding: .2rem 0; }
 @media (max-width: 800px) { .coday-layout { grid-template-columns: minmax(0, 1fr); } }
+
+
+/* Master reports in MCDP's brand: colours, logo and fonts from the master record's brand kit */
+.rp { font-family: var(--rp-bf, "Public Sans"), "Public Sans", sans-serif; }
+.rp h1, .rp h2, .rp h3, .rp .rp-kpi-v, .rp .rp-m-v, .rp .rp-cat h3, .rp .rp-card-head h3 { font-family: var(--rp-hf, var(--serif)), var(--serif); }
+.rp h1 { color: var(--rp-d, inherit); }
+.rp-band { display: flex; align-items: center; gap: 0.9rem; background: var(--rp-p); color: var(--rp-on, #fff); margin: -2rem -2.25rem 0.6rem; padding: 1.1rem 2.25rem; border-bottom: 4px solid var(--rp-a); }
+.rp-band-logo { flex: none; display: grid; place-items: center; background: #fff; border-radius: 10px; padding: 6px 8px; height: 3.4rem; min-width: 3.4rem; }
+.rp-band-logo .rp-logo { height: 2.6rem; width: auto; max-width: 9rem; }
+.rp-band-name { font-family: var(--rp-hf, var(--serif)), var(--serif); font-size: 1.35rem; line-height: 1.1; font-weight: 600; letter-spacing: 0.01em; }
+.rp-band-name small { display: block; font-family: var(--rp-bf, "Public Sans"), sans-serif; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.85; margin-top: 0.2rem; }
+.rp-logo { display: block; object-fit: contain; }
+.rp-logo.sm { height: 1.7rem; width: auto; flex: none; }
+.rp-logo.xs { display: inline-block; height: 0.95rem; width: auto; vertical-align: -2px; margin-right: 0.35rem; }
+.rp-cover-head h1 { border-bottom: 3px solid var(--rp-a); padding-bottom: 0.35rem; display: inline-block; }
+.rp-kpis { border-top: 3px solid var(--rp-p); }
+.rp-kpi-v { color: var(--rp-d); }
+.rp-h, .rp-m-h, .rp-kpi dt, .rp-locs-n { color: var(--rp-d); }
+.rp-next { background: var(--rp-tint); border-top: 0; border-left: 4px solid var(--rp-a); padding: 0.9rem 1.1rem; border-radius: 0 8px 8px 0; }
+.rp-sec-head { border-bottom: 3px solid var(--rp-p); align-items: center; justify-content: flex-start; }
+.rp-sec-head .rp-meta { margin-left: auto; }
+.rp-sec-head h2 { color: var(--rp-d); }
+.rp-cat h3 { color: var(--rp-d); }
+.rp-card { border-top: 4px solid var(--rp-p); }
+.rp-card-head h3 { color: var(--rp-d); }
+.rp-card-grid { border-color: color-mix(in srgb, var(--rp-p) 22%, var(--hair)); }
+.rp-foot { color: var(--rp-d); }
+.rp-kit-hint { background: var(--tint); border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.85rem; margin: 0 0 1rem; }
+@media (max-width: 700px) {
+  .rp-band { margin: -1.25rem -1.25rem 0.4rem; padding: 0.9rem 1.25rem; }
+  .rp-band-name { font-size: 1.1rem; }
+}
+@media print {
+  .rp-band { margin: 0 0 0.15in; padding: 0.14in 0.2in; }
+  .rp-card { border-top: 0; }
+  .rp-card-head h3 { border-left: 4px solid var(--rp-p); padding-left: 0.1in; }
+  .rp-card-period { color: var(--rp-d); }
+}

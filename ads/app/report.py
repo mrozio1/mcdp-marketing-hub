@@ -21,6 +21,67 @@ CATS = (("paid", "Paid ads"), ("organic", "Organic posts"), ("reviews", "Google 
 COLOR = {"google": "#3B6FB6", "meta": "#6B5BC4", "paid": "#0F7471", "organic": "#2E8B7A", "reviews": "#C98A1B",
          "field": "#9A5B2E", "muted": "#CFC9BD", "good": "#0F7471", "bad": "#B5334A"}
 PLATFORMS = (("google", "Google Ads"), ("meta", "Meta Ads"))
+GOOD, BAD = "#2E7D52", "#B5334A"
+BRAND_NAME = "Motor City Dental Partners"
+
+
+# ------------------------------------------------------------------ MCDP's brand (the master record's brand kit)
+def _rgb(h):
+    return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+
+def _hexof(rgb):
+    return "#%02X%02X%02X" % tuple(max(0, min(255, round(x * 255))) for x in rgb)
+
+
+def _lum(h):
+    r, g, b = _rgb(h)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _mix(h, other, t):
+    a, b = _rgb(h), _rgb(other)
+    return _hexof(tuple(x + (y - x) * t for x, y in zip(a, b)))
+
+
+def _readable(h, limit=0.32):
+    """The colour, darkened until white paper text in it reads well."""
+    out, n = h, 0
+    while _lum(out) > limit and n < 12:
+        out, n = _mix(out, "#000000", 0.12), n + 1
+    return out
+
+
+def palette(primary, accent):
+    """Report colours from the brand's main and accent colours: categories, Google vs Meta, text shades."""
+    primary = primary or "#0F7471"
+    accent = accent if accent and accent != primary else _mix(primary, "#FFFFFF", 0.45)
+    dark = _readable(primary)
+    return {"primary": primary, "accent": accent, "dark": dark, "accent_dark": _readable(accent, 0.28),
+            "tint": _mix(primary, "#FFFFFF", 0.92), "on_primary": "#FFFFFF" if _lum(primary) < 0.55 else "#1A1A1A",
+            "google": primary, "meta": accent, "paid": primary, "organic": _mix(primary, "#FFFFFF", 0.38),
+            "reviews": accent, "field": _readable(accent, 0.2), "muted": "#CFC9BD", "good": GOOD, "bad": BAD}
+
+
+def brand(plist=None):
+    """MCDP's look for the report, from the master record's brand kit (its logo, report colours and the Studio's
+    MCDP fonts). Falls back to the hub's colours and the MCDP mark when nothing is set."""
+    from . import field_report, images, studio
+    plist = plist if plist is not None else db.practices()
+    m = next((p for p in plist if _is_master(p, plist)), None)
+    mid = m["id"] if m else None
+    primary, accent = field_report.colors(mid) if mid else (field_report.DEFAULT_PRIMARY, field_report.DEFAULT_ACCENT)
+    logo = images.logo(mid) if mid else None
+    saved = field_report.saved_colors(mid) if mid else (None, None)
+    fonts = {"heading": "Newsreader", "body": "Public Sans"}         # the hub's own, unless MCDP's fonts were picked
+    try:
+        if db.get_setting(f"studio_fonts_{studio.MCDP}"):
+            fonts = studio.brand_fonts(studio.MCDP)
+    except Exception:
+        pass
+    return {"name": BRAND_NAME, "master_id": mid, "logo_id": logo["id"] if logo else None, "fonts": fonts,
+            "colors_set": bool(saved[0] and saved[1]), "kit_set": bool(logo or (saved[0] and saved[1])),
+            "pal": palette(primary, accent)}
 
 
 # ------------------------------------------------------------------ periods
@@ -224,9 +285,10 @@ def _is_master(p, plist):
 
 
 # ------------------------------------------------------------------ the report
-def build(kind="month", key=None, today=None):
+def build(kind="month", key=None, today=None, pal=None):
     per = period(kind, key, today)
     plist = db.practices()
+    pal = pal or dict(COLOR)
     masters = [p for p in plist if _is_master(p, plist)]
     shown = [p for p in plist if p not in masters]
     goals = reviews._goal_rows()
@@ -275,18 +337,18 @@ def build(kind="month", key=None, today=None):
     rows = [r for r in rows if r["active"]] + [r for r in rows if not r["active"]]
     for r in rows:
         r["notes"] = practice_notes(r, per)
-        r["chart"] = daily_bars(r["paid"]["daily"], per, height=70, width=300)
+        r["chart"] = daily_bars(r["paid"]["daily"], per, height=70, width=300, pal=pal)
 
     tot = totals(rows, masters, plist, per)
     rep = {"period": per, "rows": rows, "totals": tot, "masters": masters,
-           "cats": categories(rows, per), "generated": db.now()}
+           "cats": categories(rows, per, pal), "generated": db.now(), "pal": pal}
     rep["has_prev"] = {"paid": bool(tot["prev_spend"]), "organic": bool(tot["organic_prev"]["posts"]),
                        "reviews": True, "field": bool(tot["visits_prev"] or tot["visits"])}
     rep["kpis"] = kpis(tot, per)
     rep["summary"] = summary(rep)
     rep["suggestions"] = suggestions(rep)
-    rep["cover_chart"] = daily_bars(tot["daily"], per, height=110, width=640, legend=True)
-    rep["mix_chart"] = mix_bars(tot)
+    rep["cover_chart"] = daily_bars(tot["daily"], per, height=110, width=640, legend=True, pal=pal)
+    rep["mix_chart"] = mix_bars(tot, pal)
     return rep
 
 
@@ -411,7 +473,8 @@ def pct(v, signed=False):
     return (f"{v * 100:+.0f}%" if signed else f"{v * 100:.0f}%")
 
 
-def categories(rows, per):
+def categories(rows, per, pal=None):
+    pal = pal or COLOR
     act = [r for r in rows if r["active"]]
     paid = [r for r in act if r["paid"]["spend"] or r["budget_total"]]
     org = [r for r in act if r["organic"]["linked"]]
@@ -477,7 +540,7 @@ def categories(rows, per):
         ] if h],
     }
     for k, c in out.items():
-        c["bars"] = hbars(c["chart"][:12], COLOR[k])
+        c["bars"] = hbars(c["chart"][:12], pal[k])
     return out
 
 
@@ -627,8 +690,9 @@ def hbars(items, color, width=340):
     return Markup(f'<svg class="rp-svg" viewBox="0 0 {width} {h}" width="100%" role="img" aria-label="Ranking">{"".join(parts)}</svg>')
 
 
-def daily_bars(daily, per, height=60, width=300, legend=False):
+def daily_bars(daily, per, height=60, width=300, legend=False, pal=None):
     """Daily ad spend as stacked columns (Google, Meta) across the period."""
+    COLOR = pal or globals()["COLOR"]
     days = []
     d = per["start"]
     while d <= per["end"]:
@@ -663,8 +727,9 @@ def daily_bars(daily, per, height=60, width=300, legend=False):
                   f'role="img" aria-label="Daily ad spend">{"".join(parts)}</svg>' + (f'<div class="rp-legend">{leg}</div>' if leg else ""))
 
 
-def mix_bars(t):
+def mix_bars(t, pal=None):
     """One bar showing where the period's ad money went: Google vs Meta."""
+    COLOR = pal or globals()["COLOR"]
     g, m = t["by_platform"].get("google", 0), t["by_platform"].get("meta", 0)
     tot = g + m
     if not tot:
@@ -675,10 +740,11 @@ def mix_bars(t):
                   f'<div class="rp-mix-l"><span>Google {money(g)} · {gw:.0f}%</span><span>Meta {money(m)} · {100 - gw:.0f}%</span></div>')
 
 
-def meter(value, goal, color):
-    """A small progress bar (e.g. reviews against goal, spend against budget)."""
+def meter(value, goal, color, over_bad=None):
+    """A small progress bar (e.g. reviews against goal, spend against budget). over_bad: going past the goal is
+    bad (spend past budget), so the bar turns red."""
     if not goal:
         return Markup("")
     w = max(0.0, min(100.0, 100 * (value or 0) / goal))
     over = (value or 0) > goal
-    return Markup(f'<span class="rp-meter"><span style="width:{w:.0f}%;background:{COLOR["bad"] if over and color == COLOR["paid"] else color}"></span></span>')
+    return Markup(f'<span class="rp-meter"><span style="width:{w:.0f}%;background:{BAD if over and (over_bad if over_bad is not None else color == COLOR["paid"]) else color}"></span></span>')

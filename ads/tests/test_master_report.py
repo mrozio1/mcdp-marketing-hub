@@ -109,3 +109,21 @@ def test_archive_keeps_history_and_replaces_days(client):
     got = sorted((r["campaign"], r["date"], r["spend"]) for r in db.archived(pid, "google", d1, d2))
     assert got == [("A", d1, 10), ("A", d2, 7)]
     assert "2026-09" in db.archive_months()
+
+
+def test_report_uses_mcdp_brand_kit(client):
+    c, db, sync, mp = client
+    from app import field_report, report
+    m, h, w = _seed(db)
+    look = report.brand()
+    assert look["name"] == "Motor City Dental Partners" and look["master_id"] == m and not look["kit_set"]
+    page = c.get("/reports?kind=month&key=2026-09").text
+    assert "Motor City Dental Partners" in page and "/static/mcdp-mark.png" in page
+    assert "Add MCDP&#39;s logo and colours" in page or "Add MCDP's logo and colours" in page
+    field_report.set_colors(m, "#1C2B4A", "#C9A227")
+    look = report.brand()
+    assert look["kit_set"] and look["pal"]["primary"] == "#1C2B4A" and look["pal"]["meta"] == "#C9A227"
+    page = c.get("/reports?kind=month&key=2026-09").text
+    assert "--rp-p: #1C2B4A" in page and 'fill="#1C2B4A"' in page and "logo and colours" not in page
+    pal = report.palette("#F4E04D", "#F4E04D")              # a pale main colour still gives readable text
+    assert report._lum(pal["dark"]) <= 0.32 and pal["accent"] != pal["primary"] and pal["on_primary"] == "#1A1A1A"

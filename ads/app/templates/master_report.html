@@ -5,6 +5,13 @@
 {% block content %}
 {% set per = rep.period %}
 {% set t = rep.totals %}
+{% set pal = look.pal %}
+{% set hf, bf = look.fonts.heading, look.fonts.body %}
+{% set extra = [hf, bf]|reject('in', ['Newsreader', 'Public Sans'])|unique|list %}
+{% if extra %}<link rel="stylesheet" href="https://fonts.googleapis.com/css2?{% for f in extra %}family={{ f|replace(' ', '+') }}:wght@400;600;700&{% endfor %}display=swap">{% endif %}
+{% macro mark(cls='') -%}
+{% if look.logo_id %}<img class="rp-logo {{ cls }}" src="/brand-images/{{ look.logo_id }}" alt="{{ look.name }}">{% else %}<img class="rp-logo rp-logo-mark {{ cls }}" src="/static/mcdp-mark.png" alt="{{ look.name }}">{% endif %}
+{%- endmacro %}
 
 <div class="rp-toolbar no-print">
   <nav class="seg" aria-label="Report type">
@@ -21,14 +28,19 @@
   </form>
   <button class="btn" type="button" onclick="window.print()">Save as PDF</button>
 </div>
+{% if is_admin and not look.kit_set %}<p class="rp-kit-hint no-print">This report uses the hub's own colours because MCDP's brand kit has no logo or colours yet.
+  {% if look.master_id %}<a href="/p/{{ look.master_id }}#brand-images">Add MCDP's logo and colours</a> (Brand kit → Ad images on the master record) and the report picks them up.{% endif %}</p>{% endif %}
 
-<article class="rp">
+<article class="rp" style="--rp-p: {{ pal.primary }}; --rp-a: {{ pal.accent }}; --rp-d: {{ pal.dark }}; --rp-ad: {{ pal.accent_dark }}; --rp-tint: {{ pal.tint }}; --rp-on: {{ pal.on_primary }}; --rp-good: {{ pal.good }}; --rp-bad: {{ pal.bad }}; --rp-hf: '{{ hf }}'; --rp-bf: '{{ bf }}'">
 
 {# ---------------------------------------------------------------- cover #}
 <section class="rp-page rp-cover">
   <div class="rp-cover-mark" aria-hidden="true"></div>
+  <div class="rp-band">
+    <span class="rp-band-logo">{{ mark() }}</span>
+    <span class="rp-band-name">{{ look.name }}<small>Marketing</small></span>
+  </div>
   <header class="rp-cover-head">
-    <p class="rp-brand">MCDP Hub</p>
     <h1>{{ per.title }}</h1>
     <p class="rp-period">{{ per.label }}</p>
     <p class="rp-meta">{{ t.practices }} practices · compared with {{ per.prev_label }} · prepared {{ rep.generated[:10] }}</p>
@@ -66,7 +78,7 @@
 
 {# ---------------------------------------------------------------- overview #}
 <section class="rp-page rp-overview">
-  <header class="rp-sec-head"><h2>Master overview</h2><p class="rp-meta">{{ per.label }} · highs and lows by category</p></header>
+  <header class="rp-sec-head"><span class="rp-sec-logo">{{ mark('sm') }}</span><h2>Master overview</h2><p class="rp-meta">{{ per.label }} · highs and lows by category</p></header>
   <div class="rp-cats">
     {% for key, label in cats_order %}
     {% set c = rep.cats[key] %}
@@ -92,7 +104,7 @@
   {% set pd = r.paid %}{% set pv = r.paid_prev %}{% set o = r.organic %}{% set rv = r.reviews %}{% set fv = r.field %}
   <section class="rp-card{% if not r.active %} rp-card-quiet{% endif %}">
     <header class="rp-card-head">
-      <span class="rp-card-period">{{ per.title }} · {{ per.label }}</span>
+      <span class="rp-card-period">{{ mark('xs') }}{{ look.name }} · {{ per.title }} · {{ per.label }}</span>
       <h3>{{ r.p.name }}</h3>
       {% if r.locations %}<p class="rp-locs"><span class="rp-locs-n">{{ r.locations|length }} location{{ '' if r.locations|length == 1 else 's' }}</span>
         {% for l in r.locations[:8] %}{{ l.name }}{% if l.address %} <span class="muted">· {{ l.address }}</span>{% endif %}{% if not loop.last %}<span class="rp-sep">;</span> {% endif %}{% endfor %}{% if r.locations|length > 8 %}<span class="rp-sep">;</span> +{{ r.locations|length - 8 }} more{% endif %}</p>
@@ -105,7 +117,7 @@
       <div class="rp-m">
         <p class="rp-m-h"><span class="rp-dot" style="background: {{ colors.paid }}"></span>Paid ads</p>
         <p class="rp-m-v">{{ money(pd.spend) }}{% if r.budget_total %} <span class="rp-m-of">of {{ money(r.budget_total) }}</span>{% endif %}</p>
-        {% if r.budget_total %}{{ meter(pd.spend, r.budget_total, colors.paid) }}{% endif %}
+        {% if r.budget_total %}{{ meter(pd.spend, r.budget_total, colors.paid, true) }}{% endif %}
         <p class="rp-m-s">{{ num(pd.conversions) }} conv. · {{ money(pd.cpa) }} each {% if rep.has_prev.paid %}<span class="muted">({{ num(pv.conversions) }} · {{ money(pv.cpa) }})</span>{% endif %}</p>
       </div>
       <div class="rp-m">
@@ -119,7 +131,7 @@
         <p class="rp-m-h"><span class="rp-dot" style="background: {{ colors.reviews }}"></span>Google reviews</p>
         {% if rv.linked %}
         <p class="rp-m-v">{{ rv.new }} <span class="rp-m-of">of {{ rv.goal }} goal</span></p>
-        {{ meter(rv.new, rv.goal, colors.reviews) }}
+        {{ meter(rv.new, rv.goal, colors.reviews, false) }}
         <p class="rp-m-s">{% if rv.rating %}★ {{ '%.1f'|format(rv.rating) }} from {{ num(rv.total) }}{% else %}—{% endif %} · {{ rv.replied }} replied <span class="muted">({{ r.reviews_prev.new }})</span></p>
         {% else %}<p class="rp-m-s muted">No Google location linked.</p>{% endif %}
       </div>
@@ -151,6 +163,6 @@
   {% endfor %}
 </section>
 
-<footer class="rp-foot">MCDP Hub · {{ per.title }} · {{ per.label }} · Ads from Google Ads and Meta, posts from Facebook and Instagram, reviews from Google Business Profile, visits from the Field log.</footer>
+<footer class="rp-foot">{{ look.name }} · {{ per.title }} · {{ per.label }} · Ads from Google Ads and Meta, posts from Facebook and Instagram, reviews from Google Business Profile, visits from the Field log.</footer>
 </article>
 {% endblock %}
