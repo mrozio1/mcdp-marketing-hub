@@ -8,10 +8,15 @@
 {%- endmacro %}
 {% macro chip(i) -%}
 {% if i.kind == 'followup' %}<a class="cal-ev fu" style="--c: {{ i.color }}" href="/field/log?office={{ i.office_id }}&back=/calendar" title="{{ i.title }} · logged by {{ i.who }}">{{ i.title }}</a>
-{%- else %}<a class="cal-ev{% if sel and sel.id == i.id %} sel{% endif %}{% if i.cancelled %} cancelled{% endif %}{% if i.status in ('saved', 'error') %} unsent{% endif %}" style="--c: {{ i.color }}" href="{{ link(event=i.id, day=i.day.isoformat()) }}" title="{{ i.title }}">{% if i.time %}<b>{{ i.time|hm }}</b> {% endif %}{{ i.short }}</a>{% endif %}
+{%- else %}<a class="cal-ev{% if i.personal %} me me-{{ i.personal }}{% endif %}{% if sel and sel.id == i.id %} sel{% endif %}{% if i.cancelled %} cancelled{% endif %}{% if i.status in ('saved', 'error') %} unsent{% endif %}" style="--c: {{ i.color }}" href="{{ link(event=i.id, day=i.day.isoformat()) }}" title="{{ i.title }}">{% if i.time %}<b>{{ i.time|hm }}</b> {% endif %}{{ i.short }}</a>{% endif %}
+{%- endmacro %}
+{% macro marktags(m, short=false) -%}
+{% if m %}{% if m.payday %}<span class="cal-pay" title="Pay day{% if m.notes %}: {{ m.notes|join(', ') }}{% endif %}">$</span>{% endif %}
+{%- for h in m.holidays %}<span class="cal-mk hol" title="{{ h }}">{{ h }}</span>{% endfor %}
+{%- for n in m.notes %}<span class="cal-mk" title="{{ n }}">{{ n }}</span>{% endfor %}{% endif %}
 {%- endmacro %}
 {% block content %}
-{% if can_schedule %}<a class="cal-fab m-only" href="/calendar/new?date={{ picked_day.isoformat() }}" aria-label="New event">+</a>{% endif %}
+<a class="cal-fab m-only" href="/calendar/new?date={{ picked_day.isoformat() }}{% if not can_schedule %}&category=personal&kind=pto{% endif %}" aria-label="{{ 'New event' if can_schedule else 'Add personal time' }}">+</a>
 <div class="cal-head">
   <h1>Calendar</h1>
   <div class="cal-tools">
@@ -20,6 +25,7 @@
     <nav class="cal-seg" aria-label="View">
       {% for k, l in [('month', 'Month'), ('week', 'Week'), ('list', 'List')] %}<a href="{{ link(view=k) }}" {% if view == k %}aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}
     </nav>
+    <a class="btn btn-quiet d-only" href="/calendar/new?category=personal&kind=pto&date={{ (picked_day if picked_day >= today else today).isoformat() }}" title="Lunch, focus time or PTO">+ Personal time</a>
     {% if can_schedule %}<a class="btn d-only" href="/calendar/new?date={{ (picked_day if picked_day >= today else today).isoformat() }}{% if pid %}&practice={{ pid }}{% endif %}">+ New event</a>{% endif %}
   </div>
 </div>
@@ -41,9 +47,10 @@
 <div class="cal-layout">
   <div>
   {% if view == 'list' %}
-    {% set days = by_day.keys()|list|sort %}
+    {% set days = (by_day.keys()|list + marks.keys()|list)|unique|sort %}
     {% for d in days %}
-      <h3 class="cal-list-day">{{ d.strftime('%A, %B') }} {{ d.day }}{% if d == today %} <span class="muted small">today</span>{% endif %}</h3>
+      <h3 class="cal-list-day{% if marks.get(d, {}).holidays %} hol{% endif %}">{{ d.strftime('%A, %B') }} {{ d.day }}{% if d == today %} <span class="muted small">today</span>{% endif %} {{ marktags(marks.get(d)) }}</h3>
+      {% if by_day.get(d) %}
       <ul class="cal-agenda big">
         {% for i in by_day[d] %}
         <li style="--c: {{ i.color }}"><span class="when">{{ i.time|clock if i.time else ('all day' if i.kind == 'event' else '') }}{% if i.end_time and i.time %}<br>{{ i.end_time|clock }}{% endif %}</span>
@@ -51,6 +58,7 @@
           {% else %}<a href="{{ link(event=i.id, day=d.isoformat()) }}"{% if i.cancelled %} style="text-decoration: line-through"{% endif %}><b>{{ i.title }}</b></a>{% if i.people %}<br><span class="muted small">{{ i.people }} invited{% if i.accepted %} · {{ i.accepted }} accepted{% endif %}</span>{% endif %}{% endif %}</span></li>
         {% endfor %}
       </ul>
+      {% endif %}
     {% else %}
       <p class="empty">Nothing on the calendar in the next two months{% if pid or category or mine %} for this filter{% endif %}.</p>
     {% endfor %}
@@ -59,8 +67,9 @@
       {% for d in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] %}<div class="cal-dow">{{ d }}</div>{% endfor %}
       {% for week in weeks %}{% for d in week %}
         {% set evs = by_day.get(d, []) %}
-        <div class="cal-day{% if view == 'month' and d.month != focus.month %} out{% endif %}{% if d == today %} today{% endif %}{% if d == picked_day %} picked{% endif %}">
-          <a class="cal-dn" href="{{ link(day=d.isoformat()) }}">{% if view == 'week' %}<span class="m-only">{{ d.strftime('%a') }} </span>{% endif %}{{ d.day }}</a>
+        {% set m = marks.get(d) %}
+        <div class="cal-day{% if view == 'month' and d.month != focus.month %} out{% endif %}{% if d == today %} today{% endif %}{% if d == picked_day %} picked{% endif %}{% if m and m.holidays %} hol{% endif %}{% if m and m.payday %} pay{% endif %}">
+          <div class="cal-dh"><a class="cal-dn" href="{{ link(day=d.isoformat()) }}">{% if view == 'week' %}<span class="m-only">{{ d.strftime('%a') }} </span>{% endif %}{{ d.day }}</a>{{ marktags(m) }}</div>
           {% set cap = 3 if view == 'month' else 30 %}
           {% for i in evs[:cap] %}{{ chip(i) }}{% endfor %}
           {% if evs|length > cap %}<a class="cal-more" href="{{ link(view='list', d=d.isoformat()) }}">+{{ evs|length - cap }} more</a>{% endif %}
@@ -70,7 +79,7 @@
     </div>
     {% if view == 'month' %}
     <section class="m-only cal-dayagenda">
-      <h2>{{ picked_day.strftime('%a, %b') }} {{ picked_day.day }}</h2>
+      <h2>{{ picked_day.strftime('%a, %b') }} {{ picked_day.day }} {{ marktags(marks.get(picked_day)) }}</h2>
       {% set evs = by_day.get(picked_day, []) %}
       {% if evs %}
       <ul class="cal-agenda big">
@@ -80,7 +89,7 @@
           {% else %}<a href="{{ link(event=i.id, day=picked_day.isoformat()) }}"><b>{{ i.short }}</b></a><br><span class="muted small">{{ i.practice }}{% if i.people %} · {{ i.people }} invited{% if i.accepted %} · {{ i.accepted }} accepted{% endif %}{% endif %}</span>{% endif %}</span></li>
         {% endfor %}
       </ul>
-      {% else %}<p class="muted">Nothing that day.{% if can_schedule %} <a href="/calendar/new?date={{ picked_day.isoformat() }}">Add an event</a>{% endif %}</p>{% endif %}
+      {% elif marks.get(picked_day) %}{% else %}<p class="muted">Nothing that day.{% if can_schedule %} <a href="/calendar/new?date={{ picked_day.isoformat() }}">Add an event</a>{% endif %}</p>{% endif %}
     </section>
     {% endif %}
   {% endif %}
@@ -91,6 +100,24 @@
     <section class="cal-card" id="event" style="--c: {{ sel.color }}">
       {% if not sel.show %}
         <p class="cal-kicker">Private</p><h2>Busy</h2><p class="small muted">{{ sel.when_text }}. Only the people invited can see the details.</p>
+      {% elif sel.personal %}
+      <p class="cal-kicker">Personal time</p>
+      <h2{% if sel.status == 'cancelled' %} style="text-decoration: line-through"{% endif %}>{{ sel.created_name or 'Someone' }} · {{ sel.type_label }}</h2>
+      <dl class="cal-dl">
+        <dt>When</dt><dd>{{ sel.when_text }}{% if sel.repeat_text %}<br><span class="muted">{{ sel.repeat_text }}</span>{% endif %}</dd>
+        <dt>Status</dt><dd>{{ {'pto': 'Out (PTO)', 'lunch': 'At lunch', 'focus': 'Focus time; reach out only if it’s urgent'}.get(sel.kind, sel.type_label) }}</dd>
+      </dl>
+      {% if sel.mine %}<div class="cal-mynotes"><p class="small" style="margin: 0 0 .2rem; font-weight: 600">Your notes <span class="muted" style="font-weight: 400">· only you see these</span></p>
+        {% if sel.my_notes %}<p class="small" style="white-space: pre-line; margin: 0">{{ sel.my_notes }}</p>{% else %}<p class="small muted" style="margin: 0">None yet. <a href="/calendar/{{ sel.id }}/edit">Add some</a>.</p>{% endif %}</div>{% endif %}
+      {% if sel.status == 'error' %}<p class="cal-status bad">Not sent to Outlook: {{ sel.ms_error }}</p>{% endif %}
+      <div class="cal-btns">
+        {% if sel.can_change and sel.status != 'cancelled' %}<a class="btn btn-quiet btn-small" href="/calendar/{{ sel.id }}/edit">Edit</a>{% endif %}
+        {% if sel.ms_link and sel.mine %}<a class="btn btn-quiet btn-small" href="{{ sel.ms_link }}" target="_blank" rel="noopener">Open in Outlook</a>{% endif %}
+      </div>
+      {% if sel.can_change %}<div class="cal-btns" style="margin-top: .6rem">
+        {% if sel.status != 'cancelled' and sel.ms_id %}<form method="post" action="/calendar/{{ sel.id }}/cancel" data-confirm="Cancel this? It's taken off Outlook too."><button class="linklike danger small" type="submit">Cancel</button></form>
+        {% else %}<form method="post" action="/calendar/{{ sel.id }}/delete" data-confirm="Remove this from the calendar?"><button class="linklike danger small" type="submit">Remove</button></form>{% endif %}
+      </div>{% endif %}
       {% else %}
       <p class="cal-kicker">{{ sel.category_label }} · {{ sel.type_label }}</p>
       <h2{% if sel.status == 'cancelled' %} style="text-decoration: line-through"{% endif %}>{{ sel.subject }}</h2>
@@ -145,11 +172,23 @@
       </ul>
       {% else %}<p class="small muted">Nothing scheduled yet.{% if can_schedule %} <a href="/calendar/new">Add the first event</a>.{% endif %}</p>{% endif %}
     </section>
+    <section class="cal-card cal-co">
+      <h2>Company dates</h2>
+      {% if next_marks.payday or next_marks.holiday %}
+      <ul class="cal-agenda">
+        {% if next_marks.payday %}<li style="--c: #2E7D52"><span class="when"><span class="cal-pay">$</span></span><a href="{{ link(d=next_marks.payday.isoformat(), day=next_marks.payday.isoformat()) }}">Next pay day <span class="muted">· {{ next_marks.payday.strftime('%a, %b') }} {{ next_marks.payday.day }}{% if next_marks.payday == today %} (today){% endif %}</span></a></li>{% endif %}
+        {% if next_marks.holiday %}{% set hd, hn = next_marks.holiday %}<li style="--c: #C25B5B"><span class="when">{{ hd.strftime('%b') }} {{ hd.day }}</span><a href="{{ link(d=hd.isoformat(), day=hd.isoformat()) }}">{{ hn }} <span class="muted">· office closed</span></a></li>{% endif %}
+      </ul>
+      {% else %}<p class="small muted">No pay days or holidays added yet.</p>{% endif %}
+      {% if is_admin %}<p class="small" style="margin: .5rem 0 0"><a href="/calendar/company">Set pay days, holidays and notes</a></p>{% endif %}
+    </section>
     <section class="cal-card cal-legend-card">
       <h2>Key</h2>
       <div class="cal-legend">
         {% for c in cats %}<span style="--c: {{ c.color }}">{{ c.label }}{% if c.hint %} <span class="muted">({{ c.hint }})</span>{% endif %}</span>{% endfor %}
-        <p class="small muted" style="margin: .3rem 0 0">Dashed = a follow-up date from a logged field visit. Pale = saved in the hub, no invite sent.</p>
+        <span class="cal-key-row"><span class="cal-pay">$</span> Pay day</span>
+        <span class="cal-key-row"><i class="cal-key-hol"></i> Company holiday</span>
+        <p class="small muted" style="margin: .3rem 0 0">Personal time shows who and what (Lunch, Focus time, PTO); the notes stay private. Dashed = a follow-up date from a logged field visit. Pale = saved in the hub, no invite sent.</p>
       </div>
     </section>
   </aside>

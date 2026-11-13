@@ -2058,3 +2058,32 @@ button.vd-lab:hover { background: #F2F0EB; }
 .ed-pxrow input { flex: 1 1 auto; min-width: 0; padding: 0.4rem 0.55rem; border: 1px solid var(--hair); border-radius: 6px; font: inherit; font-size: 0.85rem; }
 .ed-pxrow select { padding: 0.3rem; font: inherit; font-size: 0.8rem; }
 .ed-tpl-credit { margin-top: 1rem; }
+
+/* Calendar: company dates (pay days, holidays, notes) and personal time */
+.cal-dh { display: flex; align-items: center; gap: .3rem; min-width: 0; }
+.cal-dh .cal-dn { flex: none; }
+.cal-mk { font-size: .68rem; font-weight: 600; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cal-mk.hol { color: #9E3B3B; }
+.cal-pay { flex: none; display: inline-grid; place-items: center; width: 1.05rem; height: 1.05rem; border-radius: 999px; background: #E3F2E8; color: #1F7A45; font-size: .72rem; font-weight: 800; line-height: 1; }
+.cal-day.hol { background: #FBEDEC; }
+.cal-day.hol.out { background: #FCF4F3; }
+.cal-list-day .cal-mk, .cal-list-day .cal-pay, .cal-dayagenda h2 .cal-mk, .cal-dayagenda h2 .cal-pay { margin-left: .35rem; vertical-align: 2px; }
+.cal-list-day.hol { color: #9E3B3B; }
+.cal-ev.me-pto { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) 14%, #fff) 0 6px, color-mix(in srgb, var(--c) 6%, #fff) 6px 12px); }
+.cal-ev.me-lunch, .cal-ev.me-focus { border-left-style: solid; background: color-mix(in srgb, var(--c) 8%, #fff); }
+.cal-mynotes { background: var(--tint); border-radius: 6px; padding: .5rem .6rem; margin: .5rem 0; }
+.cal-legend > .cal-key-row::before { display: none; }
+.cal-key-row { display: flex; align-items: center; gap: .45rem; }
+.cal-key-hol { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; background: #F3D3D0; }
+.calf-teamchip { display: grid; gap: .3rem; background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; padding: .6rem; }
+.calf-teamchip .cal-ev { white-space: normal; font-size: .82rem; }
+.calf-personal-note { margin: .7rem 0 0; }
+@media (max-width: 700px) {
+  .cal-month .cal-dh { flex-direction: column; gap: 1px; }
+  .cal-month .cal-dh .cal-mk { display: none; }
+  .cal-month .cal-pay { width: .85rem; height: .85rem; font-size: .6rem; }
+}
+.coday-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.coday-hols { list-style: none; padding: 0; margin: 0 0 .8rem; display: grid; gap: .25rem; }
+.coday-hols li { display: flex; justify-content: space-between; gap: .6rem; align-items: center; border-bottom: 1px solid #EDF1F2; padding: .2rem 0; }
+@media (max-width: 800px) { .coday-layout { grid-template-columns: minmax(0, 1fr); } }

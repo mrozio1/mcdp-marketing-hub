@@ -43,8 +43,10 @@ ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
-CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and changing events: editors, or field visits on
+CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and changing events: anyone signed in; the routes
+                                                                   # let only editors and field agents add non-personal events
 ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|canva|team)(/|$)"), re.compile(r"^/map/setup$"),
+              re.compile(r"^/calendar/company(/|$)"),
               re.compile(r"^/p/\d+/delete$"))
 
 
@@ -59,8 +61,8 @@ def needed_role(method, path):
         return "viewer"
     if FIELD_WORK.match(path):
         return "field"
-    if CAL_WORK.match(path) and (method not in ("GET", "HEAD") or "/edit" in path or path.startswith("/calendar/new")):
-        return "calendar"
+    if CAL_WORK.match(path):
+        return "viewer"
     if method in ("GET", "HEAD") or path.startswith(ANY_SIGNED_IN_POST):
         return "viewer"
     return "editor"
@@ -3292,6 +3294,7 @@ def calendar_page(request: Request, view: str = "month", d: str = "", practice: 
         prev_d, next_d = focus - timedelta(days=60), focus + timedelta(days=60)
         title = f"From {focus.strftime('%b')} {focus.day}, {focus.year}"
     items = cal.items_between(start, end, u, pid, category, mine == "1", fu == "1")
+    marks = cal.marks_between(start, end)
     by_day = {}
     for i in items:
         by_day.setdefault(i["day"], []).append(i)
@@ -3303,6 +3306,9 @@ def calendar_page(request: Request, view: str = "month", d: str = "", practice: 
     if sel:
         sel["practice_name"] = (db.practice(sel["practice_id"]) or {}).get("name", "")
         sel["can_change"] = cal.can_change(sel, u)
+        sel["mine"] = cal.owns(sel, u)
+        if not sel["mine"]:
+            sel["my_notes"] = ""           # personal notes never leave the person who wrote them
         sel["show"] = cal.visible(sel, u)
         if sel["status"] == "sent":
             cal.refresh_soon(sel["id"])
@@ -3311,27 +3317,92 @@ def calendar_page(request: Request, view: str = "month", d: str = "", practice: 
                 start=start, end=end, today=today, prev_d=prev_d, next_d=next_d, practices=_cal_practices(), pid=pid,
                 category=category, mine=mine == "1", fu=fu == "1", cats=cal.CATEGORIES, sel=sel, picked_day=picked_day,
                 upcoming=cal.upcoming(u, 6, pid, mine == "1"), qs=qs, can_schedule=_can_schedule(u),
-                ms_on=microsoft.connected(), ms_mailbox=microsoft.mailbox(), followup_color=cal.FOLLOWUP_COLOR)
+                ms_on=microsoft.connected(), ms_mailbox=microsoft.mailbox(), followup_color=cal.FOLLOWUP_COLOR,
+                marks=marks, next_marks=cal.next_marks(today))
+
+
+def _cal_cats(u):
+    """What someone can add: everything for editors and field agents, just personal time for everyone else."""
+    return cal.CATEGORIES if _can_schedule(u) else [c for c in cal.CATEGORIES if c["key"] == cal.PERSONAL]
 
 
 def _cal_form(request, ev=None, error="", form=None):
     u = me(request)
     pr = _cal_practices()
     qp = request.query_params
+    cats = _cal_cats(u)
     if ev is None:
         start_d = qp.get("date") or date.today().isoformat()
+        cat0 = qp.get("category") if qp.get("category") in {c["key"] for c in cats} else cats[0]["key"]
+        kind0 = qp.get("kind") if qp.get("kind") in {k for k, _, _ in cal.types_for(cat0)} else ""
+        pto = cat0 == cal.PERSONAL and kind0 == "pto"
         ev = {"id": None, "practice_id": int(qp["practice"]) if qp.get("practice", "").isdigit() else None,
-              "category": qp.get("category") if qp.get("category") in cal.CAT else "referral", "kind": "",
+              "category": cat0, "kind": kind0, "my_notes": "",
               "subject": "", "subject_custom": 0, "where_kind": "", "place_label": "", "place_address": "",
               "office_id": None, "npi_key": "", "place_id": "", "starts": f"{start_d}T10:00", "ends": f"{start_d}T10:45",
-              "all_day": 0, "repeat": "", "repeat_until": "", "reminder": 60, "show_as": "busy", "teams": 0, "extra": "",
+              "all_day": int(pto), "repeat": "", "repeat_until": "", "reminder": 60, "show_as": "oof" if pto else "busy", "teams": 0, "extra": "",
               "cost": None, "details": "", "private": 0, "log_reminder": 1, "people": [], "status": "new", "ms_id": ""}
         if u and u.get("email"):
             ev["people"] = [{"name": u["name"], "email": u["email"].lower(), "required": 1, "source": "team"}]
-    return page(request, "calendar_form.html", ev=ev, practices=pr, cats=cal.CATEGORIES, cat_json=cal.form_json(),
+    if ev.get("id") and not cal.owns(ev, u):
+        ev = dict(ev, my_notes="")
+    return page(request, "calendar_form.html", ev=ev, practices=pr, cats=cats, cat_json=cal.form_json(),
+                notes_mine=not ev.get("id") or cal.owns(ev, u),
                 where_opts=cal.WHERE, repeats=cal.REPEATS, reminders=cal.REMINDERS, show_as=cal.SHOW_AS, error=error,
                 ms_on=microsoft.connected(), ms_mailbox=microsoft.mailbox(), ms_user=microsoft.user(),
                 tz=microsoft.timezone(), max_attach_mb=cal.MAX_ATTACHMENT // (1024 * 1024))
+
+
+@app.get("/calendar/company", response_class=HTMLResponse)
+def calendar_company(request: Request, year: str = ""):
+    if (r := guard(request)):
+        return r
+    today = date.today()
+    y = int(year) if year.isdigit() and 2000 < int(year) < 2100 else (today.year + 1 if today.month >= 11 else today.year)
+    rows = cal.marks()
+    have = {(m["day"], m["kind"]) for m in rows}
+    hol = [{"key": k, "name": n, "day": d, "on": on, "have": (d.isoformat(), "holiday") in have} for k, n, d, on in cal.us_holidays(y)]
+    upcoming = [m for m in rows if m["repeat"] or m["day"] >= today.isoformat()]
+    past = [m for m in rows if not m["repeat"] and m["day"] < today.isoformat()]
+    return page(request, "calendar_company.html", upcoming=upcoming, past=past, kinds=cal.MARK_KINDS,
+                repeats=cal.MARK_REPEATS, hol=hol, year=y, today=today)
+
+
+@app.post("/calendar/company")
+async def calendar_company_add(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    try:
+        m = cal.parse_mark(form)
+    except cal.CalError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse("/calendar/company", status_code=303)
+    cal.add_mark(m, me(request))
+    flash(request, f"Added. Everyone sees it on the Calendar.")
+    return RedirectResponse(f"/calendar/company", status_code=303)
+
+
+@app.post("/calendar/company/holidays")
+async def calendar_company_holidays(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    y = form.get("year") or ""
+    if not str(y).isdigit():
+        return RedirectResponse("/calendar/company", status_code=303)
+    n = cal.add_us_holidays(int(y), set(form.getlist("h")), me(request))
+    flash(request, f"Added {n} holiday{'' if n == 1 else 's'} for {y}." if n else "Nothing new to add; those are already on the calendar.")
+    return RedirectResponse(f"/calendar/company?year={y}", status_code=303)
+
+
+@app.post("/calendar/company/{mid}/delete")
+def calendar_company_delete(request: Request, mid: int):
+    if (r := guard(request)):
+        return r
+    cal.delete_mark(mid)
+    flash(request, "Removed from the calendar.")
+    return RedirectResponse("/calendar/company", status_code=303)
 
 
 @app.get("/calendar/new", response_class=HTMLResponse)
@@ -3413,7 +3484,12 @@ async def _cal_store(request, eid=None):
         return RedirectResponse("/calendar", status_code=303)
     try:
         data, attach = await _cal_form_data(request)
-        ev, people = cal.parse(data, _cal_practices())
+        ev, people = cal.parse(data, _cal_practices(), (old or {}).get("created_name") or (u or {}).get("name", ""))
+        if ev["category"] != cal.PERSONAL and not _can_schedule(u):
+            raise cal.CalError("You can add personal time (lunch, focus time, PTO). Other events need editor access "
+                               "or field visits switched on. Ask an admin.")
+        if old and not cal.owns(old, u):
+            ev["my_notes"] = old.get("my_notes") or ""       # someone else's notes stay as they were
     except cal.CalError as e:
         draft = cal.draft(data if "data" in locals() else {}, old)
         return _cal_form(request, draft, error=str(e))
@@ -3428,7 +3504,7 @@ async def _cal_store(request, eid=None):
             flash(request, (f"Invite sent to {n} {'person' if n == 1 else 'people'} from {microsoft.mailbox() or 'Outlook'}."
                             if not old or not old.get("ms_id") else "Updated; Outlook sent the change to everyone invited."))
     else:
-        flash(request, "Saved to the calendar. No invite was sent.")
+        flash(request, "Saved to the calendar." if ev["category"] == cal.PERSONAL else "Saved to the calendar. No invite was sent.")
     d = ev["starts"][:10]
     return RedirectResponse(f"/calendar?d={d}&event={eid}&day={d}", status_code=303)
 

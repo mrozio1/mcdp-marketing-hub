@@ -45,7 +45,14 @@ CATEGORIES = [
      "where": "online", "extra": "Agenda", "cost": False, "types": [
         ("review", "Practice marketing review", "Marketing review"), ("report", "Monthly report review", "Monthly report review"),
         ("planning", "Planning / strategy", "Planning"), ("vendor", "Vendor meeting", "Vendor meeting")]},
+    # Personal time: no practice or place. Everyone sees who and what (Lunch, Focus time, PTO); the notes are the
+    # person's own. Anyone signed in can add these, even without scheduling access.
+    {"key": "personal", "label": "Personal", "hint": "lunch, focus time, PTO", "color": "#4A6FA5",
+     "where": "", "extra": "", "cost": False, "personal": True, "types": [
+        ("lunch", "Lunch", "Lunch"), ("focus", "Focus time", "Focus time"), ("pto", "PTO", "PTO")]},
 ]
+PERSONAL = "personal"
+PERSONAL_SHOW_AS = {"pto": "oof", "lunch": "busy", "focus": "busy"}
 CAT = {c["key"]: c for c in CATEGORIES}
 WHERE = [("referral", "Referring office"), ("ours", "One of our locations"), ("address", "Other address"),
          ("online", "Online (Teams)")]
@@ -111,9 +118,23 @@ CREATE TABLE IF NOT EXISTS cal_people (
 );""")
         have = {r["name"] for r in c.execute("PRAGMA table_info(cal_events)")}
         for col, decl in (("ms_join", "TEXT DEFAULT ''"),       # the Teams join link, when it's a Teams meeting
-                          ("from_visit", "INTEGER")):           # the field visit this follow-up was scheduled from
+                          ("from_visit", "INTEGER"),            # the field visit this follow-up was scheduled from
+                          ("my_notes", "TEXT DEFAULT ''")):     # personal time: notes only the person who made it sees
             if col not in have:
                 c.execute(f"ALTER TABLE cal_events ADD COLUMN {col} {decl}")
+        c.executescript("""
+CREATE TABLE IF NOT EXISTS cal_marks (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL,             -- holiday, payday, note
+  label TEXT DEFAULT '',
+  day TEXT NOT NULL,              -- the first (or only) date
+  repeat TEXT DEFAULT '',         -- '', yearly, monthly, semimonthly, biweekly
+  until TEXT DEFAULT '',
+  shift INTEGER DEFAULT 0,        -- pay days: a Saturday or Sunday moves to the Friday before
+  created_by INTEGER, created_name TEXT DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cal_marks_day ON cal_marks(day);""")
 
 
 # ------------------------------------------------------------------ helpers
@@ -129,10 +150,16 @@ def type_label(cat, kind):
     return next((label for k, label, _ in types_for(cat) if k == kind), "")
 
 
-def build_subject(practice_name, cat, kind, place=""):
+def is_personal(cat):
+    return cat == PERSONAL
+
+
+def build_subject(practice_name, cat, kind, place="", who=""):
     c = CAT.get(cat)
     if not c:
         return ""
+    if is_personal(cat):
+        return f"{who} · {type_subject(cat, kind)}" if who else type_subject(cat, kind)
     s = f"{practice_name} · {c['label']}: {type_subject(cat, kind)}" if practice_name else f"{c['label']}: {type_subject(cat, kind)}"
     return f"{s} — {place}" if place else s
 
@@ -180,22 +207,26 @@ def _money(s):
     return v
 
 
-def parse(form, practices):
-    """form: {field: str} plus lists for person_*; practices: list of practice dicts. Returns (event dict, people)."""
+def parse(form, practices, who=""):
+    """form: {field: str} plus lists for person_*; practices: list of practice dicts; who: the name personal time
+    is shown under. Returns (event dict, people)."""
     def g(k):
         v = form.get(k)
         return (v if isinstance(v, str) else "" if v is None else str(v)).strip()
-    pid = g("practice_id")
-    p = next((q for q in practices if str(q["id"]) == str(pid)), None)
-    if not p:
-        raise CalError("Pick which practice this is for.")
     cat, kind = g("category"), g("kind")
     if cat not in CAT:
         raise CalError("Pick a category.")
+    personal = is_personal(cat)
+    pid = g("practice_id")
+    p = next((q for q in practices if str(q["id"]) == str(pid)), None)
+    if not p and not personal:
+        raise CalError("Pick which practice this is for.")
     if kind not in {k for k, _, _ in types_for(cat)}:
-        raise CalError("Pick the type of " + CAT[cat]["label"].lower() + ".")
+        raise CalError("Pick the type of " + CAT[cat]["label"].lower() + "." if not personal else "Pick Lunch, Focus time or PTO.")
     where = g("where_kind") or CAT[cat]["where"]
-    if where not in dict(WHERE):
+    if personal:
+        where = ""
+    elif where not in dict(WHERE):
         where = CAT[cat]["where"]
     all_day = g("all_day") in ("1", "on", "true")
     day = g("date")
@@ -222,28 +253,29 @@ def parse(form, practices):
         reminder = int(g("reminder") or 60)
     except ValueError:
         reminder = 60
-    show_as = g("show_as") if g("show_as") in dict(SHOW_AS) else "busy"
-    label = g("place_label")[:200]
-    address = g("place_address")[:300]
+    show_as = g("show_as") if g("show_as") in dict(SHOW_AS) else (PERSONAL_SHOW_AS.get(kind, "busy") if personal else "busy")
+    label = "" if personal else g("place_label")[:200]
+    address = "" if personal else g("place_address")[:300]
     if where in ("referral", "ours") and not label:
         raise CalError("Pick the office." if where == "referral" else "Pick which of our locations.")
     if where == "address" and not (label or address):
         raise CalError("Add the address or the venue name.")
-    auto = build_subject(p["name"], cat, kind, label if where != "online" else "")
+    auto = build_subject(p["name"] if p else "", cat, kind, label if where not in ("online", "") else "", who)
     subject = g("subject")[:255]
     custom = bool(subject) and subject != auto and g("subject_custom") == "1"
-    ev = {"practice_id": p["id"], "category": cat, "kind": kind, "subject": subject if custom else auto,
+    ev = {"practice_id": p["id"] if p else None, "category": cat, "kind": kind, "subject": subject if custom else auto,
           "subject_custom": int(custom), "where_kind": where, "place_label": label if where != "online" else "",
           "place_address": address if where != "online" else "",
           "office_id": int(g("office_id")) if str(g("office_id")).isdigit() and where == "referral" else None,
           "npi_key": g("npi_key")[:80] if where == "referral" else "", "place_id": g("place_id")[:300] if where == "referral" else "",
           "starts": start.isoformat(timespec="minutes"), "ends": end.isoformat(timespec="minutes"),
           "all_day": int(all_day), "repeat": rep, "repeat_until": until, "reminder": reminder, "show_as": show_as,
-          "teams": int(where == "online" or g("teams") in ("1", "on")),
-          "extra": g("extra")[:500], "cost": _money(g("cost")) if CAT[cat]["cost"] else None,
-          "details": g("details")[:4000], "private": int(g("private") in ("1", "on")),
-          "log_reminder": int(g("log_reminder") in ("1", "on")),
-          "from_visit": int(g("from_visit")) if g("from_visit").isdigit() else None}
+          "teams": 0 if personal else int(where == "online" or g("teams") in ("1", "on")),
+          "extra": "" if personal else g("extra")[:500], "cost": _money(g("cost")) if CAT[cat]["cost"] else None,
+          "details": "" if personal else g("details")[:4000], "private": 0 if personal else int(g("private") in ("1", "on")),
+          "log_reminder": 0 if personal else int(g("log_reminder") in ("1", "on")),
+          "from_visit": None if personal else int(g("from_visit")) if g("from_visit").isdigit() else None,
+          "my_notes": g("my_notes")[:2000] if personal else ""}
     return ev, _people(form)
 
 
@@ -263,7 +295,7 @@ def draft(form, old=None):
                "reminder": int(g("reminder")) if g("reminder").lstrip("-").isdigit() else 60, "show_as": g("show_as") or "busy",
                "teams": int(g("teams") in ("1", "on")), "extra": g("extra"), "cost": g("cost") or None, "details": g("details"),
                "private": int(g("private") in ("1", "on")), "log_reminder": int(g("log_reminder") in ("1", "on")),
-               "from_visit": int(g("from_visit")) if g("from_visit").isdigit() else None,
+               "from_visit": int(g("from_visit")) if g("from_visit").isdigit() else None, "my_notes": g("my_notes"),
                "status": (old or {}).get("status", "new"), "ms_id": (old or {}).get("ms_id", "")})
     ev["people"] = [{"name": names[i] if i < len(names) else "", "email": e, "required": 0 if i < len(req) and req[i] == "0" else 1,
                      "source": src[i] if i < len(src) else ""} for i, e in enumerate(emails) if e]
@@ -273,7 +305,7 @@ def draft(form, old=None):
 # ------------------------------------------------------------------ storage
 COLS = ("practice_id", "category", "kind", "subject", "subject_custom", "where_kind", "place_label", "place_address",
         "office_id", "npi_key", "place_id", "starts", "ends", "all_day", "repeat", "repeat_until", "reminder", "show_as",
-        "teams", "extra", "cost", "details", "private", "log_reminder", "from_visit")
+        "teams", "extra", "cost", "details", "private", "log_reminder", "from_visit", "my_notes")
 
 
 def save(ev, people, user, eid=None):
@@ -314,6 +346,7 @@ def decorate(ev):
     ev["extra_label"] = c.get("extra", "Details")
     ev["when_text"] = when_text(ev)
     ev["repeat_text"] = repeat_text(ev)
+    ev["personal"] = is_personal(ev["category"])
     for p in ev.get("people", []):
         p["response_label"], p["response_cls"] = RESPONSES.get(p.get("response") or "", RESPONSES[""])
     return ev
@@ -408,8 +441,20 @@ def delete(eid):
 
 
 def can_change(ev, user):
+    """Whoever made it, or an editor. Personal time: whoever made it, or an admin."""
     from . import users
-    return bool(user) and (ev.get("created_by") == user.get("id") or users.rank(user["role"]) >= users.rank("editor"))
+    if not user:
+        return False
+    if ev.get("created_by") == user.get("id"):
+        return True
+    if is_personal(ev.get("category")):
+        return user.get("role") == "admin"
+    return users.rank(user["role"]) >= users.rank("editor")
+
+
+def owns(ev, user):
+    """Personal notes are only ever shown to the person who made the event."""
+    return bool(user) and bool(ev) and ev.get("created_by") == user.get("id")
 
 
 def visible(ev, user):
@@ -563,7 +608,8 @@ def items_between(start, end, user, practice_id=None, category="", mine=False, f
     for ev in rows:
         ev["people"] = people.get(ev["id"], [])
         decorate(ev)
-        if practice_id and ev["practice_id"] != practice_id:
+        personal = is_personal(ev["category"])
+        if practice_id and ev["practice_id"] != practice_id and not personal:   # time off shows on every practice's view
             continue
         if category and ev["category"] != category:
             continue
@@ -579,8 +625,10 @@ def items_between(start, end, user, practice_id=None, category="", mine=False, f
                     out.append({"day": day, "time": "" if ev["all_day"] or k else ev["starts"][11:16],
                                 "end_time": "" if ev["all_day"] else ev["ends"][11:16],
                                 "title": ev["subject"] if show else "Busy (private)",
-                                "short": (f"{ev['type_subject']} · {ev['place_label']}" if show and ev['place_label'] and ev['place_label'] != ev['practice_name']
+                                "short": (f"{ev['type_subject']} · {_first(ev['created_name'])}" if personal
+                                          else f"{ev['type_subject']} · {ev['place_label']}" if show and ev['place_label'] and ev['place_label'] != ev['practice_name']
                                           else ev['type_subject'] if show else "Busy"),
+                                "personal": ev["kind"] if personal else "",
                                 "practice": ev["practice_name"], "color": ev["color"], "category": ev["category"],
                                 "id": ev["id"], "kind": "event", "cancelled": ev["status"] == "cancelled",
                                 "people": len(ev["people"]), "status": ev["status"], "private": not show,
@@ -589,6 +637,11 @@ def items_between(start, end, user, practice_id=None, category="", mine=False, f
         out += followups_between(start, end, user, practice_id, mine)
     out.sort(key=lambda i: (i["day"], i["time"] == "" and i["kind"] == "event" and 0 or 1, i["time"] or "99", i["title"]))
     return out
+
+
+def _first(name):
+    parts = (name or "").split()
+    return (parts[0] + (f" {parts[1][0]}." if len(parts) > 1 else "")) if parts else "Someone"
 
 
 def followups_between(start, end, user, practice_id=None, mine=False):
@@ -610,7 +663,7 @@ def followups_between(start, end, user, practice_id=None, mine=False):
                     "title": f"Follow up · {r['office_name']}", "short": f"Follow up · {r['office_name']}",
                     "practice": "", "color": FOLLOWUP_COLOR, "category": "followup", "id": r["id"], "kind": "followup",
                     "office_id": r["office_id"], "who": r["user_name"], "cancelled": False, "people": 0, "status": "",
-                    "private": False, "accepted": 0})
+                    "private": False, "accepted": 0, "personal": ""})
     return out
 
 
@@ -620,9 +673,10 @@ def upcoming(user, n=6, practice_id=None, mine=False):
              if not i["cancelled"]]
     seen, out = set(), []
     for i in items:
-        if (i["id"], i["day"]) in seen:
+        key = (i["id"], i["day"] if not i["personal"] else None)     # several days off show once, on the first day
+        if key in seen:
             continue
-        seen.add((i["id"], i["day"]))
+        seen.add(key)
         out.append(i)
     return out[:n]
 
@@ -724,5 +778,196 @@ def our_locations(practice_id):
 def form_json():
     """What the form's script needs to build dropdowns and the subject."""
     return json.dumps({c["key"]: {"label": c["label"], "where": c["where"], "extra": c["extra"], "cost": c["cost"],
+                                  "personal": bool(c.get("personal")), "show_as": PERSONAL_SHOW_AS if c.get("personal") else {},
                                   "color": c["color"], "types": [[k, label, s] for k, label, s in c["types"]]}
                        for c in CATEGORIES})
+
+
+# ------------------------------------------------------------------ company dates (admins set them; everyone sees them)
+MARK_KINDS = [("holiday", "Company holiday", "The whole day is shaded and named"),
+              ("payday", "Pay day", "A green $ next to the date"),
+              ("note", "Company note", "A short note next to the date (open enrollment, all-hands…)")]
+MARK_KIND = {k: label for k, label, _ in MARK_KINDS}
+MARK_REPEATS = {"holiday": [("", "Just this date"), ("yearly", "Every year on this date")],
+                "payday": [("", "Just this date"), ("biweekly", "Every 2 weeks"), ("semimonthly", "15th and last day of each month"),
+                           ("monthly", "Monthly on this date")],
+                "note": [("", "Just this date"), ("yearly", "Every year on this date"), ("monthly", "Monthly on this date")]}
+
+
+def _last(y, m):
+    import calendar as _c
+    return _c.monthrange(y, m)[1]
+
+
+def _friday_before(d):
+    return d - timedelta(days=d.weekday() - 4) if d.weekday() >= 5 else d
+
+
+def parse_mark(form):
+    g = lambda k: str(form.get(k) or "").strip()
+    kind = g("kind")
+    if kind not in MARK_KIND:
+        raise CalError("Pick holiday, pay day or note.")
+    try:
+        day = date.fromisoformat(g("day"))
+    except ValueError:
+        raise CalError("Pick the date.")
+    label = g("label")[:60]
+    if kind in ("holiday", "note") and not label:
+        raise CalError("Give it a short name, like “Thanksgiving” or “Open enrollment ends”.")
+    rep = g("repeat") if g("repeat") in dict(MARK_REPEATS[kind]) else ""
+    until = ""
+    if rep and g("until"):
+        try:
+            until = date.fromisoformat(g("until")).isoformat()
+        except ValueError:
+            raise CalError("Pick a valid “until” date.")
+        if until < day.isoformat():
+            raise CalError("“Until” should be after the first date.")
+    return {"kind": kind, "label": label, "day": day.isoformat(), "repeat": rep, "until": until,
+            "shift": int(kind == "payday" and g("shift") in ("1", "on"))}
+
+
+def add_mark(m, user):
+    with db.conn() as c:
+        return c.execute("INSERT INTO cal_marks(kind, label, day, repeat, until, shift, created_by, created_name, created_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?)", (m["kind"], m["label"], m["day"], m["repeat"], m["until"], m["shift"],
+                                                        (user or {}).get("id"), (user or {}).get("name", ""), db.now())).lastrowid
+
+
+def delete_mark(mid):
+    with db.conn() as c:
+        c.execute("DELETE FROM cal_marks WHERE id=?", (mid,))
+
+
+def marks():
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute("SELECT * FROM cal_marks ORDER BY day, kind")]
+    for r in rows:
+        r["kind_label"] = MARK_KIND.get(r["kind"], r["kind"])
+        r["repeat_label"] = dict(MARK_REPEATS.get(r["kind"], [])).get(r["repeat"], "")
+    return rows
+
+
+def mark_dates(m, start, end):
+    """Dates a company date falls on in [start, end]."""
+    d0 = date.fromisoformat(m["day"])
+    last = min(end, date.fromisoformat(m["until"])) if m.get("until") else end
+    rep, out = m.get("repeat") or "", []
+    if not rep:
+        raw = [d0]
+    elif rep == "biweekly":
+        k = max(0, (start - d0).days // 14 - 1)
+        raw, d = [], d0 + timedelta(days=14 * k)
+        while d <= last + timedelta(days=3):
+            raw.append(d)
+            d += timedelta(days=14)
+    elif rep == "yearly":
+        raw = []
+        for y in range(max(d0.year, start.year - 1), last.year + 1):
+            raw.append(date(y, d0.month, min(d0.day, _last(y, d0.month))))
+    else:   # monthly, semimonthly
+        raw, y, mo = [], max(d0.year, start.year), 1 if d0.year < start.year else d0.month
+        if d0.year < start.year or (d0.year == start.year and d0.month < start.month):
+            y, mo = start.year, start.month
+            mo, y = (mo - 1, y) if mo > 1 else (12, y - 1)       # a month back, for weekend shifts across months
+        while date(y, mo, 1) <= last + timedelta(days=3):
+            if rep == "monthly":
+                raw.append(date(y, mo, min(d0.day, _last(y, mo))))
+            else:
+                raw += [date(y, mo, 15), date(y, mo, _last(y, mo))]
+            mo, y = (mo + 1, y) if mo < 12 else (1, y + 1)
+    for d in raw:
+        if d < d0 or (m.get("until") and d > date.fromisoformat(m["until"])):
+            continue
+        if m.get("shift"):
+            d = _friday_before(d)
+        if start <= d <= end:
+            out.append(d)
+    return out
+
+
+def marks_between(start, end):
+    """{day: {"holidays": [names], "payday": bool, "notes": [text]}} for the calendar."""
+    out = {}
+    for m in marks():
+        for d in mark_dates(m, start, end):
+            x = out.setdefault(d, {"holidays": [], "payday": False, "notes": []})
+            if m["kind"] == "holiday":
+                x["holidays"].append(m["label"])
+            elif m["kind"] == "payday":
+                x["payday"] = True
+                if m["label"]:
+                    x["notes"].append(m["label"])
+            else:
+                x["notes"].append(m["label"])
+    return out
+
+
+def next_marks(today=None):
+    """The next pay day and the next holiday, for the side of the calendar."""
+    today = today or date.today()
+    got = marks_between(today, today + timedelta(days=370))
+    days = sorted(got)
+    pay = next((d for d in days if got[d]["payday"]), None)
+    hol = next(((d, got[d]["holidays"][0]) for d in days if got[d]["holidays"]), None)
+    return {"payday": pay, "holiday": hol}
+
+
+def _nth(y, m, weekday, n):
+    """The nth weekday (0 = Monday) of a month; n = -1 for the last one."""
+    if n > 0:
+        d = date(y, m, 1)
+        d += timedelta(days=(weekday - d.weekday()) % 7)
+        return d + timedelta(days=7 * (n - 1))
+    d = date(y, m, _last(y, m))
+    return d - timedelta(days=(d.weekday() - weekday) % 7)
+
+
+def _observed(d):
+    return d - timedelta(days=1) if d.weekday() == 5 else d + timedelta(days=1) if d.weekday() == 6 else d
+
+
+def us_holidays(year):
+    """Common US holidays for a year, with the weekday a fixed-date one is usually observed on.
+    (key, name, date, ticked by default)."""
+    thanks = _nth(year, 11, 3, 4)
+    return [("newyear", "New Year's Day", _observed(date(year, 1, 1)), True),
+            ("mlk", "Martin Luther King Jr. Day", _nth(year, 1, 0, 3), False),
+            ("presidents", "Presidents' Day", _nth(year, 2, 0, 3), False),
+            ("goodfriday", "Good Friday", _easter(year) - timedelta(days=2), False),
+            ("memorial", "Memorial Day", _nth(year, 5, 0, -1), True),
+            ("juneteenth", "Juneteenth", _observed(date(year, 6, 19)), False),
+            ("july4", "Independence Day", _observed(date(year, 7, 4)), True),
+            ("labor", "Labor Day", _nth(year, 9, 0, 1), True),
+            ("columbus", "Columbus / Indigenous Peoples' Day", _nth(year, 10, 0, 2), False),
+            ("veterans", "Veterans Day", _observed(date(year, 11, 11)), False),
+            ("thanksgiving", "Thanksgiving", thanks, True),
+            ("blackfriday", "Day after Thanksgiving", thanks + timedelta(days=1), True),
+            ("xmaseve", "Christmas Eve", date(year, 12, 24), False),
+            ("xmas", "Christmas Day", _observed(date(year, 12, 25)), True),
+            ("nye", "New Year's Eve", date(year, 12, 31), False)]
+
+
+def _easter(y):
+    a, b, c = y % 19, y // 100, y % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mo = (h + l - 7 * m + 114) // 31
+    return date(y, mo, (h + l - 7 * m + 114) % 31 + 1)
+
+
+def add_us_holidays(year, keys, user):
+    """Add the picked holidays for a year (skipping any already on that date). Returns how many were added."""
+    have = {(m["day"], m["kind"]) for m in marks()}
+    n = 0
+    for k, name, d, _ in us_holidays(year):
+        if k in keys and (d.isoformat(), "holiday") not in have:
+            add_mark({"kind": "holiday", "label": name, "day": d.isoformat(), "repeat": "", "until": "", "shift": 0}, user)
+            n += 1
+    return n

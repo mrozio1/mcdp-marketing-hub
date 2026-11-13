@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Company dates{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/calendar">Calendar</a></p>
+<h1>Company dates</h1>
+<p class="muted" style="max-width: 46rem">Pay days, company holidays and short notes show on everyone's Calendar. Pay days get a green <span class="cal-pay">$</span> next to the date; a holiday shades the whole day and names it; a note sits next to the date.</p>
+
+<div class="coday-layout">
+  <section class="panel">
+    <h2>Add a date</h2>
+    <form method="post" action="/calendar/company" class="coday-form" id="co-form">
+      <fieldset class="calf-pills" id="co-kind">
+        <legend class="sr-only">What it is</legend>
+        {% for k, l, hint in kinds %}<label title="{{ hint }}"><input type="radio" name="kind" value="{{ k }}" {% if loop.first %}checked{% endif %}><span>{{ l }}</span></label>{% endfor %}
+      </fieldset>
+      <p class="small muted" id="co-hint" style="margin: .4rem 0 .8rem">{{ kinds[0][2] }}</p>
+      <div class="calf-row calf-c2">
+        <label><span id="co-label-l">Name</span><input name="label" id="co-label" maxlength="60" placeholder="e.g. Thanksgiving"></label>
+        <label>Date<input type="date" name="day" required value="{{ today.isoformat() }}"></label>
+      </div>
+      <div class="calf-row calf-c2" style="margin-top: .7rem">
+        <label>Repeat<select name="repeat" id="co-repeat"></select></label>
+        <label id="co-until-w" hidden>Until <span class="calf-hint">optional</span><input type="date" name="until"></label>
+      </div>
+      <label class="cal-check" id="co-shift-w" hidden style="margin-top: .7rem"><input type="checkbox" name="shift" value="1" checked> If it lands on a weekend, show it on the Friday before</label>
+      <div class="calf-actions" style="margin-top: 1rem"><button class="btn" type="submit">Add to the calendar</button></div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>US holidays for {{ year }}</h2>
+    <p class="small muted" style="margin-top: 0">Tick the ones MCDP closes for. A holiday that falls on a weekend is shown on the weekday it's usually observed.
+      <a href="/calendar/company?year={{ year - 1 }}">{{ year - 1 }}</a> · <a href="/calendar/company?year={{ year + 1 }}">{{ year + 1 }}</a></p>
+    <form method="post" action="/calendar/company/holidays">
+      <input type="hidden" name="year" value="{{ year }}">
+      <ul class="coday-hols">
+        {% for h in hol %}<li><label class="cal-check"><input type="checkbox" name="h" value="{{ h.key }}" {% if h.on and not h.have %}checked{% endif %} {% if h.have %}disabled{% endif %}>
+          {{ h.name }}</label><span class="small muted">{{ h.day.strftime('%a, %b') }} {{ h.day.day }}{% if h.have %} · added ✓{% endif %}</span></li>{% endfor %}
+      </ul>
+      <button class="btn btn-quiet" type="submit">Add the ticked holidays</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>On the calendar</h2>
+  {% if upcoming %}
+  <table class="data">
+    <thead><tr><th>What</th><th>Name</th><th>Date</th><th>Repeats</th><th></th></tr></thead>
+    <tbody>
+    {% for m in upcoming %}<tr>
+      <td>{% if m.kind == 'payday' %}<span class="cal-pay">$</span> {% elif m.kind == 'holiday' %}<i class="cal-key-hol"></i> {% endif %}{{ m.kind_label }}</td>
+      <td>{{ m.label or '—' }}</td>
+      <td>{{ m.day }}</td>
+      <td>{{ m.repeat_label if m.repeat else '—' }}{% if m.until %} until {{ m.until }}{% endif %}{% if m.shift %}<br><span class="small muted">weekends → Friday before</span>{% endif %}</td>
+      <td><form method="post" action="/calendar/company/{{ m.id }}/delete" data-confirm="Take this off everyone's calendar?"><button class="linklike danger small" type="submit">Remove</button></form></td>
+    </tr>{% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">Nothing yet. Add your pay schedule and holidays above.</p>{% endif %}
+  {% if past %}<details style="margin-top: .8rem"><summary class="small">Past dates ({{ past|length }})</summary>
+    <ul class="small">{% for m in past %}<li>{{ m.day }} · {{ m.kind_label }}{% if m.label %}: {{ m.label }}{% endif %}
+      <form method="post" action="/calendar/company/{{ m.id }}/delete" style="display: inline"><button class="linklike danger small" type="submit">Remove</button></form></li>{% endfor %}</ul></details>{% endif %}
+</section>
+<script>
+(() => {
+  const REP = {{ repeats|tojson }};
+  const HINT = {{ kinds|tojson }};
+  const f = document.getElementById('co-form');
+  const kind = () => f.querySelector('input[name=kind]:checked').value;
+  function sync() {
+    const k = kind(), sel = document.getElementById('co-repeat'), cur = sel.value;
+    sel.innerHTML = REP[k].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+    if (REP[k].some(r => r[0] === cur)) sel.value = cur;
+    if (k === 'payday' && !cur) sel.value = 'biweekly';
+    document.getElementById('co-hint').textContent = HINT.find(h => h[0] === k)[2];
+    document.getElementById('co-label-l').textContent = k === 'payday' ? 'Note (optional)' : 'Name';
+    document.getElementById('co-label').placeholder = k === 'payday' ? 'e.g. Bonus payroll' : k === 'holiday' ? 'e.g. Thanksgiving' : 'e.g. Open enrollment ends';
+    document.getElementById('co-shift-w').hidden = k !== 'payday';
+    rep();
+  }
+  const rep = () => { document.getElementById('co-until-w').hidden = !document.getElementById('co-repeat').value; };
+  f.querySelectorAll('input[name=kind]').forEach(r => r.addEventListener('change', sync));
+  document.getElementById('co-repeat').addEventListener('change', rep);
+  sync();
+})();
+</script>
+{% endblock %}

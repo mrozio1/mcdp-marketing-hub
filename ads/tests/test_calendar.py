@@ -99,7 +99,11 @@ def test_calendar_page_and_who_can_schedule(env):
     a, v, ag = env["admin"], env["viewer"], env["agent"]
     page = v.get("/calendar").text
     assert "Calendar" in page and 'href="/calendar"' in page and "+ New event" not in page
-    assert v.get("/calendar/new", follow_redirects=True).text.count("needs editor access or field visits") == 1
+    vf = v.get("/calendar/new").text                               # viewers can add personal time only
+    assert "Personal" in re.search(r'id="f-cat".*?</select>', vf, re.S).group(0)
+    assert "Referral Visit" not in re.search(r'id="f-cat".*?</select>', vf, re.S).group(0)
+    r = v.post("/calendar/events", data=form(env["heights"]), follow_redirects=True)
+    assert "Other events need editor access" in r.text
     assert "Practice" in ag.get("/calendar/new").text            # field agents can schedule
     f = a.get("/calendar/new").text
     assert "Referral Visit" in f and "Cookie / treat drop-off" in f and "Heights Orthodontics" in f
@@ -341,3 +345,51 @@ def test_calendar_and_visits_feed_each_other(env, monkeypatch):
     assert f"/field/log?event={other}" in ag.get("/field").text
     ag.post(f"/calendar/{other}/nolog")
     assert f"/field/log?event={other}" not in ag.get("/field").text
+
+
+def test_personal_time_and_private_notes(env):
+    a, v, cal, db = env["admin"], env["viewer"], env["cal"], env["db"]
+    d = (date.today() + timedelta(days=3)).isoformat()
+    r = v.post("/calendar/events", data={"category": "personal", "kind": "pto", "date": d, "all_day": "1", "end_date": d,
+                                         "my_notes": "Dentist then the airport", "practice_id": "", "action": "save"},
+               follow_redirects=True)
+    assert "Saved to the calendar." in r.text
+    with db.conn() as c:
+        eid = c.execute("SELECT MAX(id) FROM cal_events").fetchone()[0]
+    ev = cal.get(eid)
+    assert ev["subject"] == "Vi Viewer · PTO" and ev["show_as"] == "oof" and ev["practice_id"] is None
+    assert ev["my_notes"] == "Dentist then the airport" and ev["details"] == "" and ev["log_reminder"] == 0
+    mine = v.get(f"/calendar?d={d}&event={eid}").text
+    assert "PTO · Vi V." in mine and "Dentist then the airport" in mine and "Your notes" in mine
+    theirs = a.get(f"/calendar?d={d}&event={eid}").text           # the team sees the status, not the notes
+    assert "PTO · Vi V." in theirs and "Out (PTO)" in theirs and "Dentist then the airport" not in theirs
+    assert "Dentist" not in a.get(f"/calendar/{eid}/edit").text
+    # an admin's edit keeps the notes; an editor who didn't make it can't change it
+    a.post(f"/calendar/{eid}", data={"category": "personal", "kind": "pto", "date": d, "all_day": "1", "end_date": d,
+                                     "my_notes": "", "action": "save"})
+    assert cal.get(eid)["my_notes"] == "Dentist then the airport"
+    assert not cal.can_change(cal.get(eid), {"id": -5, "role": "editor"})
+    assert "PTO · Vi V." in a.get(f"/calendar?d={d}&practice={env['heights']}").text   # shows on a practice's view too
+    assert not any(e["id"] == eid for e in cal.visit_candidates({"id": ev["created_by"], "email": "vi@example.com"}, 7, 24 * 10))
+
+
+def test_company_dates(env):
+    a, v, cal = env["admin"], env["viewer"], env["cal"]
+    r = v.get("/calendar/company", follow_redirects=False)
+    assert r.status_code == 303 and "/calendar/company" not in r.headers["location"]
+    assert "US holidays for" in a.get("/calendar/company?year=2027").text
+    r = a.post("/calendar/company/holidays", data={"year": "2027", "h": ["thanksgiving", "xmas"]}, follow_redirects=True)
+    assert "Added 2 holidays for 2027" in r.text
+    assert "Nothing new" in a.post("/calendar/company/holidays", data={"year": "2027", "h": ["xmas"]}, follow_redirects=True).text
+    a.post("/calendar/company", data={"kind": "payday", "day": "2027-01-15", "repeat": "semimonthly", "shift": "1"})
+    a.post("/calendar/company", data={"kind": "note", "day": "2027-11-05", "label": "Open enrollment ends"})
+    assert "Give it a short name" in a.post("/calendar/company", data={"kind": "holiday", "day": "2027-07-05"},
+                                            follow_redirects=True).text
+    page = v.get("/calendar?d=2027-11-01").text
+    assert 'cal-day hol' in page and "Thanksgiving" in page and "Open enrollment ends" in page
+    assert page.count('class="cal-pay"') >= 2                    # Nov 15 (a Monday) and Nov 30
+    m = cal.marks_between(date(2027, 5, 1), date(2027, 5, 31))
+    assert m[date(2027, 5, 14)]["payday"] and date(2027, 5, 15) not in m      # Saturday the 15th moves to Friday
+    mid = next(x["id"] for x in cal.marks() if x["kind"] == "note")
+    a.post(f"/calendar/company/{mid}/delete")
+    assert "Open enrollment ends" not in v.get("/calendar?d=2027-11-01").text
