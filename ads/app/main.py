@@ -47,7 +47,7 @@ CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and 
                                                                    # let only editors and field agents add non-personal events
 ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|canva|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/calendar/company(/|$)"),
-              re.compile(r"^/p/\d+/delete$"))
+              re.compile(r"^/p/\d+/(delete|hide|show)$"))
 
 
 def needed_role(method, path):
@@ -729,7 +729,7 @@ def dashboard(request: Request, m: str = ""):
                       "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium")),
                       "problems": problems, "organic": organic_summary(p, allp, month)})
     items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
-    return page(request, "dashboard.html", items=items, kits_waiting=brand.waiting_review(allp),
+    return page(request, "dashboard.html", items=items, kits_waiting=brand.waiting_review(allp), hidden=db.hidden_practices(),
                 month=month, is_current=month == month_opts[0], month_label=reviews.month_label(month),
                 month_opts=[(k, reviews.month_label(k)) for k in month_opts])
 
@@ -827,6 +827,37 @@ def practice_delete(request: Request, pid: int):
     db.delete_practice(pid)
     flash(request, f"Deleted {p['name'] if p else 'practice'} and its uploads.")
     return RedirectResponse("/practices", status_code=303)
+
+
+@app.post("/p/{pid}/hide")
+def practice_hide(request: Request, pid: int):
+    """Take a practice off every page, list and report. Nothing is deleted; Show again brings it all back."""
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    back = request.headers.get("referer") or "/practices"
+    back = back if back.startswith(str(request.base_url)) and f"/p/{pid}" not in back else "/practices"
+    if not p:
+        return RedirectResponse("/practices", status_code=303)
+    allp = db.practices()
+    if is_master(p, allp):
+        flash(request, "The master record can't be hidden: the practices below it get their ad accounts from it.", "error")
+        return RedirectResponse(back, status_code=303)
+    db.set_hidden(pid, True, actor(request))
+    flash(request, f"Hid {p['name']}. It's off every page and report; its data is kept. "
+                   "Bring it back from Hidden practices at the bottom of the Practices page.")
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/p/{pid}/show")
+def practice_show(request: Request, pid: int):
+    if (r := guard(request)):
+        return r
+    p = db.practice(pid)
+    if p:
+        db.set_hidden(pid, False)
+        flash(request, f"{p['name']} is back on every page and report.")
+    return RedirectResponse(request.headers.get("referer") or "/practices", status_code=303)
 
 
 @app.post("/p/{pid}/split")
@@ -2163,7 +2194,14 @@ def market_map_data(request: Request):
     if not authed(request):
         return Response(status_code=401)
     places.purge_old()
-    return {**places.map_data(), **field.map_overlay(), **schools.map_data()}
+    data = {**places.map_data(), **field.map_overlay(), **schools.map_data()}
+    hid = db.hidden_ids()
+    if hid:                                   # a hidden practice's offices (and the dental offices around them) drop off
+        links = field.practice_links()
+        gone = {o["id"] for o in data.get("offices", []) if links.get(o["id"]) in hid}
+        data["offices"] = [o for o in data.get("offices", []) if o["id"] not in gone]
+        data["places"] = [p for p in data.get("places", []) if p.get("office") not in gone]
+    return data
 
 
 def _map_back(anchor=""):

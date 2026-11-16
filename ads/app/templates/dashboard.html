@@ -39,6 +39,7 @@
         {% if it.master %}<span class="tag tag-master">Master</span>{% elif it.p.campaign_filter %}<span class="muted small scope-sub">{{ it.p.campaign_filter|truncate(40) }}</span>{% endif %}
         {% if it.problems %}<a class="setup-note" href="/p/{{ it.p.id }}#{{ it.problems[0].at }}" title="{{ it.problems|map(attribute='long')|join('  ') }}">⚠ {{ it.problems[0].short }}{% if it.problems|length > 1 %} +{{ it.problems|length - 1 }}{% endif %}</a>{% endif %}
         {% if it.issues %}<span class="issues">{{ it.issues }} to review</span>{% endif %}
+        {% if is_admin and not it.master %}<form method="post" action="/p/{{ it.p.id }}/hide" class="hide-p" data-confirm="Hide {{ it.p.name }}? It comes off every page, list and report (its data is kept, and you can show it again)."><button class="linklike small" type="submit" title="Hide {{ it.p.name }} from every page and report">Hide</button></form>{% endif %}
       </th>
       {% for v in it.views %}
         <td>{{ ruler(v.pacing, v.label) }}</td>
@@ -58,6 +59,19 @@
   </tbody>
 </table>
 <p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, for {{ month_label }}.</p>
+{% endif %}
+
+{% if hidden %}
+<details class="drawer" id="hidden-practices">
+  <summary><span class="drawer-title">Hidden practices ({{ hidden|length }})</span><span class="drawer-hint">Off every page, list and report; nothing deleted</span></summary>
+  <div class="drawer-body">
+    <p class="muted small" style="margin-top: 0">Their ads, posts, reviews, visits, calendar events and map offices are left out everywhere (MCDP totals too) until you show them again. They also stop syncing.</p>
+    <ul class="hidden-list">
+      {% for h in hidden %}<li><a href="/p/{{ h.id }}">{{ h.name }}</a> <span class="muted small">hidden {{ (h.hidden_at or '')[:10] }}{% if h.hidden_by %} by {{ h.hidden_by }}{% endif %}</span>
+        {% if is_admin %}<form method="post" action="/p/{{ h.id }}/show"><button class="btn btn-quiet btn-small" type="submit">Show again</button></form>{% endif %}</li>{% endfor %}
+    </ul>
+  </div>
+</details>
 {% endif %}
 
 {% if can_edit %}

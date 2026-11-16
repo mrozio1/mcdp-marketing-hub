@@ -627,6 +627,9 @@ def visits_between(start, end, user_id=None, practice_id=None):
             r["our_office_id"] = p["office_id"] if p else None
         # the practice chosen when the visit was logged; older visits: our nearest office's practice
         r["practice_id"] = r.get("practice_id") or links.get(r["our_office_id"])
+    hid = db.hidden_ids()
+    if hid:
+        rows = [r for r in rows if r["practice_id"] not in hid]      # hidden practices' visits stay out of reports
     if user_id:
         rows = [r for r in rows if r["user_id"] == user_id]
     if practice_id:
@@ -772,7 +775,7 @@ def practice_links():
     """{map office id: practice id}: saved choices, otherwise the suggestion from the names."""
     with db.conn() as c:
         saved = {r["map_office_id"]: r["practice_id"] for r in c.execute("SELECT * FROM field_links")}
-    plist = db.practices()
+    plist = db.practices(include_hidden=True)         # an office of a hidden practice stays linked to it
     out = {}
     for o in places.offices():
         out[o["id"]] = saved[o["id"]] if o["id"] in saved else suggest_practice(o["label"], plist)

@@ -357,11 +357,12 @@ def totals(rows, masters, plist, per):
     every practice that uses them), so practices on the master account aren't double counted."""
     seen, spend, conv, clicks, daily = set(), 0.0, 0.0, 0, {}
     prev_seen, prev_spend, prev_conv = set(), 0.0, 0.0
+    hid = scope.hidden_context()            # hidden practices' campaigns on shared accounts are left out
     for p in plist:
         for key, _ in PLATFORMS:
             for r in db.archived(p["id"], key, per["start"], per["end"]):
                 k = (key, r["account"], r["campaign"], r["date"])
-                if k in seen:
+                if k in seen or scope.belongs_to_hidden(r["campaign"], key, hid):
                     continue
                 seen.add(k)
                 spend += r["spend"]
@@ -370,7 +371,7 @@ def totals(rows, masters, plist, per):
                 daily.setdefault(r["date"].isoformat(), {"google": 0.0, "meta": 0.0})[key] += r["spend"]
             for r in db.archived(p["id"], key, per["prev_start"], per["prev_end"]):
                 k = (key, r["account"], r["campaign"], r["date"])
-                if k in prev_seen:
+                if k in prev_seen or scope.belongs_to_hidden(r["campaign"], key, hid):
                     continue
                 prev_seen.add(k)
                 prev_spend += r["spend"]

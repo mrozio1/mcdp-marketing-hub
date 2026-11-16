@@ -240,6 +240,14 @@ def account_practice(plist=None):
     return out
 
 
+def drop_hidden(rows, owners):
+    """Inbox rows without those from a hidden practice's Google locations, Pages or Instagram accounts."""
+    hid = db.hidden_ids()
+    if not hid:
+        return rows
+    return [r for r in rows if owners.get((r["source"], r["account_id"])) not in hid]
+
+
 def account_names():
     names = {}
     for key in ("fb_pages", "ig_accounts"):
@@ -369,7 +377,7 @@ def inbox(practice_id=None, source="all", status="open", plist=None, month=None)
     """Items for the inbox list, already sorted: open = unhappy first, then oldest first;
     done = most recently handled first (only those handled in month, 'YYYY-MM', when given)."""
     plist = plist if plist is not None else practices()
-    owners = account_practice(db.practices())
+    owners = account_practice(db.practices(include_hidden=True))
     names = account_names()
     now = utcnow()
     with db.conn() as c:
@@ -383,7 +391,7 @@ def inbox(practice_id=None, source="all", status="open", plist=None, month=None)
             rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='reported' ORDER BY reported_at, id")]
         else:
             rows = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='open' ORDER BY created, id")]
-    rows = _decorate(rows, owners, plist, names, now)
+    rows = _decorate(drop_hidden(rows, owners), owners, plist, names, now)
     if practice_id:
         rows = [r for r in rows if r["practice_id"] == practice_id]
     counts = {"all": len(rows), **{k: sum(1 for r in rows if r["source"] == k) for k, _ in SOURCES}}
@@ -454,7 +462,7 @@ def _mark_removed(location, present_ids, complete):
 
 def open_count(practice_id=None):
     try:
-        if practice_id is None:
+        if practice_id is None and not db.hidden_ids():
             with db.conn() as c:
                 return c.execute("SELECT COUNT(*) FROM inbox WHERE status='open'").fetchone()[0]
         return len(inbox(practice_id)[0])
@@ -464,11 +472,12 @@ def open_count(practice_id=None):
 
 def inbox_stats(practice_id=None, plist=None):
     plist = plist if plist is not None else practices()
-    owners = account_practice(db.practices())
+    owners = account_practice(db.practices(include_hidden=True))
     now = utcnow()
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
             "SELECT * FROM inbox WHERE status='open' OR handled_at >= ?", (_iso(now - timedelta(days=30)),))]
+    rows = drop_hidden(rows, owners)
     if practice_id:
         rows = [r for r in rows if owners.get((r["source"], r["account_id"])) == practice_id]
     opens = [r for r in rows if r["status"] == "open"]
@@ -503,12 +512,13 @@ def month_utc_bounds(key):
 def month_handled(month, practice_id=None, plist=None):
     """What the team handled in a month (local time): replies, likes, hidden, marked done, by source,
     typical response time, and how many of that month's new reviews / comments were answered."""
-    owners = account_practice(db.practices())
+    owners = account_practice(db.practices(include_hidden=True))
     start, end = month_utc_bounds(month)
     with db.conn() as c:
         done = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE status='done' AND handled_at>=? AND handled_at<? "
                                            "AND outcome!='outside'", (start, end))]
         new = [dict(r) for r in c.execute("SELECT * FROM inbox WHERE created>=? AND created<?", (start, end))]
+    done, new = drop_hidden(done, owners), drop_hidden(new, owners)
     if practice_id:
         mine = lambda r: owners.get((r["source"], r["account_id"])) == practice_id
         done, new = [r for r in done if mine(r)], [r for r in new if mine(r)]
@@ -883,7 +893,7 @@ def set_reply_style(pid, text):
 
 def past_replies(practice_id, source=None, exclude=None, n=8):
     """The team's own recent replies for this practice (best examples of its voice), newest first."""
-    owners = account_practice(db.practices())
+    owners = account_practice(db.practices(include_hidden=True))
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
             "SELECT id, source, account_id, author, stars, text, reply, handled_at FROM inbox WHERE reply != '' "
@@ -898,7 +908,7 @@ def past_replies(practice_id, source=None, exclude=None, n=8):
 def _draft_context(it):
     from . import brand
     names = account_names()
-    pid = account_practice(db.practices()).get((it["source"], it["account_id"]))
+    pid = account_practice(db.practices(include_hidden=True)).get((it["source"], it["account_id"]))
     ctx = [f"Platform: {SOURCE_LABEL[it['source']]}", f"Business: {names.get(it['account_id'], 'the practice')}"]
     if pid:
         k = brand.kit(pid)
@@ -1116,7 +1126,7 @@ def scoreboard(practice_id=None, today=None, plist=None, month=None):
     rows = []
     now = utcnow()
     open_by_p = {}
-    owners = account_practice(db.practices())
+    owners = account_practice(db.practices(include_hidden=True))
     rep_by_p, rem_by_p = {}, {}
     with db.conn() as c:
         for r in c.execute("SELECT source, account_id FROM inbox WHERE status='open'"):

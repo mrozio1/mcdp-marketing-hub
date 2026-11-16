@@ -605,7 +605,10 @@ def items_between(start, end, user, practice_id=None, category="", mine=False, f
             people.setdefault(p["event_id"], []).append(dict(p))
         names = {p["id"]: p["name"] for p in db.practices()}
     out = []
+    hid = db.hidden_ids()
     for ev in rows:
+        if ev["practice_id"] in hid:
+            continue                                   # a hidden practice's events are off the calendar
         ev["people"] = people.get(ev["id"], [])
         decorate(ev)
         personal = is_personal(ev["category"])
@@ -652,9 +655,12 @@ def followups_between(start, end, user, practice_id=None, mine=False):
             "FROM visits v JOIN field_offices o ON o.id=v.office_id WHERE v.followup != '' AND v.followup BETWEEN ? AND ?",
             (start.isoformat(), end.isoformat()))]
     links = field.practice_links() if rows else {}
+    hid = db.hidden_ids()
     out = []
     for r in rows:
         pid = r.get("practice_id") or links.get(r.get("our_office_id"))
+        if pid in hid:
+            continue
         if practice_id and pid != practice_id:
             continue
         if mine and r["user_id"] != (user or {}).get("id"):

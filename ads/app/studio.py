@@ -248,6 +248,11 @@ def items(pid=None, folder_id=None, status=None, q="", trash=False, unbranded=Fa
     elif not all_brands and pid is not None:
         sql.append("AND practice_id=?")
         args.append(pid)
+    if all_brands or pid is None:
+        hid = db.hidden_ids()
+        if hid:                                   # a hidden practice's files stay out of the shared views
+            sql.append(f"AND (practice_id IS NULL OR practice_id NOT IN ({','.join('?' * len(hid))}))")
+            args += sorted(hid)
     if folder_id == "none":
         sql.append("AND folder_id IS NULL")
     elif folder_id:

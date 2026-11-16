@@ -98,7 +98,8 @@ MIGRATIONS = {
     "practices": {"meta_account_id": "TEXT DEFAULT ''", "google_customer_id": "TEXT DEFAULT ''",
                   "campaign_filter": "TEXT DEFAULT ''", "campaign_list": "TEXT DEFAULT '[]'",
                   "fb_page_id": "TEXT DEFAULT ''", "ig_account_id": "TEXT DEFAULT ''",
-                  "field_budget": "REAL DEFAULT 0"},
+                  "field_budget": "REAL DEFAULT 0",
+                  "hidden": "INTEGER DEFAULT 0", "hidden_at": "TEXT DEFAULT ''", "hidden_by": "TEXT DEFAULT ''"},
     "uploads": {"source": "TEXT DEFAULT 'upload'"},
     "changes": {"applied_by": "TEXT DEFAULT ''", "undone_by": "TEXT DEFAULT ''"},
 }
@@ -139,9 +140,28 @@ def _d(v):
 
 
 # ---- practices ----
-def practices():
+def practices(include_hidden=False):
+    """Practices in name order. Hidden ones (taken off every page and report, data kept) are left out unless
+    include_hidden is set."""
     with conn() as c:
-        return [dict(r) for r in c.execute("SELECT * FROM practices ORDER BY name COLLATE NOCASE")]
+        sql = "SELECT * FROM practices" + ("" if include_hidden else " WHERE COALESCE(hidden, 0)=0")
+        return [dict(r) for r in c.execute(sql + " ORDER BY name COLLATE NOCASE")]
+
+
+def hidden_practices():
+    with conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM practices WHERE COALESCE(hidden, 0)=1 ORDER BY name COLLATE NOCASE")]
+
+
+def hidden_ids():
+    with conn() as c:
+        return {r[0] for r in c.execute("SELECT id FROM practices WHERE COALESCE(hidden, 0)=1")}
+
+
+def set_hidden(pid, hidden, by=""):
+    with conn() as c:
+        c.execute("UPDATE practices SET hidden=?, hidden_at=?, hidden_by=? WHERE id=?",
+                  (int(bool(hidden)), now() if hidden else "", by if hidden else "", pid))
 
 
 def practice(pid):

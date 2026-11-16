@@ -127,3 +127,53 @@ def test_report_uses_mcdp_brand_kit(client):
     assert "--rp-p: #1C2B4A" in page and 'fill="#1C2B4A"' in page and "logo and colours" not in page
     pal = report.palette("#F4E04D", "#F4E04D")              # a pale main colour still gives readable text
     assert report._lum(pal["dark"]) <= 0.32 and pal["accent"] != pal["primary"] and pal["on_primary"] == "#1A1A1A"
+
+
+def test_hidden_practice_leaves_every_page_and_report(client):
+    c, db, sync, mp = client
+    from app import report, scope, cal
+    m, h, w = _seed(db)
+    assert "Waterford Orthodontics" in c.get("/practices").text
+    r = c.post(f"/p/{w}/hide", follow_redirects=True)
+    assert "Hid Waterford Orthodontics" in r.text
+    assert c.post(f"/p/{m}/hide", follow_redirects=True).text.count("master record can&#39;t be hidden") == 1
+    assert w in db.hidden_ids() and w not in {p["id"] for p in db.practices()}
+    assert w in {p["id"] for p in db.practices(include_hidden=True)}
+    page = c.get("/practices").text
+    assert f'href="/p/{w}"' in page and "Hidden practices (1)" in page and "Show again" in page   # only in the drawer
+    assert page.count(f'href="/p/{w}"') == 1
+    rep = report.build("month", "2026-09", TODAY)
+    assert [x["p"]["name"] for x in rep["rows"]] == ["Heights Orthodontics"]
+    t = rep["totals"]
+    assert t["spend"] == round(30 * (50 + 5), 2)              # Waterford's search campaign and its boost are gone
+    assert t["unassigned"] == 30 * 5 and t["organic"]["posts"] == 0
+    rp = c.get("/reports?kind=month&key=2026-09").text
+    assert "Waterford" not in rp
+    # the master record's own page leaves Waterford's campaigns out too
+    rows = scope.apply(db.archived(m, "google", date(2026, 9, 1), date(2026, 9, 30)), db.practice(m), platform="google")
+    assert {x["campaign"] for x in rows} == {"Heights - Search", "Brand"}
+    assert "Waterford - Search" not in c.get(f"/p/{m}").text
+    # its page still opens, says it's hidden, and Show again brings everything back
+    pp = c.get(f"/p/{w}").text
+    assert "This practice is hidden" in pp and "Show it again" in pp
+    c.post(f"/p/{w}/show")
+    assert not db.hidden_ids()
+    assert report.build("month", "2026-09", TODAY)["totals"]["spend"] == round(30 * (50 + 20 + 5) + 30 * 3, 2)
+
+
+def test_hidden_practice_inbox_and_calendar(client):
+    c, db, sync, mp = client
+    from app import reviews, cal
+    m, h, w = _seed(db)
+    db.set_hidden(w, True, "test")
+    owners = reviews.account_practice(db.practices(include_hidden=True))
+    rows = [{"source": "facebook", "account_id": "PG_W"}, {"source": "google", "account_id": "accounts/1/locations/9"}]
+    assert reviews.drop_hidden(rows, owners) == rows[1:]
+    with db.conn() as cn:
+        cn.execute("INSERT INTO cal_events(practice_id, category, kind, subject, starts, ends, created_at, updated_at) "
+                   "VALUES (?, 'meeting', 'review', 'Waterford review', '2026-09-10T10:00', '2026-09-10T11:00', 'x', 'x')", (w,))
+    got = cal.items_between(date(2026, 9, 1), date(2026, 9, 30), {"id": 1, "role": "admin"})
+    assert not any(i["title"] == "Waterford review" for i in got)
+    db.set_hidden(w, False)
+    got = cal.items_between(date(2026, 9, 1), date(2026, 9, 30), {"id": 1, "role": "admin"})
+    assert any(i["title"] == "Waterford review" for i in got)

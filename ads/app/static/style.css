@@ -2125,3 +2125,13 @@ button.vd-lab:hover { background: #F2F0EB; }
   .rp-card-head h3 { border-left: 4px solid var(--rp-p); padding-left: 0.1in; }
   .rp-card-period { color: var(--rp-d); }
 }
+
+/* Hidden practices */
+.hide-p { display: inline; margin-left: .4rem; }
+table.practices th .hide-p button { opacity: .5; transition: opacity .15s; }
+table.practices tr:hover th .hide-p button, table.practices th .hide-p button:focus { opacity: 1; }
+@media (hover: none) { table.practices th .hide-p button { opacity: 1; } }
+.hidden-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+.hidden-list li { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; border-bottom: 1px solid var(--hair); padding: .35rem 0; }
+.hidden-list form { margin-left: auto; }
+.tag-hidden { background: #EEE9DF; color: var(--ink-soft); font-size: .75rem; vertical-align: middle; }

@@ -42,7 +42,9 @@
 {% block title %}{{ p.name }}{% endblock %}
 {% block content %}
 <p class="crumb"><a href="/practices">Practices</a></p>
-<h1>{{ p.name }}</h1>
+<h1>{{ p.name }}{% if p.hidden %} <span class="tag tag-hidden">Hidden</span>{% endif %}</h1>
+{% if p.hidden %}<p class="flash" role="status">This practice is hidden: it's left out of every page, list and report, and it doesn't sync.{% if is_admin %}
+  <form method="post" action="/p/{{ p.id }}/show" style="display: inline"><button class="btn btn-small" type="submit">Show it again</button></form>{% endif %}</p>{% endif %}
 {% if master %}<p class="scope-note"><span class="tag tag-master">Master record</span> Every campaign in the linked accounts, with a breakdown by practice.</p>
 {% elif p.campaign_filter %}<p class="scope-note">Campaigns containing <strong>{{ p.campaign_filter }}</strong> <a class="small" href="#settings">change</a></p>{% endif %}
 <div class="page-actions">
@@ -654,6 +656,9 @@
         <label>Notes for write-ups<textarea name="notes" rows="3" placeholder="Services to push, location, offers you actually run…">{{ p.notes or '' }}</textarea></label>
         <button type="submit" class="btn btn-quiet">Save</button>
       </form>
+      {% if is_admin and not master and not p.hidden %}<form method="post" action="/p/{{ p.id }}/hide" class="drawer-danger" data-confirm="Hide {{ p.name }}? It comes off every page, list and report (its data is kept, and you can show it again).">
+        <button class="linklike" type="submit">Hide this practice</button> <span class="muted small">off every page and report; nothing is deleted</span>
+      </form>{% endif %}
       {% if is_admin %}<form method="post" action="/p/{{ p.id }}/delete" class="drawer-danger" data-confirm="Delete {{ p.name }} and all its uploads and write-ups?">
         <button class="linklike danger" type="submit">Delete this practice</button>
       </form>{% endif %}

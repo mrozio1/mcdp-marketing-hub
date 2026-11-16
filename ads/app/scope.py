@@ -65,7 +65,31 @@ def claims_from(practices):
 
 def _db_claims():
     from . import db
-    return claims_from(db.practices())
+    return claims_from(db.practices(include_hidden=True))   # a campaign moved to a hidden practice stays its
+
+
+def hidden_context(practices_all=None, claims=None, owners=None):
+    """What's needed to tell whether a campaign belongs to a hidden practice (None when nothing is hidden)."""
+    from . import db
+    allp = practices_all if practices_all is not None else db.practices(include_hidden=True)
+    hidden = [q for q in allp if q.get("hidden") and has_filter(q)]
+    if not hidden:
+        return None
+    return {"hidden": hidden, "visible": [q for q in allp if not q.get("hidden") and has_filter(q)], "all": allp,
+            "claims": claims_from(allp) if claims is None else claims, "owners": _db_owners() if owners is None else owners,
+            "cache": {}}
+
+
+def belongs_to_hidden(campaign, platform=None, ctx=None):
+    """True when a campaign is a hidden practice's (and no shown practice's), so the master record leaves it out."""
+    if not ctx:
+        return False
+    key = (norm(campaign), platform)
+    if key not in ctx["cache"]:
+        args = (ctx["claims"], ctx["owners"], ctx["all"], platform)
+        ctx["cache"][key] = (any(matches(campaign, h, *args) for h in ctx["hidden"])
+                             and not any(matches(campaign, q, *args) for q in ctx["visible"]))
+    return ctx["cache"][key]
 
 
 ACCOUNT_KEYS = (("meta_account_id", "meta_accounts"), ("google_customer_id", "google_accounts"))
@@ -125,6 +149,8 @@ def effective(p, practices=None):
     """One practice with the accounts it really uses (see inherited_accounts)."""
     from . import db
     practices = practices if practices is not None else db.practices()
+    if not any(q["id"] == p["id"] for q in practices):
+        practices = list(practices) + [p]          # e.g. a hidden practice's own page
     return next((q for q in with_inherited(practices) if q["id"] == p["id"]), p)
 
 
@@ -149,7 +175,7 @@ def _words_match(name, practice):
     return not any(e in name for e in exc) and (not inc or any(i in name for i in inc))
 
 
-def matches(campaign, practice_or_filter, claims=None, owners=None, practices=None, platform=None):
+def matches(campaign, practice_or_filter, claims=None, owners=None, practices=None, platform=None, hidden=False):
     if not isinstance(practice_or_filter, dict):
         inc, exc = parse_filter(practice_or_filter)
         name = norm(campaign)
@@ -164,7 +190,7 @@ def matches(campaign, practice_or_filter, claims=None, owners=None, practices=No
             owners = _db_owners()
         if practices is None:
             from . import db
-            practices = db.practices()
+            practices = db.practices(include_hidden=True)
     own = (owners or {}).get(name) or {}
     boost_to = set(own.get("practices", [])) if own.get("boost") else set()
     if not has_filter(p):
@@ -177,6 +203,10 @@ def matches(campaign, practice_or_filter, claims=None, owners=None, practices=No
                 if not any(mine and str(q.get("meta_account_id") or "") in (mine, "")
                            for q in practices or [] if q["id"] in belongs):   # empty: uses the master's account
                     return False
+        if hidden is not False and pid is not None:
+            ctx = hidden if isinstance(hidden, dict) else hidden_context(practices, claims, owners)
+            if belongs_to_hidden(campaign, platform, ctx):
+                return False                          # a hidden practice's campaign: off every page and report
         return True
     if name in {norm(n) for n in added_campaigns(p)}:
         return True
@@ -194,19 +224,23 @@ def matches(campaign, practice_or_filter, claims=None, owners=None, practices=No
 
 def apply(rows, practice, claims=None, owners=None, platform=None):
     if not has_filter(practice) and platform != "meta":
-        return rows
-    practices = None
+        from . import db
+        if not (isinstance(practice, dict) and practice.get("id") is not None and db.hidden_ids()):
+            return rows
+    practices, hidden = None, False
     if isinstance(practice, dict) and practice.get("id") is not None:
         from . import db
-        practices = db.practices()
+        practices = db.practices(include_hidden=True)
         claims = claims_from(practices) if claims is None else claims
         owners = _db_owners() if owners is None else owners
+        if not has_filter(practice):
+            hidden = hidden_context(practices, claims, owners)
     cache = {}
     out = []
     for r in rows:
         c = r.get("campaign")
         if c not in cache:
-            cache[c] = matches(c, practice, claims, owners, practices, platform)
+            cache[c] = matches(c, practice, claims, owners, practices, platform, hidden or False)
         if cache[c]:
             out.append(r)
     return out
