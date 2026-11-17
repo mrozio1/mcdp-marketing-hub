@@ -24,6 +24,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
+from . import dashboard as home_dash
 from .analyze import analyze_campaigns, analyze_search_terms, money, pacing, pct
 from .parse import ParseError, parse_export
 
@@ -47,7 +48,7 @@ CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and 
                                                                    # let only editors and field agents add non-personal events
 ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|canva|team)(/|$)"), re.compile(r"^/map/setup$"),
               re.compile(r"^/calendar/company(/|$)"),
-              re.compile(r"^/p/\d+/(delete|hide|show)$"))
+              re.compile(r"^/p/\d+/(delete|hide|show)$"), re.compile(r"^/dashboard/budget$"))
 
 
 def needed_role(method, path):
@@ -173,6 +174,7 @@ def _startup():
     images.init()
     studio.init()
     studio_flow.init()
+    home_dash.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         studio.start_scheduler()
         studio_flow.start_scheduler()
@@ -650,13 +652,60 @@ def _worth_a_look(allp, role="admin"):
 
 
 @app.get("/", response_class=HTMLResponse)
-def welcome(request: Request):
+def welcome(request: Request, kind: str = "week", key: str = ""):
+    """The master dashboard: from ad spend to starts, for a week or a month."""
     if (r := guard(request)):
         return r
+    kind = "month" if kind == "month" else "week"
+    d = home_dash.build(kind, key or None)
+    opts = master_report.week_options() if kind == "week" else master_report.month_options()
+    if d["period"]["key"] not in [k for k, _ in opts]:
+        opts = [(d["period"]["key"], d["period"]["label"])] + opts
     allp = db.practices()
     mapped = sum(c.get("referrer", 0) for c in places.counts().values())
-    return page(request, "welcome.html", ads=_ad_totals(allp), mapped=mapped, look=_worth_a_look(allp, me(request)["role"]),
-                social_url=SOCIAL_URL, practice_count=len(allp))
+    return page(request, "welcome.html", d=d, kind=kind, options=opts, social_url=SOCIAL_URL, mapped=mapped,
+                look=_worth_a_look(allp, me(request)["role"]), waiting=reviews.open_count(),
+                money=master_report.money, num=master_report.num, pct=master_report.pct)
+
+
+@app.post("/dashboard/leadsigma")
+async def dashboard_leadsigma(request: Request):
+    """Upload LeadSigma's Marketing Attribution CSV export; only counts are kept."""
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    up = form.get("file")
+    if up is None or not getattr(up, "filename", ""):
+        flash(request, "Pick the CSV you exported from LeadSigma.", "error")
+        return RedirectResponse("/#leadsigma", status_code=303)
+    data = await up.read()
+    if len(data) > 20 * 1024 * 1024:
+        flash(request, "That file is over 20 MB.", "error")
+        return RedirectResponse("/#leadsigma", status_code=303)
+    def _d(k):
+        try:
+            return date.fromisoformat(form.get(k) or "")
+        except ValueError:
+            return None
+    try:
+        msg = home_dash.import_csv(data, os.path.basename(up.filename), actor(request), _d("start"), _d("end"))
+        flash(request, msg + " Names, emails and phone numbers in the file weren't kept.")
+    except home_dash.DashError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/dashboard/budget")
+async def dashboard_budget(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    try:
+        home_dash.set_budget(form, actor(request))
+        flash(request, "Budget saved.")
+    except home_dash.DashError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse("/#budget", status_code=303)
 
 
 # ---------- practices ----------
