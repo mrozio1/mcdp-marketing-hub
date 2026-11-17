@@ -4,8 +4,8 @@
 <div class="title-row">
   <h1>Market map</h1>
   <div class="title-actions">
-  {% if offices %}<a class="btn btn-quiet" href="/map/list">Export Map List</a>{% endif %}
-  {% if server_key_set and offices and can_edit %}
+  {% if offices and acc.reports %}<a class="btn btn-quiet" href="/map/list">Export Map List</a>{% endif %}
+  {% if server_key_set and offices and acc.refresh %}
   <form method="post" action="/map/refresh" data-busy="Starting…">
     <button class="btn {{ 'btn-quiet' if last else '' }}" type="submit" {% if status.busy %}disabled{% endif %}>
       {{ 'Refreshing…' if status.busy else ('Refresh map' if last else 'Build the map') }}</button>
@@ -54,8 +54,8 @@
   <p class="rating-key small"><span class="muted">Ring colour = relationship from the last visit:</span>
     <span class="rk rk-cold">Cold</span> <span class="rk rk-warm">Warm</span> <span class="rk rk-hot">Hot</span> <span class="rk rk-referring">Referring</span> <span class="rk rk-due">Follow-up due</span></p>
   <p class="small muted map-foot" id="schools">Schools: {% if school_status.busy %}fetching from NCES now…{% elif school_status.error %}<span class="danger">{{ school_status.error }}</span>{% elif school_status.at %}{{ school_status.private }} private and {{ school_status.charter }} charter within {{ radius|round(0)|int }} mi, from the U.S. Department of Education (NCES), checked {{ school_status.at[:10] }}; refreshed monthly.{% else %}not fetched yet.{% endif %}
-    {% if can_edit %}<form method="post" action="/map/schools/refresh" style="display:inline" data-busy="Starting…"><button class="linklike small" type="submit">{{ 'Fetch schools' if not school_status.at else 'Refresh schools' }}</button></form>{% endif %}
-    {% if school_status.at %} · <a href="/map/schools.xlsx">Download the school list</a>{% endif %}</p>
+    {% if acc.refresh %}<form method="post" action="/map/schools/refresh" style="display:inline" data-busy="Starting…"><button class="linklike small" type="submit">{{ 'Fetch schools' if not school_status.at else 'Refresh schools' }}</button></form>{% endif %}
+    {% if school_status.at and acc.reports %} · <a href="/map/schools.xlsx">Download the school list</a>{% endif %}</p>
   <p class="small muted map-foot">{% if not offices and not can_edit %}No offices yet.{% elif not offices %}No offices yet: upload your office list or add one below, and they appear here straight away. Then click <strong>Build the map</strong> to add dental practices and competitors.{% elif last %}Last refreshed {{ last[:10] }}. Refreshes itself about once a month; Google allows locations to be kept 30 days.{% else %}Offices added. Click <strong>Build the map</strong> to add dental practices and competitors.{% endif %}
   {% if last and not peds_at %} Pediatric practices are being checked now; refresh this page in a few minutes to use the Pediatrics filter.{% endif %}
   {% if not map_id_custom %} Using Google's demo map style; add your own Map ID in setup for production.{% endif %}</p>

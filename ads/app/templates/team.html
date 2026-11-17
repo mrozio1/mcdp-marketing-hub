@@ -18,13 +18,14 @@
 
 <dl class="roles">
   {% for r in roles %}<div><dt>{{ labels[r] }}</dt><dd>{{ help[r] }}</dd></div>{% endfor %}
-  <div><dt>Social · Field visits</dt><dd>Switches for anyone, whatever their access. Social shows the link to social.mcdp.com (which has its own sign-in); Field visits lets them log office visits, receipts and routes. Field manager lets them see every field agent's visits and run reports for the whole team or any one agent (otherwise people only see their own).</dd></div>
+  <div><dt>Social · Field visits</dt><dd>Switches for anyone, whatever their access. Social shows the link to social.mcdp.com (which has its own sign-in); Field visits lets them log office visits, receipts and routes (for their own practices).</dd></div>
+  <div><dt>Can open</dt><dd>Pick, person by person, which tabs they see, whether they get reports and exports and refresh buttons, which practices, whether they see everyone's field visits and calendar (or only their own and what they're invited to), and whether admins' activity shows for them. Changing someone's access level starts them again from that level's defaults. With the dashboard off, the hub opens on their first tab, or their Account page if they have none.</dd></div>
 </dl>
 
 {% if people %}
 <div class="table-scroll">
 <table class="data team-table">
-  <thead><tr><th>Person</th><th>Access</th><th>Social</th><th>Field visits</th><th>Field manager</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>Person</th><th>Access</th><th>Social</th><th>Field visits</th><th>Can open</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for u in people %}
     <tr class="{{ '' if u.active else 'muted' }}">
@@ -49,12 +50,11 @@
           <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
         </form>
       </td>
-      <td>
-        {% if u.role == 'admin' %}<span class="small muted">Admins see all</span>{% else %}
-        <form method="post" action="/team/{{ u.id }}/switch/field_manager" class="inline-form">
-          <label class="switch"><input type="checkbox" name="on" value="1" {% if u.field_manager %}checked{% endif %} onchange="this.form.requestSubmit()" aria-label="Field manager for {{ u.name }}"><span>{{ 'On' if u.field_manager else 'Off' }}</span></label>
-          <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
-        </form>{% endif %}
+      <td class="small">
+        <span class="acc-dot" style="--c: {{ u.color }}" aria-hidden="true"></span>
+        {% if u.on_tabs|length == tabs|length %}Every tab{% elif u.on_tabs %}{{ u.on_tabs|join(', ') }}{% else %}<span class="muted">No tabs (Account page only)</span>{% endif %}
+        <br><span class="muted">{% if u.acc.all_practices %}Every practice{% else %}{{ u.pids|length }} practice{{ '' if u.pids|length == 1 else 's' }}{% endif %}{% if not u.acc.reports %} · no reports{% endif %}{% if not u.acc.team_field %} · own visits{% endif %}{% if not u.acc.team_calendar %} · own calendar{% endif %}</span>
+        <br><a href="?open={{ u.id }}#access-{{ u.id }}" class="small">Change</a>
       </td>
       <td class="small">
         {% if not u.active %}Switched off
@@ -70,6 +70,36 @@
         {% endif %}
       </td>
     </tr>
+    <tr class="acc-row" id="access-{{ u.id }}"><td colspan="7">
+      <details class="acc-drawer" {% if open_access == u.id|string %}open{% endif %}>
+        <summary>What {{ u.name.split(' ')[0] }} can open</summary>
+        <form method="post" action="/team/{{ u.id }}/access" class="acc-form">
+          <fieldset><legend>Tabs</legend>
+            {% for k, label, path in tabs %}<label class="check"><input type="checkbox" name="{{ k }}" value="1" {% if u.acc[k] %}checked{% endif %}> {{ label }}{% if k == 'dashboard' %} <span class="muted small">(the home page)</span>{% endif %}</label>{% endfor %}
+          </fieldset>
+          <fieldset><legend>Also</legend>
+            {% for k, label, hint in extras %}<label class="check"><input type="checkbox" name="{{ k }}" value="1" {% if u.acc[k] %}checked{% endif %}> {{ label }} <span class="muted small">{{ hint }}</span></label>{% endfor %}
+          </fieldset>
+          <fieldset class="acc-practices"><legend>Practices</legend>
+            <label class="check"><input type="checkbox" name="all_practices" value="1" {% if u.acc.all_practices %}checked{% endif %} data-all-practices> Every practice <span class="muted small">(and any added later)</span></label>
+            <div class="acc-plist" data-plist>
+              {% for p in all_practices %}<label class="check"><input type="checkbox" name="practice" value="{{ p.id }}" {% if p.id in u.pids %}checked{% endif %}> {{ p.name }}</label>{% endfor %}
+            </div>
+            <p class="small muted">Their reports, dashboard, reviews, Studio, map offices, calendar and field visits keep to these, and they can only log visits for them.</p>
+          </fieldset>
+          <fieldset><legend>Calendar colour</legend>
+            <label class="check"><input type="checkbox" name="own_color" value="1" {% if u.cal_color %}checked{% endif %}> Show their events in their own colour</label>
+            <div class="acc-colors">{% for c in cal_colors %}<label class="acc-swatch" style="--c: {{ c }}"><input type="radio" name="cal_color" value="{{ c }}" {% if c == u.color %}checked{% endif %} aria-label="Colour {{ c }}"><span></span></label>{% endfor %}
+              <label class="small">or <input type="color" name="cal_color_pick" value="{{ u.color }}" aria-label="Any colour" data-pick></label></div>
+          </fieldset>
+          <div class="acc-foot">
+            <button class="btn" type="submit">Save</button>
+            <button class="btn btn-quiet" type="submit" name="reset" value="1">Back to {{ labels[u.role] }} defaults</button>
+            {% if u.role == 'admin' %}<span class="small muted">Admins always keep Team and Connections.</span>{% endif %}
+          </div>
+        </form>
+      </details>
+    </td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -141,6 +171,19 @@
   </form>
 </section>
 <script>
+  document.querySelectorAll(".acc-form").forEach(f => {
+    const all = f.querySelector("[data-all-practices]"), list = f.querySelector("[data-plist]");
+    const sync = () => { list.hidden = all.checked; };
+    all.addEventListener("change", sync); sync();
+    const pick = f.querySelector("[data-pick]");
+    pick.addEventListener("input", () => {
+      f.querySelectorAll("input[name=cal_color]").forEach(r => { r.checked = false; });
+      let r = f.querySelector("input[name=cal_color][data-custom]");
+      if (!r) { r = document.createElement("input"); r.type = "hidden"; r.name = "cal_color"; r.dataset.custom = "1"; f.appendChild(r); }
+      r.value = pick.value;
+      f.querySelector("input[name=own_color]").checked = true;
+    });
+  });
   const cb = document.getElementById("copy-link");
   if (cb) cb.onclick = async () => {
     const i = document.getElementById("setup-link");

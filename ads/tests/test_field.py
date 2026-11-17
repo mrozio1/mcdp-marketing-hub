@@ -174,7 +174,8 @@ def test_followups_and_map_overlay(env):
         followup=(date.today() - timedelta(days=1)).isoformat(), visited_at=date.today().isoformat() + "T15:00")
     due = field.followups()
     assert due[0]["name"] == "Maple Street Family Dental" and due[0]["overdue"]
-    data = env["viewer"].get("/map/data.json").json()
+    assert "ChIJ_dentist_maple001" not in env["viewer"].get("/map/data.json").json()["visits"]   # only their own visits
+    data = env["admin"].get("/map/data.json").json()
     v = data["visits"]["ChIJ_dentist_maple001"]
     assert v["rating"] == "warm" and v["overdue"] and v["n"] >= 3
     assert any(x["name"] == "Riverside Dental" for x in data["visited_offices"])
@@ -297,6 +298,8 @@ def test_people_see_only_their_own_field_data_unless_admin(env):
     assert "Your field visits" in mine and "Secret Dental" not in mine and "Riverside Dental" in mine
     assert 'name="who"' not in mine and "By practice" not in mine and "Your field spend" in mine
     cy_id = env["users"].by_email("cy@example.com")["id"]
+    assert "Riverside Dental" in cy.get(f"/field?period=month&who={abe}").text        # editors see everyone by default
+    env["users"].set_access(cy_id, {"team_field": False})                             # ...until an admin turns it off
     assert "Riverside Dental" not in cy.get(f"/field?period=month&who={abe}").text   # can't peek with ?who=
     assert "Field budgets" not in cy.get("/field").text                             # setup is admin-only now
     assert cy.post("/field/settings/budgets", data={}, follow_redirects=False).status_code == 303

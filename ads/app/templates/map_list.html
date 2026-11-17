@@ -4,7 +4,7 @@
 <p class="crumb"><a href="/map">Market map</a></p>
 <div class="title-row">
   <h1>Export map list</h1>
-  {% if can_edit %}<form method="post" action="/map/referrals/refresh" data-busy="Starting…">
+  {% if acc.refresh %}<form method="post" action="/map/referrals/refresh" data-busy="Starting…">
     <input type="hidden" name="back" value="/map/list">
     <button class="btn {{ 'btn-quiet' if ref_last else '' }}" type="submit" {% if ref_status.busy or not offices %}disabled{% endif %}>
       {{ 'Updating…' if ref_status.busy else ('Update lists' if ref_last else 'Build the lists') }}</button>
@@ -48,7 +48,7 @@
   </div>
   <div class="ref-summary">
     <p class="small" id="ref-count" aria-live="polite">Loading…</p>
-    <a class="btn" id="ref-export" href="/map/referrals.xlsx">Export to Excel</a>
+    {% if acc.reports %}<a class="btn" id="ref-export" href="/map/referrals.xlsx">Export to Excel</a>{% endif %}
   </div>
   <div class="table-scroll">
     <table class="ref-table">

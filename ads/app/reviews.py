@@ -215,10 +215,10 @@ def practices():
     allp = db.practices()
     filtered = [p for p in allp if scope.has_filter(p)]
     if not filtered:
-        return allp
+        return db.keep_mine(allp)
     with_loc = {l["practice_id"] for l in locations()}
-    return [p for p in allp if scope.has_filter(p) or db.social_ids(p, "fb") or db.social_ids(p, "ig")
-            or p["id"] in with_loc]
+    return db.keep_mine([p for p in allp if scope.has_filter(p) or db.social_ids(p, "fb") or db.social_ids(p, "ig")
+                         or p["id"] in with_loc])
 
 
 def locations():
@@ -242,7 +242,9 @@ def account_practice(plist=None):
 
 def drop_hidden(rows, owners):
     """Inbox rows without those from a hidden practice's Google locations, Pages or Instagram accounts."""
-    hid = db.hidden_ids()
+    hid, only = db.hidden_ids(), db.only_ids()
+    if only is not None:       # someone limited to some practices: only those practices' reviews and comments
+        rows = [r for r in rows if owners.get((r["source"], r["account_id"])) in only]
     if not hid:
         return rows
     return [r for r in rows if owners.get((r["source"], r["account_id"])) not in hid]
@@ -462,7 +464,7 @@ def _mark_removed(location, present_ids, complete):
 
 def open_count(practice_id=None):
     try:
-        if practice_id is None and not db.hidden_ids():
+        if practice_id is None and not db.hidden_ids() and db.only_ids() is None:
             with db.conn() as c:
                 return c.execute("SELECT COUNT(*) FROM inbox WHERE status='open'").fetchone()[0]
         return len(inbox(practice_id)[0])

@@ -13,7 +13,7 @@
     <noscript><button class="btn btn-quiet" type="submit">Show</button></noscript>
     {% if not is_current %}<a class="small" href="/practices">Back to this month</a>{% endif %}
   </form>
-  {% if any_connection and can_edit %}
+  {% if any_connection and acc.refresh %}
   <form method="post" action="/sync" data-busy="Starting…" class="sync-form">
     <input type="hidden" name="back" value="/practices{% if not is_current %}?m={{ month }}{% endif %}">
     <button class="btn btn-quiet" type="submit" {% if sync_running %}disabled{% endif %}>{{ "Syncing…" if sync_running else "Sync now" }}</button>

@@ -186,6 +186,7 @@
       <h2>Key</h2>
       <div class="cal-legend">
         {% for c in cats %}<span style="--c: {{ c.color }}">{{ c.label }}{% if c.hint %} <span class="muted">({{ c.hint }})</span>{% endif %}</span>{% endfor %}
+        {% for name, color in people_key %}<span style="--c: {{ color }}">{{ name }}</span>{% endfor %}
         <span class="cal-key-row"><span class="cal-pay">$</span> Pay day</span>
         <span class="cal-key-row"><i class="cal-key-hol"></i> Company holiday</span>
         <p class="small muted" style="margin: .3rem 0 0">Personal time shows who and what (Lunch, Focus time, PTO); the notes stay private. Dashed = a follow-up date from a logged field visit. Pale = saved in the hub, no invite sent.</p>

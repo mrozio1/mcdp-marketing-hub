@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 
 DB_PATH = os.environ.get("ADS_DB", "/data/ads.db")
@@ -140,6 +141,20 @@ def _d(v):
 
 
 # ---- practices ----
+# The practices the person behind the current request is associated with (None: every practice). Set for each
+# request; lists people see (reviews, field visits, reports, the map) keep to these. Background jobs see everything.
+ONLY = ContextVar("only_practices", default=None)
+
+
+def only_ids():
+    return ONLY.get()
+
+
+def keep_mine(plist):
+    ids = ONLY.get()
+    return list(plist) if ids is None else [p for p in plist if p["id"] in ids]
+
+
 def practices(include_hidden=False):
     """Practices in name order. Hidden ones (taken off every page and report, data kept) are left out unless
     include_hidden is set."""

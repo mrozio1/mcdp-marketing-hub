@@ -86,13 +86,15 @@ def test_agent_gets_only_their_own_visits(env):
 
 def test_manager_switch_on_team_and_group_reports(env):
     a, mo, users = env["admin"], env["mo"], env["users"]
-    assert "All field agents" not in mo.get("/field/report").text
     mid = env["ids"]["mo@example.com"]["id"]
-    assert "Field manager" in a.get("/team").text
+    assert "All field agents" in mo.get("/field/report").text           # editors see everyone by default
+    users.set_access(mid, {"team_field": False})                        # an admin can narrow that to their own
+    assert "All field agents" not in mo.get("/field/report").text
+    assert "Everyone&#39;s field visits" in a.get("/team").text
     env["bea"].post(f"/team/{mid}/switch/field_manager", data={"on": "1"})                  # agents can't flip it
-    assert not users.get(mid)["field_manager"]
-    a.post(f"/team/{mid}/switch/field_manager", data={"on": "1"})
-    assert users.get(mid)["field_manager"]
+    assert not users.sees_all_field(users.get(mid))
+    a.post(f"/team/{mid}/switch/field_manager", data={"on": "1"})                           # the older switch still works
+    assert users.sees_all_field(users.get(mid))
     page = mo.get("/field/report").text
     assert "All field agents (as a group)" in page and "Bea Field" in page and "Abe Agent" in page
     t = text(mo.get(f"/field/report.pdf?m=2026-10&practice={env['heights']}&spend=1&time=1&miles=1").content)

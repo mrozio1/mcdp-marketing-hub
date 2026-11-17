@@ -68,6 +68,7 @@
       {% if look %}<ul class="dash-look">{% for it in look %}<li>{% if it.href %}<a href="{{ it.href }}">{{ it.text }}</a>{% else %}<span class="dash-muted">{{ it.text }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
     </div>
 
+    {% if not d.limited %}
     <div class="dash-card dash-side" id="budget">
       <div class="dash-head stack">
         <h2>Marketing budget, year to date</h2>
@@ -98,8 +99,10 @@
       {% endif %}
       <span><span class="dash-src pbi">Power BI · Marketing</span></span>
     </div>
+    {% endif %}
   </section>
 
+  {% if not d.limited %}
   <section class="dash-row" id="leadsigma">
     <div class="dash-card dash-half">
       <div class="dash-head stack">
@@ -148,6 +151,7 @@
     </form>
   </details>
   {% endif %}
+  {% endif %}
 
   <section class="dash-card">
     <div class="dash-head">
@@ -184,13 +188,13 @@
   <section aria-labelledby="goto-h" class="dash-section">
     <h2 id="goto-h">Go to</h2>
     <div class="dash-tiles">
-      <a class="dash-tile" href="/practices"><strong>Practices &amp; ad spend</strong><span>{{ money(t.spend) }}{% if t.budget %} · {{ pct(t.pace) }} of budget{% endif %}</span></a>
-      <a class="dash-tile" href="/reviews"><strong>Reviews &amp; comments</strong><span>{{ t.reviews_new }} new review{{ '' if t.reviews_new == 1 else 's' }}{% if waiting %} · {{ waiting }} waiting{% endif %}</span></a>
+      {% if acc.practices %}<a class="dash-tile" href="/practices"><strong>Practices &amp; ad spend</strong><span>{{ money(t.spend) }}{% if t.budget %} · {{ pct(t.pace) }} of budget{% endif %}</span></a>{% endif %}
+      {% if acc.reviews %}<a class="dash-tile" href="/reviews"><strong>Reviews &amp; comments</strong><span>{{ t.reviews_new }} new review{{ '' if t.reviews_new == 1 else 's' }}{% if waiting %} · {{ waiting }} waiting{% endif %}</span></a>{% endif %}
       {% if show_social %}<a class="dash-tile" href="{{ social_url }}" target="_blank" rel="noopener"><strong>Social posts ↗</strong><span>{{ t.organic.posts }} posts · {{ num(t.organic.engagement) }} engagements</span></a>{% endif %}
-      <a class="dash-tile" href="/map"><strong>Market map</strong><span>{% if mapped %}{{ '{:,}'.format(mapped) }} practices mapped{% else %}Offices, referrers, competitors{% endif %}</span></a>
-      <a class="dash-tile" href="/map/list"><strong>Export map</strong><span>Referral and competition lists</span></a>
-      <a class="dash-tile" href="/reports?kind=week"><strong>Weekly snapshot</strong><span>Master Reports · last week, ready to print</span></a>
-      <a class="dash-tile" href="/reports?kind=month"><strong>Monthly report</strong><span>Master Reports · with suggestions for next month</span></a>
+      {% if acc.map %}<a class="dash-tile" href="/map"><strong>Market map</strong><span>{% if mapped %}{{ '{:,}'.format(mapped) }} practices mapped{% else %}Offices, referrers, competitors{% endif %}</span></a>{% endif %}
+      {% if acc.reports %}<a class="dash-tile" href="/map/list"><strong>Export map</strong><span>Referral and competition lists</span></a>{% endif %}
+      {% if acc.reports %}<a class="dash-tile" href="/reports?kind=week"><strong>Weekly snapshot</strong><span>Master Reports · last week, ready to print</span></a>
+      <a class="dash-tile" href="/reports?kind=month"><strong>Monthly report</strong><span>Master Reports · with suggestions for next month</span></a>{% endif %}
       <a class="dash-tile" href="https://onlinebooking.leadsigma.com/admin/marketing_attribution" target="_blank" rel="noopener"><strong>LeadSigma attribution ↗</strong><span>Bookings by source and link</span></a>
       <a class="dash-tile" href="https://drapp.mcdentalpartners.com/reports" target="_blank" rel="noopener"><strong>Power BI reports ↗</strong><span>Starts, exams, production</span></a>
     </div>

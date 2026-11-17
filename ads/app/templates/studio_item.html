@@ -178,7 +178,7 @@
         </li>
         {% endfor %}
       </ul>
-      <form method="post" action="/studio/posts/sync" class="small"><button class="linklike" type="submit">Check with Social now</button> <span class="muted">(it checks every 10 minutes)</span></form>
+      {% if acc.refresh %}<form method="post" action="/studio/posts/sync" class="small"><button class="linklike" type="submit">Check with Social now</button> <span class="muted">(it checks every 10 minutes)</span></form>{% endif %}
       {% endif %}
 
       {% if social_error %}

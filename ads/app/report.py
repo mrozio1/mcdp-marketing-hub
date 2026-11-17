@@ -291,6 +291,10 @@ def build(kind="month", key=None, today=None, pal=None):
     pal = pal or dict(COLOR)
     masters = [p for p in plist if _is_master(p, plist)]
     shown = [p for p in plist if p not in masters]
+    only = db.only_ids()                     # someone limited to some practices sees just those
+    if only is not None:
+        masters = [p for p in masters if p["id"] in only]
+        shown = [p for p in shown if p["id"] in only]
     goals = reviews._goal_rows()
     locs = reviews.locations()
     gbp_by_p = {}
@@ -339,7 +343,12 @@ def build(kind="month", key=None, today=None, pal=None):
         r["notes"] = practice_notes(r, per)
         r["chart"] = daily_bars(r["paid"]["daily"], per, height=70, width=300, pal=pal)
 
-    tot = totals(rows, masters, plist, per)
+    if only is None:
+        tot = totals(rows, masters, plist, per)
+    else:
+        tot = totals(rows, masters, [r["p"] for r in rows] + masters, per)
+        if not masters:     # their practices' own numbers (a shared account's other campaigns left out)
+            tot.update(_paid_totals(rows))
     rep = {"period": per, "rows": rows, "totals": tot, "masters": masters,
            "cats": categories(rows, per, pal), "generated": db.now(), "pal": pal}
     rep["has_prev"] = {"paid": bool(tot["prev_spend"]), "organic": bool(tot["organic_prev"]["posts"]),
@@ -350,6 +359,25 @@ def build(kind="month", key=None, today=None, pal=None):
     rep["cover_chart"] = daily_bars(tot["daily"], per, height=110, width=640, legend=True, pal=pal)
     rep["mix_chart"] = mix_bars(tot, pal)
     return rep
+
+
+def _paid_totals(rows):
+    spend = round(sum(r["paid"]["spend"] for r in rows), 2)
+    conv = round(sum(r["paid"]["conversions"] for r in rows), 2)
+    pspend = round(sum(r["paid_prev"]["spend"] for r in rows), 2)
+    pconv = round(sum(r["paid_prev"]["conversions"] for r in rows), 2)
+    daily = {}
+    for r in rows:
+        for d, v in r["paid"]["daily"].items():
+            day = daily.setdefault(d, {"google": 0.0, "meta": 0.0})
+            for k in day:
+                day[k] += v.get(k, 0)
+    budget = round(sum(r["budget_total"] for r in rows), 2)
+    return {"spend": spend, "conversions": conv, "clicks": sum(r["paid"]["clicks"] for r in rows),
+            "cpa": spend / conv if conv else None, "prev_spend": pspend, "prev_conversions": pconv,
+            "prev_cpa": pspend / pconv if pconv else None, "daily": daily, "unassigned": 0.0,
+            "budget": budget, "pace": spend / budget if budget else None,
+            "by_platform": {k: round(sum(v[k] for v in daily.values()), 2) for k, _ in PLATFORMS}}
 
 
 def totals(rows, masters, plist, per):

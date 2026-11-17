@@ -69,10 +69,66 @@ def needed_role(method, path):
     return "editor"
 
 
+# What each person can open is set per person on the Team page (users.access): a tab, reports and
+# exports, refreshing and syncing, and which practices.
+TAB_PATHS = [("dashboard", re.compile(r"^/(dashboard/.*)?$")), ("practices", re.compile(r"^/(practices|p/\d+|tracking|brand-images|brand-kits)(/|$)")),
+             ("reviews", re.compile(r"^/reviews")), ("search", re.compile(r"^/search")),
+             ("studio", re.compile(r"^/studio(/|$)")), ("map", re.compile(r"^/map(/|$)")),
+             ("field", re.compile(r"^/field(/|\.xlsx|$)")), ("calendar", re.compile(r"^/calendar(/|$)"))]
+REPORT_PATHS = re.compile(r"^/(reports(/|$)|field/report|field\.xlsx|reviews\.xlsx|reviews/report|search\.xlsx"
+                          r"|p/\d+/(report|posts\.csv|email)|map/(referrals|schools)\.xlsx)")
+REFRESH_PATHS = re.compile(r"^/(sync(/run)?$|sync/(?!status)|map/(refresh|schools/refresh|referrals/refresh)$"
+                           r"|reviews/(sync|locations/refresh)$|search/refresh$|studio/posts/sync$|tracking/fix-all$)")
+PRACTICE_PATH = re.compile(r"^/p/(\d+)(/|$)")
+
+
+def access_problem(u, method, path):
+    """'' or why this person can't open the path (their tabs, reports, refreshing, practices)."""
+    if not u or path.startswith(PUBLIC) or path == "/setup":
+        return ""
+    if path.startswith(("/account", "/static", "/sync/status", "/sync/done", "/calendar/lookup")):
+        return ""
+    a = users.access(u)
+    if REPORT_PATHS.match(path) and not a["reports"]:
+        return "Reports and exports aren't switched on for you. Ask an admin."
+    if REFRESH_PATHS.match(path):
+        return "" if a["refresh"] else "Refreshing and syncing aren't switched on for you. Ask an admin."
+    if path == "/map/data.json" and (a["map"] or a["field"]):
+        return ""
+    if path == "/reports" or path.startswith("/reports/"):
+        return ""
+    for tab, rx in TAB_PATHS:
+        if rx.match(path):
+            if not a[tab]:
+                return "" if tab == "dashboard" and method in ("GET", "HEAD") and path == "/" else \
+                    f"{dict((k, l) for k, l, _ in users.TABS)[tab]} isn't switched on for you. Ask an admin."
+            break
+    m = PRACTICE_PATH.match(path)
+    if m and not users.sees_practice(u, int(m.group(1))):
+        return "That practice isn't one of yours. Ask an admin to add it to your practices."
+    return ""
+
+
 async def role_gate(request: Request, call_next):
     need = needed_role(request.method, request.url.path)
     request.state.user = current_user(request)
     u = request.state.user
+    if u and request.url.path == "/" and request.method in ("GET", "HEAD") and not users.can(u, "dashboard"):
+        return RedirectResponse(users.home(u), status_code=303)      # dashboard off: their first tab, or Account
+    if REFRESH_PATHS.match(request.url.path) and u and users.can(u, "refresh"):
+        need = "viewer" if need == "editor" else need                # refreshing switched on for them
+    db.ONLY.set(users.practice_ids(u) if u else None)     # lists in this request keep to their practices
+    why = access_problem(u, request.method, request.url.path)
+    if why:
+        if "application/json" in (request.headers.get("content-type", "") + request.headers.get("accept", "")) \
+                or request.url.path.endswith(".json"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": why}, status_code=403)
+        flash(request, why, "error")
+        back = request.headers.get("referer") or ""
+        if request.method in ("GET", "HEAD") or not back.startswith(str(request.base_url)):
+            back = users.home(u)
+        return RedirectResponse(back, status_code=303)
     refused = u and (not u.get("field") if need == "field" else
                      not (u.get("field") or users.rank(u["role"]) >= users.rank("editor")) if need == "calendar" else
                      users.rank(u["role"]) < users.rank(need))
@@ -93,7 +149,7 @@ async def role_gate(request: Request, call_next):
         flash(request, msg, "error")
         back = request.headers.get("referer") or "/"
         if request.method in ("GET", "HEAD") or not back.startswith(str(request.base_url)):
-            back = "/"
+            back = users.home(u)
         return RedirectResponse(back, status_code=303)
     return await call_next(request)
 
@@ -257,7 +313,10 @@ def page(request, name, **ctx):
     ctx["is_admin"] = bool(u) and u["role"] == "admin"
     ctx["can_log"] = bool(u) and bool(u.get("field"))
     ctx["show_social"] = bool(u) and bool(u.get("social", 1))
-    ctx.setdefault("inbox_open", reviews.open_count() if u else 0)
+    ctx["acc"] = users.access(u)
+    ctx["home_url"] = users.home(u) if u else "/"
+    ctx["my_practices"] = users.practice_ids(u)
+    ctx.setdefault("inbox_open", reviews.open_count() if u and ctx["acc"].get("reviews") else 0)
     try:
         ctx.setdefault("studio_waiting", studio_flow.waiting_count(u["id"]) if u else 0)
     except Exception:
@@ -478,7 +537,14 @@ def team(request: Request):
         return r
     link = request.session.pop("team_link", None)
     season_rows, season_cfg, season_now, season_until = seasons.rows()
-    return page(request, "team.html", people=users.all_users(), roles=users.ROLES, labels=users.ROLE_LABELS,
+    people = users.all_users()
+    for t in people:
+        t["acc"] = users.access(t)
+        t["pids"] = users.chosen_practices(t)
+        t["color"] = users.cal_color(t)
+        t["on_tabs"] = [label for k, label, _ in users.TABS if t["acc"][k]]
+    return page(request, "team.html", people=people, tabs=users.TABS, extras=users.EXTRAS, all_practices=db.practices(),
+                cal_colors=users.CAL_COLORS, open_access=request.query_params.get("open", ""), roles=users.ROLES, labels=users.ROLE_LABELS,
                 help=users.ROLE_HELP, link=link, link_days=users.LINK_DAYS, shared=me(request)["id"] == 0,
                 now=db.now(), season_rows=season_rows, season_cfg=season_cfg, season_now=season_now, season_until=season_until,
                 season_labels=seasons.LABEL, season_choices=seasons.choices())
@@ -559,6 +625,31 @@ def team_switch(request: Request, uid: int, name: str, on: str = Form("")):
         users.set_switch(uid, name, bool(on))
         flash(request, f"{users.SWITCHES[name]} {'on' if on else 'off'} for {u['name']}.")
     return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/access")
+async def team_access(request: Request, uid: int):
+    """What one person can open: tabs, reports, refreshing, everyone's visits and calendar, admins' activity,
+    which practices, and their calendar colour."""
+    if (r := guard(request)):
+        return r
+    u = users.get(uid)
+    if not u:
+        return RedirectResponse("/team", status_code=303)
+    form = await request.form()
+    try:
+        if form.get("reset"):
+            users.reset_access(uid)
+            flash(request, f"{u['name']} is back to the {users.ROLE_LABELS[u['role']]} defaults.")
+        else:
+            flags = {k: bool(form.get(k)) for k in users.FLAGS}
+            pids = [int(x) for x in form.getlist("practice") if str(x).isdigit()]
+            color = form.get("cal_color") if form.get("own_color") else ""
+            users.set_access(uid, flags, pids, color)
+            flash(request, f"Saved what {u['name']} can open.")
+    except ValueError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/team?open={uid}#access-{uid}", status_code=303)
 
 
 @app.post("/team/{uid}/remove")
@@ -664,7 +755,7 @@ def welcome(request: Request, kind: str = "week", key: str = ""):
     allp = db.practices()
     mapped = sum(c.get("referrer", 0) for c in places.counts().values())
     return page(request, "welcome.html", d=d, kind=kind, options=opts, social_url=SOCIAL_URL, mapped=mapped,
-                look=_worth_a_look(allp, me(request)["role"]), waiting=reviews.open_count(),
+                look=_worth_a_look(db.keep_mine(allp), me(request)["role"]), waiting=reviews.open_count(),
                 money=master_report.money, num=master_report.num, pct=master_report.pct)
 
 
@@ -769,7 +860,7 @@ def dashboard(request: Request, m: str = ""):
     allp = db.practices()
     eff = {q["id"]: q for q in scope.with_inherited(allp)}
     results = sync.last_sync().get("results", {})
-    for p in allp:
+    for p in db.keep_mine(allp):                         # someone limited to some practices sees just those
         views = practice_views(p, month=month)
         problems = setup_problems(p, eff[p["id"]], views, results.get(str(p["id"]), {}))
         waste = sum(f["amount"] for v in views for f in v["findings"] if f["kind"] in ("zero-conv-campaign", "high-cpa"))
@@ -2223,6 +2314,10 @@ def market_map(request: Request):
         return r
     places.purge_old()
     offs = places.offices()
+    only = users.practice_ids(me(request))
+    if only is not None:
+        links = field.practice_links()
+        offs = [o for o in offs if links.get(o["id"]) in only]
     return page(request, "map.html", offices=offs, counts=places.counts(), status=places.status(),
                 browser_key=places.browser_key(), server_key_set=bool(places.server_key()),
                 map_id=places.map_id(), map_id_custom=bool(cx.setting("MAPS_MAP_ID")),
@@ -2261,13 +2356,18 @@ def market_map_data(request: Request):
     if not authed(request):
         return Response(status_code=401)
     places.purge_old()
-    data = {**places.map_data(), **field.map_overlay(), **schools.map_data()}
-    hid = db.hidden_ids()
-    if hid:                                   # a hidden practice's offices (and the dental offices around them) drop off
-        links = field.practice_links()
-        gone = {o["id"] for o in data.get("offices", []) if links.get(o["id"]) in hid}
+    u = me(request)
+    data = {**places.map_data(), **field.map_overlay(None if users.sees_all_field(u) else u["id"], users.hidden_people(u)),
+            **schools.map_data()}
+    hid, only = db.hidden_ids(), users.practice_ids(u)
+    if hid or only is not None:   # hidden practices' offices (and the dental offices around them) drop off; someone
+        links = field.practice_links()      # limited to some practices sees only those practices' offices
+        gone = {o["id"] for o in data.get("offices", []) if links.get(o["id"]) in hid
+                or (only is not None and links.get(o["id"]) not in only)}
         data["offices"] = [o for o in data.get("offices", []) if o["id"] not in gone]
         data["places"] = [p for p in data.get("places", []) if p.get("office") not in gone]
+        if only is not None and "schools" in data and isinstance(data["schools"], list):
+            data["schools"] = [x for x in data["schools"] if x.get("office") not in gone]
     return data
 
 
@@ -2520,9 +2620,16 @@ def field_page(request: Request):
     rows = field.visits_between(start, end, who, prac)
     m_start, m_end, *_ = field.period_bounds("month", day)
     month_rows = field.visits_between(m_start, m_end, None if see_all else u["id"])
-    team = users.all_users()
+    hide = users.hidden_people(u)
+    if hide:                                     # admins' visits hidden from this person
+        rows = [r for r in rows if r["user_id"] not in hide]
+        month_rows = [r for r in month_rows if r["user_id"] not in hide]
+    team = [t for t in users.all_users() if t["id"] not in hide]
     links = field.practice_links()
     budgets = field.budgets(m_start, month_rows)
+    mine_ids = users.practice_ids(u)
+    if mine_ids is not None:
+        budgets = {**budgets, "practices": [b for b in budgets["practices"] if b.get("id") in mine_ids], "unlinked": 0}
     if not see_all:
         budgets = {"practices": [], "agents": [b for b in budgets["agents"] if b["id"] == u["id"]], "unlinked": 0}
     offer = request.session.pop("fu_offer", None)
@@ -2535,8 +2642,8 @@ def field_page(request: Request):
                 fu_events=fu_events, visit_events=cal.events_for_visits([r["id"] for r in rows]), period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
                 today=date.today(), start=start, end=end, rows=rows, days=field.by_day(rows), sums=field.summary(rows),
                 budgets=budgets, see_all=see_all, month_label=m_start.strftime("%B %Y"),
-                who=who, practice=prac, team=team, practices=db.practices(), ratings=field.RATING_LABELS,
-                follow=field.followups(user_id=None if see_all else u["id"]), offices=places.offices(), links=links,
+                who=who, practice=prac, team=team, practices=db.keep_mine(db.practices()), ratings=field.RATING_LABELS,
+                follow=[f for f in field.followups(user_id=None if see_all else u["id"]) if f["user_id"] not in hide], offices=places.offices(), links=links,
                 agents=[t for t in team if t["active"] and t.get("field")], browser_key=places.browser_key(), map_id=places.map_id(),
                 my_id=(u or {}).get("id"), sf_on=salesforce.connected(), sf_base=salesforce.instance_url())
 
@@ -2551,6 +2658,8 @@ def field_export(request: Request):
         who = u["id"]
     start, end, label, *_ = field.period_bounds(period, day)
     rows = field.visits_between(start, end, who, prac)
+    hide = users.hidden_people(u)
+    rows = [r for r in rows if r["user_id"] not in hide]
     data = field.export_xlsx(rows, f"Field visits · {label}" + ("" if users.sees_all_field(u) else f" · {u['name']}"))
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="field-visits-{start.isoformat()}.xlsx"'})
@@ -2561,10 +2670,11 @@ def _report_scope(request):
     """(user, may see everyone, agents to choose from, practices to choose from)."""
     u = me(request)
     allp = db.practices()
-    choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+    choices = sorted([q for q in db.keep_mine(allp) if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
     everyone = users.sees_all_field(u)
-    agents = sorted([t for t in users.all_users() if t.get("field") or t["id"] == u["id"]], key=lambda t: t["name"].lower()) \
-        if everyone else [u]
+    hide = users.hidden_people(u)
+    agents = sorted([t for t in users.all_users() if (t.get("field") or t["id"] == u["id"]) and t["id"] not in hide],
+                    key=lambda t: t["name"].lower()) if everyone else [u]
     return u, everyone, agents, choices, allp
 
 
@@ -2665,7 +2775,7 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
         for h in history:
             h['practice_name'] = names.get(h.get('practice_id'), '')
     allp = db.practices()
-    choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+    choices = sorted([q for q in db.keep_mine(allp) if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
     chosen = request.query_params.get("practice", "")
     pre = None
     if (ev := from_ev):
@@ -3357,14 +3467,14 @@ def search_xlsx(request: Request, m: str = ""):
     if (r := guard(request)):
         return r
     month = reviews.valid_month(m) or date.today().isoformat()[:7]
-    return Response(visibility.export_xlsx(month), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    return Response(visibility.export_xlsx(month, reviews.practices()), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="search-and-maps-{month}.xlsx"'})
 
 
 # ---------- Calendar (Outlook invites through Microsoft 365) ----------
 def _cal_practices():
     allp = db.practices()
-    return sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
+    return sorted([q for q in db.keep_mine(allp) if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
 
 
 def _can_schedule(u):
@@ -3410,6 +3520,8 @@ def calendar_page(request: Request, view: str = "month", d: str = "", practice: 
     except ValueError:
         picked_day = today
     sel = cal.get(int(event)) if event.isdigit() else None
+    if sel and not cal.listed(sel, u):
+        sel = None                                   # not on their calendar
     if sel:
         sel["practice_name"] = (db.practice(sel["practice_id"]) or {}).get("name", "")
         sel["can_change"] = cal.can_change(sel, u)
@@ -3420,7 +3532,9 @@ def calendar_page(request: Request, view: str = "month", d: str = "", practice: 
         if sel["status"] == "sent":
             cal.refresh_soon(sel["id"])
     qs = {"view": view, "d": focus.isoformat(), "practice": practice, "category": category, "mine": mine, "fu": fu}
-    return page(request, "calendar.html", view=view, focus=focus, title=title, weeks=weeks, by_day=by_day, items=items,
+    by_ids = {i.get("by") for i in items}
+    people_key = [(t["name"], t["cal_color"]) for t in users.all_users() if t.get("cal_color") and t["id"] in by_ids]
+    return page(request, "calendar.html", people_key=people_key, view=view, focus=focus, title=title, weeks=weeks, by_day=by_day, items=items,
                 start=start, end=end, today=today, prev_d=prev_d, next_d=next_d, practices=_cal_practices(), pid=pid,
                 category=category, mine=mine == "1", fu=fu == "1", cats=cal.CATEGORIES, sel=sel, picked_day=picked_day,
                 upcoming=cal.upcoming(u, 6, pid, mine == "1"), qs=qs, can_schedule=_can_schedule(u),
@@ -3831,7 +3945,20 @@ def _brand_in(v):
         pid = int(v)
     except (TypeError, ValueError):
         return None
-    return pid if pid == studio.MCDP or db.practice(pid) else None
+    if not db.practice(pid) and pid != studio.MCDP:
+        return None
+    only = db.only_ids()
+    if only is not None and pid not in only:
+        return None                       # not one of their practices (MCDP's own brand is for everyone-practices people)
+    return pid
+
+
+def _studio_default_brand():
+    only = db.only_ids()
+    if only is None:
+        return studio.MCDP
+    mine = db.keep_mine(db.practices())
+    return mine[0]["id"] if mine else None
 
 
 def _studio_back(request, fallback="/studio"):
@@ -3859,8 +3986,10 @@ def studio_page(request: Request, b: str = "", f: str = "", s: str = "", q: str 
         pid = _brand_in(b)
         if pid is None:
             pid = request.session.get("studio_brand")
-            pid = pid if pid is not None and _brand_in(pid) is not None else studio.MCDP
+            pid = pid if pid is not None and _brand_in(pid) is not None else _studio_default_brand()
         request.session["studio_brand"] = pid
+        if pid is None:
+            view = "all"
     try:
         fid = int(f) if f and f != "none" else ("none" if f == "none" else None)
     except ValueError:
@@ -3890,7 +4019,8 @@ def studio_page(request: Request, b: str = "", f: str = "", s: str = "", q: str 
         assets = images.assets(pid)
     look = _brand_look(pid) if view == "brand" else None
     return page(request, "studio.html", view=view, pid=pid, fid=fid, folder=fold, status=status, q=q, items=got,
-                counts=counts, brands=studio.brands(plist), folders=studio.folders(pid) if view == "brand" else [],
+                counts=counts, brands=[x for x in studio.brands(db.keep_mine(plist))
+                                       if db.only_ids() is None or x.get("id") != studio.MCDP], folders=studio.folders(pid) if view == "brand" else [],
                 statuses=studio.STATUSES, names=names, totals=studio.counts(), assets=assets, look=look,
                 brand_name=studio.brand_name(pid) if view == "brand" else "",
                 feedback=studio.outside_feedback() if view == "feedback" else [],
@@ -4044,6 +4174,8 @@ def studio_item_page(request: Request, iid: int):
     if (r := guard(request)):
         return r
     it = studio.item(iid)
+    if it and db.only_ids() is not None and it.get("practice_id") not in db.only_ids():
+        it = None                                     # another practice's file
     if not it:
         flash(request, "That file is gone.", "error")
         return RedirectResponse("/studio", status_code=303)

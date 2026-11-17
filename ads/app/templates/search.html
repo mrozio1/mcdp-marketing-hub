@@ -44,8 +44,8 @@
 
 <div class="small muted sx-status">
   {% if running %}Pulling the latest numbers from Google…{% elif status.at %}Updated {{ status.at.replace('T', ' ')[:16] }} · refreshes every day{% else %}Not pulled yet{% endif %}
-  {% if connected and can_edit and not running %}<form method="post" action="/search/refresh" class="inline-form" data-busy="Starting…"><input type="hidden" name="back" value="{{ back_url }}"><button class="linklike small" type="submit">Refresh now</button></form>{% endif %}
-  · <a href="/search.xlsx?m={{ month }}">Download Excel</a>
+  {% if connected and acc.refresh and not running %}<form method="post" action="/search/refresh" class="inline-form" data-busy="Starting…"><input type="hidden" name="back" value="{{ back_url }}"><button class="linklike small" type="submit">Refresh now</button></form>{% endif %}
+  {% if acc.reports %}· <a href="/search.xlsx?m={{ month }}">Download Excel</a>{% endif %}
   {% if d.is_current %}· {{ d.label }} is the month so far; Google's numbers run 2–3 days behind{% endif %}
 </div>
 {% if status.errors %}<div class="flash flash-error sx-errors"><strong>Some numbers couldn't be pulled:</strong><ul>{% for e in status.errors[:6] %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}

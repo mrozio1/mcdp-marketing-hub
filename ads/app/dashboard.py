@@ -429,8 +429,9 @@ def build(kind="week", key=None, today=None):
     kind = "month" if kind == "month" else "week"
     rep = report.build(kind, key, today)
     per = rep["period"]
-    plist = db.practices()
-    ls = leadsigma(per["start"], per["end"], plist)
+    plist = db.keep_mine(db.practices())
+    # LeadSigma's export is company-wide, so it's only for people who see every practice
+    ls = leadsigma(per["start"], per["end"], plist) if db.only_ids() is None else None
     t = rep["totals"]
     chg = lambda cur, prev: report._pct_change(cur, prev)
     funnel = [
@@ -470,7 +471,7 @@ def build(kind="week", key=None, today=None):
              or (r["paid"]["spend"] >= 50 and not r["paid"]["conversions"])} for r in table]
     return {"period": per, "rep": rep, "totals": t, "ls": ls, "ls_note": note, "funnel": funnel,
             "attention": attention(rep, ls, per), "rows": rows, "practices": len(active), "budget": budget(),
-            "upload": last_upload()}
+            "upload": last_upload(), "limited": db.only_ids() is not None}
 
 
 def _arrow(c, per):

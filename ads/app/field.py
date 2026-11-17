@@ -503,12 +503,15 @@ def _practice_in(form):
         if not pid_part.isdigit() or not db.practice(int(pid_part)):
             raise FieldError("Pick which of our practices this visit was for.")
         practice_id = int(pid_part)
+        only = db.only_ids()
+        if only is not None and practice_id not in only:
+            raise FieldError("You can only log visits for your own practices.")
         locs = practice_locations(practice_id)
         if loc_part.isdigit() and int(loc_part) < len(locs):
             practice_location = locs[int(loc_part)]
         elif len(locs) == 1:
             practice_location = locs[0]
-    elif form.get("practice_required"):
+    elif form.get("practice_required") or db.only_ids() is not None:
         raise FieldError("Pick which of our practices this visit was for.")
     return practice_id, practice_location
 
@@ -630,6 +633,9 @@ def visits_between(start, end, user_id=None, practice_id=None):
     hid = db.hidden_ids()
     if hid:
         rows = [r for r in rows if r["practice_id"] not in hid]      # hidden practices' visits stay out of reports
+    only = db.only_ids()
+    if only is not None:       # someone limited to some practices: those practices' visits (and their own)
+        rows = [r for r in rows if r["practice_id"] in only or (user_id and r["user_id"] == user_id)]
     if user_id:
         rows = [r for r in rows if r["user_id"] == user_id]
     if practice_id:
@@ -709,15 +715,22 @@ def budgets(month_start, rows_month, today=None):
     return {"practices": practices_out, "agents": agents_out, "unlinked": unlinked}
 
 
-def office_status():
-    """Latest visit per office: rating, when, by whom, open follow-up. Keyed by field office id."""
+def office_status(user_id=None, hide=()):
+    """Latest visit per office: rating, when, by whom, open follow-up. Keyed by field office id.
+    user_id: only that person's visits; hide: people whose visits don't count."""
+    cond, args = "", []
+    if user_id:
+        cond, args = " AND {t}.user_id=?", [user_id]
+    elif hide:
+        cond = " AND {t}.user_id NOT IN (%s)" % ",".join(str(int(h)) for h in hide)
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
             "SELECT v.office_id, v.visited_at, v.user_id, v.user_name, v.rating, v.followup, v.met_name, "
-            "(SELECT COUNT(*) FROM visits x WHERE x.office_id=v.office_id) AS n, "
+            "(SELECT COUNT(*) FROM visits x WHERE x.office_id=v.office_id" + cond.format(t="x") + ") AS n, "
             "o.place_id, o.npi_key, o.name, o.address, o.lat, o.lng "
             "FROM visits v JOIN field_offices o ON o.id=v.office_id "
-            "WHERE v.id = (SELECT id FROM visits y WHERE y.office_id=v.office_id ORDER BY visited_at DESC, id DESC LIMIT 1)")]
+            "WHERE v.id = (SELECT id FROM visits y WHERE y.office_id=v.office_id" + cond.format(t="y") +
+            " ORDER BY visited_at DESC, id DESC LIMIT 1)", args * 2)]
     return rows
 
 
@@ -735,11 +748,12 @@ def followups(today=None, within_days=7, user_id=None):
     return sorted(out, key=lambda f: f["followup"])
 
 
-def map_overlay():
-    """For the map page: visit status per Google pin, plus visited offices that aren't Google pins."""
+def map_overlay(user_id=None, hide=()):
+    """For the map page: visit status per Google pin, plus visited offices that aren't Google pins.
+    user_id: only that person's visits (someone who sees just their own); hide: people whose visits are left out."""
     by_place, extra = {}, []
     today = date.today().isoformat()
-    for s in office_status():
+    for s in office_status(user_id, hide):
         info = {"rating": s["rating"], "last": s["visited_at"][:10], "by": s["user_name"], "n": s["n"],
                 "due": s["followup"] or None, "overdue": bool(s["followup"] and s["followup"] < today)}
         if s["place_id"]:

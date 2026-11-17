@@ -11,6 +11,8 @@ prints a fresh setup link.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import hmac
 import re
 import secrets
@@ -21,9 +23,9 @@ from . import db
 
 ROLES = ("viewer", "editor", "admin")
 ROLE_LABELS = {"viewer": "Viewer", "editor": "Editor", "admin": "Admin"}
-ROLE_HELP = {"viewer": "Sees everything and exports; can't change anything.",
-             "editor": "Also uploads, fixes, map refresh, offices and list stars/notes.",
-             "admin": "Also keys and connections, people, map setup and deleting practices."}
+ROLE_HELP = {"viewer": "Looks only; can't change anything. Starts with nothing switched on: pick what they can open below.",
+             "editor": "Also uploads, fixes, offices and list stars/notes. Starts with every tab, practice and person.",
+             "admin": "Also keys and connections, people, map setup and deleting practices. Starts with everything."}
 LINK_DAYS = 7
 MIN_PASSWORD = 10
 
@@ -55,7 +57,10 @@ COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", 
            "field": "INTEGER NOT NULL DEFAULT 0",
            "social": "INTEGER NOT NULL DEFAULT 1",
            "seasonal": "INTEGER NOT NULL DEFAULT 1",
-           "field_manager": "INTEGER NOT NULL DEFAULT 0"}   # sees and reports on every field agent's visits   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
+           "field_manager": "INTEGER NOT NULL DEFAULT 0",
+           "perms": "TEXT DEFAULT ''",          # JSON of what this person can open; '' = their access level's defaults
+           "practice_ids": "TEXT DEFAULT ''",   # JSON list of the practices they're associated with
+           "cal_color": "TEXT DEFAULT ''"}      # their colour on the calendar   # sees and reports on every field agent's visits   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
 
 
 def init():
@@ -74,16 +79,130 @@ def init():
                 for r in c.execute("SELECT id, setup_token FROM users WHERE setup_token!=''").fetchall():
                     c.execute("UPDATE users SET setup_hash=?, setup_token='' WHERE id=?",
                               (_token_hash(r["setup_token"]), r["id"]))
+            if "perms" in added:
+                _keep_current_access(c)
         # Anyone given the short-lived "Field agent" level becomes a viewer with field visits on.
         c.execute("UPDATE users SET role='viewer', field=1 WHERE role='agent'")
 
 
 SWITCHES = {"field": "Field visits", "social": "Social", "seasonal": "Seasonal decorations", "field_manager": "Field manager"}
 
+# ---- what each person can open ----
+# Tabs, in the order the hub falls back to when the dashboard is off (no tab at all: their Account page).
+TABS = [("dashboard", "Dashboard", "/"), ("practices", "Practices", "/practices"), ("reviews", "Reviews", "/reviews"),
+        ("search", "Search", "/search"), ("studio", "Studio", "/studio"), ("map", "Map", "/map"),
+        ("field", "Field", "/field"), ("calendar", "Calendar", "/calendar")]
+EXTRAS = [("reports", "Reports & exports", "Master reports, practice and field reports, PDFs, emails and spreadsheet downloads"),
+          ("refresh", "Refresh & sync", "Sync ads, refresh reviews, search, map and schools, fix ad tracking"),
+          ("team_field", "Everyone's field visits", "Other people's visits, spend, follow-ups and field reports (off: only their own)"),
+          ("team_calendar", "Everyone's calendar", "Other people's events and time off (off: only what they made or are invited to)"),
+          ("see_admins", "Admins' activity", "Admins' field visits and calendar events (off: hidden from this person)")]
+FLAGS = [k for k, *_ in TABS] + [k for k, *_ in EXTRAS] + ["all_practices"]
+CAL_COLORS = ["#2995D2", "#E0703A", "#3E9E6E", "#8E5BC9", "#D24C7A", "#C9A227", "#1E4A73", "#4AA3A2", "#A0522D", "#6B7A8F"]
+
+
+def role_defaults(role):
+    """Admins and editors start with everything (every practice and person); viewers start with nothing."""
+    on = role in ("admin", "editor")
+    if role == "viewer" and os.environ.get("ADS_VIEWER_DEFAULTS") == "legacy":
+        # only for the older tests, written when viewers could open everything but refresh
+        return {**{k: True for k in FLAGS}, "refresh": False, "team_field": False}
+    return {k: on for k in FLAGS}
+
+
+def _keep_current_access(c):
+    """First run of this version: nobody loses what they could already open. Viewers could see every tab,
+    practice and report before; field managers saw everyone's visits."""
+    for r in c.execute("SELECT id, role, field_manager FROM users").fetchall():
+        if r["role"] == "viewer":
+            a = {k: True for k in FLAGS}
+            a.update(refresh=False, team_field=bool(r["field_manager"]))
+            c.execute("UPDATE users SET perms=? WHERE id=?", (json.dumps(a), r["id"]))
+
+
+def access(u):
+    """What this person can open: {flag: bool}, with their access level's defaults for anything not set."""
+    if not u:
+        return {k: False for k in FLAGS}
+    a = role_defaults(u.get("role"))
+    try:
+        a.update({k: bool(v) for k, v in json.loads(u.get("perms") or "{}").items() if k in a})
+    except ValueError:
+        pass
+    return a
+
+
+def can(u, flag):
+    return bool(access(u).get(flag))
+
+
+def practice_ids(u):
+    """None: every practice. Otherwise the set of practice ids they're associated with."""
+    if not u or can(u, "all_practices"):
+        return None
+    return chosen_practices(u)
+
+
+def chosen_practices(u):
+    """The practices ticked for them (used when 'Every practice' is off)."""
+    try:
+        return {int(x) for x in json.loads((u or {}).get("practice_ids") or "[]")}
+    except (ValueError, TypeError):
+        return set()
+
+
+def sees_practice(u, pid):
+    ids = practice_ids(u)
+    return ids is None or pid in ids
+
+
+def home(u):
+    """Where 'home' is: the dashboard if it's on, else the first tab they have, else their Account page."""
+    a = access(u)
+    return next((path for k, _, path in TABS if a.get(k)), "/account")
+
+
+def cal_color(u):
+    if not u:
+        return ""
+    return u.get("cal_color") or CAL_COLORS[(u.get("id") or 0) % len(CAL_COLORS)]
+
+
+def set_access(uid, flags, practices=None, color=None):
+    """flags: {flag: bool} for every flag shown; practices: list of ids (used when all_practices is off)."""
+    u = get(uid)
+    if not u:
+        raise ValueError("No such person.")
+    a = access(u)
+    a.update({k: bool(v) for k, v in flags.items() if k in a})
+    with db.conn() as c:
+        c.execute("UPDATE users SET perms=? WHERE id=?", (json.dumps(a), uid))
+        if practices is not None:
+            c.execute("UPDATE users SET practice_ids=? WHERE id=?", (json.dumps(sorted({int(p) for p in practices})), uid))
+        if color is not None:
+            color = color.strip()
+            if color and not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+                raise ValueError("Pick a colour.")
+            c.execute("UPDATE users SET cal_color=? WHERE id=?", (color, uid))
+
+
+def reset_access(uid):
+    """Back to the access level's defaults (used when someone's access level changes)."""
+    with db.conn() as c:
+        c.execute("UPDATE users SET perms='' WHERE id=?", (uid,))
+
 
 def sees_all_field(u):
-    """Admins and field managers see (and report on) every field agent; everyone else only themselves."""
-    return bool(u) and (u.get("role") == "admin" or bool(u.get("field_manager")))
+    """Whether they see (and report on) everyone's field visits, not just their own."""
+    return can(u, "team_field")
+
+
+def hidden_people(u):
+    """Ids of people whose field visits and calendar events this person doesn't see (admins, when that's off)."""
+    if not u or can(u, "see_admins"):
+        return set()
+    with db.conn() as c:
+        return {r[0] for r in c.execute("SELECT id FROM users WHERE role='admin' AND id!=?", (u["id"],))}
 
 
 def set_switch(uid, name, on):
@@ -91,6 +210,11 @@ def set_switch(uid, name, on):
         raise ValueError("Unknown switch.")
     with db.conn() as c:
         c.execute(f"UPDATE users SET {name}=? WHERE id=?", (1 if on else 0, uid))
+    # the older switches also open what they need: logging visits needs the Field tab; a field manager sees everyone
+    if name == "field" and on:
+        set_access(uid, {"field": True})
+    elif name == "field_manager":
+        set_access(uid, {"team_field": bool(on)})
 
 
 def set_field(uid, on):
@@ -183,6 +307,8 @@ def add(name, email, role, field=False, social=True):
         cur = c.execute("INSERT INTO users(email, name, role, created_at, field, social) VALUES (?,?,?,?,?,?)",
                         (email, name[:80], role, db.now(), 1 if field else 0, 1 if social else 0))
         uid = cur.lastrowid
+    if field and not role_defaults(role)["field"]:
+        set_access(uid, {"field": True})     # logging visits needs the Field tab
     return get(uid), new_link(uid)
 
 
@@ -245,6 +371,8 @@ def set_role(uid, role):
     _last_admin_guard(u, new_role=role)
     with db.conn() as c:
         c.execute("UPDATE users SET role=? WHERE id=?", (role, uid))
+        if role != u["role"]:
+            c.execute("UPDATE users SET perms='' WHERE id=?", (uid,))   # the new level's defaults
 
 
 def set_active(uid, active):

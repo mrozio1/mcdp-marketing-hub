@@ -67,7 +67,7 @@
 </div>
 <div class="small muted rv-checked">
   {% if inbox_status.at %}Last checked {{ inbox_status.at[11:16] }} on {{ inbox_status.at[:10] }}{% if inbox_status.error_count %} · <span class="rv-warn">{{ inbox_status.error_count }} account{{ '' if inbox_status.error_count == 1 else 's' }} couldn't be read</span>{% endif %} · checks every {{ every }} minutes{% else %}Not checked yet{% endif %}
-  {% if can_edit %}<form method="post" action="/reviews/sync" class="inline-form" data-busy="Checking…"><input type="hidden" name="back" value="/reviews?{{ qs|urlencode }}"><button class="linklike small" type="submit">Check now</button></form>{% endif %}
+  {% if acc.refresh %}<form method="post" action="/reviews/sync" class="inline-form" data-busy="Checking…"><input type="hidden" name="back" value="/reviews?{{ qs|urlencode }}"><button class="linklike small" type="submit">Check now</button></form>{% endif %}
 </div>
 
 {% if not items %}
@@ -211,7 +211,7 @@
       </form>
       {% else %}<p class="muted">No locations yet.</p>{% endif %}
       <div class="conn-actions">
-        {% if can_edit %}<form method="post" action="/reviews/locations/refresh" data-busy="Looking…"><button class="btn btn-quiet btn-small" type="submit">Look for new locations</button></form>{% endif %}
+        {% if acc.refresh %}<form method="post" action="/reviews/locations/refresh" data-busy="Looking…"><button class="btn btn-quiet btn-small" type="submit">Look for new locations</button></form>{% endif %}
         {% if is_admin %}<form method="post" action="/google/business/disconnect" data-confirm="Disconnect Google reviews? Reviews already pulled are kept."><button class="linklike small danger" type="submit">Disconnect</button></form>{% endif %}
       </div>
     {% elif is_admin %}
@@ -280,7 +280,7 @@
   </select></label>
   <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
   <a class="btn btn-small" href="/reviews/report?{{ {'m': board.month, 'practice': pid or ''}|urlencode }}">Run report for {{ board.current_label }}</a>
-  <a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': board.month}|urlencode }}">Download Excel</a>
+  {% if acc.reports %}<a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': board.month}|urlencode }}">Download Excel</a>{% endif %}
   {% if not board.is_current %}<a class="small" href="/reviews?{{ {'tab': 'score', 'practice': pid or ''}|urlencode }}">Back to this month</a>{% endif %}
 </form>
 <dl class="glance rv-glance">
@@ -337,7 +337,7 @@
       </table>
       <div class="rv-history-foot">
         <span class="small muted">Goal met in {{ board.met_count }} of the last {{ board.full_months }} full month{{ '' if board.full_months == 1 else 's' }} with a count</span>
-        <a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': board.month}|urlencode }}">Download Excel</a>
+        {% if acc.reports %}<a class="btn btn-quiet btn-small" href="/reviews.xlsx?{{ {'m': board.month}|urlencode }}">Download Excel</a>{% endif %}
       </div>
     </div>
   </div>

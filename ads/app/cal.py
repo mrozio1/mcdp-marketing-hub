@@ -447,6 +447,8 @@ def can_change(ev, user):
         return False
     if ev.get("created_by") == user.get("id"):
         return True
+    if not listed(ev, user):
+        return False                                 # not on their calendar at all
     if is_personal(ev.get("category")):
         return user.get("role") == "admin"
     return users.rank(user["role"]) >= users.rank("editor")
@@ -455,6 +457,27 @@ def can_change(ev, user):
 def owns(ev, user):
     """Personal notes are only ever shown to the person who made the event."""
     return bool(user) and bool(ev) and ev.get("created_by") == user.get("id")
+
+
+def listed(ev, user, acc=None, hide=None):
+    """Whether this event is on this person's calendar at all. Without 'Everyone's calendar' they see only what
+    they made or are invited to; without 'Admins' activity', admins' events unless invited; and only their own
+    practices' events."""
+    if not user:
+        return True
+    from . import users
+    acc = acc if acc is not None else users.access(user)
+    em = (user.get("email") or "").lower()
+    mine = ev.get("created_by") == user.get("id") or any((p.get("email") or "").lower() == em for p in ev.get("people", []))
+    if mine:
+        return True
+    if not acc.get("team_calendar"):
+        return False
+    hide = hide if hide is not None else users.hidden_people(user)
+    if ev.get("created_by") in hide:
+        return False
+    only = users.practice_ids(user)
+    return only is None or not ev.get("practice_id") or ev.get("practice_id") in only
 
 
 def visible(ev, user):
@@ -604,13 +627,20 @@ def items_between(start, end, user, practice_id=None, category="", mine=False, f
                            if rows else "SELECT * FROM cal_people WHERE 0"):
             people.setdefault(p["event_id"], []).append(dict(p))
         names = {p["id"]: p["name"] for p in db.practices()}
+    from . import users
+    acc, hide = users.access(user), users.hidden_people(user)
+    colors = {u["id"]: u["cal_color"] for u in users.all_users() if u.get("cal_color")}   # people given their own colour
     out = []
     hid = db.hidden_ids()
     for ev in rows:
         if ev["practice_id"] in hid:
             continue                                   # a hidden practice's events are off the calendar
         ev["people"] = people.get(ev["id"], [])
+        if user and not listed(ev, user, acc, hide):
+            continue
         decorate(ev)
+        if colors.get(ev["created_by"]):
+            ev["color"] = colors[ev["created_by"]]      # their events show in their colour
         personal = is_personal(ev["category"])
         if practice_id and ev["practice_id"] != practice_id and not personal:   # time off shows on every practice's view
             continue
@@ -633,7 +663,7 @@ def items_between(start, end, user, practice_id=None, category="", mine=False, f
                                           else ev['type_subject'] if show else "Busy"),
                                 "personal": ev["kind"] if personal else "",
                                 "practice": ev["practice_name"], "color": ev["color"], "category": ev["category"],
-                                "id": ev["id"], "kind": "event", "cancelled": ev["status"] == "cancelled",
+                                "id": ev["id"], "kind": "event", "cancelled": ev["status"] == "cancelled", "by": ev["created_by"],
                                 "people": len(ev["people"]), "status": ev["status"], "private": not show,
                                 "accepted": sum(1 for p in ev["people"] if p.get("response") == "accepted")})
     if followups:
@@ -656,6 +686,9 @@ def followups_between(start, end, user, practice_id=None, mine=False):
             (start.isoformat(), end.isoformat()))]
     links = field.practice_links() if rows else {}
     hid = db.hidden_ids()
+    from . import users
+    acc = users.access(user) if user else {"team_field": True}
+    hide, only = (users.hidden_people(user), users.practice_ids(user)) if user else (set(), None)
     out = []
     for r in rows:
         pid = r.get("practice_id") or links.get(r.get("our_office_id"))
@@ -663,7 +696,9 @@ def followups_between(start, end, user, practice_id=None, mine=False):
             continue
         if practice_id and pid != practice_id:
             continue
-        if mine and r["user_id"] != (user or {}).get("id"):
+        if (mine or not acc.get("team_field")) and r["user_id"] != (user or {}).get("id"):
+            continue                                   # other people's follow-ups: only with everyone's field visits
+        if r["user_id"] in hide or (only is not None and pid not in only and r["user_id"] != (user or {}).get("id")):
             continue
         out.append({"day": date.fromisoformat(r["followup"][:10]), "time": "", "end_time": "",
                     "title": f"Follow up · {r['office_name']}", "short": f"Follow up · {r['office_name']}",
