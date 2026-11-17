@@ -948,6 +948,16 @@ class GoogleClient:
             raise ConnectorError(_write_hint(str(e), "google"), payload=e.payload) from None
         return res.get("results", [])
 
+    def mutate_customer(self, customer_id, update, update_mask):
+        """CustomerService.MutateCustomer: account-level settings such as final_url_suffix and tracking_url_template."""
+        cid = _clean_id(customer_id)
+        url = f"{GOOGLE_BASE}/{GOOGLE_VERSION}/customers/{cid}:mutate"
+        body = {"operation": {"update": {"resourceName": f"customers/{cid}", **update}, "updateMask": update_mask}}
+        try:
+            return _http(url, data=body, headers=self._headers(self._login_for(cid)))
+        except ConnectorError as e:
+            raise ConnectorError(_write_hint(str(e), "google"), payload=e.payload) from None
+
     def mutate_all(self, customer_id, mutate_operations):
         """GoogleAdsService.Mutate: several kinds of change in one all-or-nothing request (temporary
         negative IDs link the new objects together). Returns mutateOperationResponses."""

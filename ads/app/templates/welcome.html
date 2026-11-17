@@ -61,7 +61,7 @@
       <ol class="dash-alerts">
         {% for a in d.attention %}
         <li><span class="dash-n" aria-hidden="true">{{ a.n }}</span>
-          <div><strong>{{ a.title }}</strong><span>{{ a.body }}</span><span><span class="dash-src">{{ a.src }}</span></span></div></li>
+          <div><strong>{{ a.title }}</strong><span>{{ a.body }}</span><span class="dash-alert-foot"><span class="dash-src">{{ a.src }}</span>{% if a.href %} <a class="dash-fix" href="{{ a.href }}">Fix it →</a>{% endif %}</span></div></li>
         {% endfor %}
       </ol>
       {% else %}<p class="dash-muted">Nothing stands out this {{ 'week' if kind == 'week' else 'month' }}.</p>{% endif %}

@@ -354,6 +354,12 @@ def sync_all(today=None, refresh_lists=False):
             backfill_previous_month(practices, google, today)
         except Exception:   # history is a bonus; never fail the sync over it
             pass
+        if google is not None:
+            try:            # accounts with the tracking fix on: give new campaigns their {_campaign} tag
+                from . import tracking
+                tracking.tag_new_campaigns(google)
+            except Exception:
+                pass
         social = sync_social(practices, today)
         if social:
             db.set_setting("social_status", json.dumps({"at": db.now(), "accounts": social}))

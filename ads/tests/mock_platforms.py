@@ -446,6 +446,9 @@ class H(BaseHTTPRequestHandler):
                     {"customerClient": {"id": MCC, "descriptiveName": "MCDP Manager", "manager": True, "status": "ENABLED"}}] + [
                     {"customerClient": {"id": cid, "descriptiveName": n, "manager": False, "status": "ENABLED"}}
                     for cid, n in CLIENTS.items()]}])
+            if "customer.final_url_suffix" in q:          # tracking settings: already tidy in the mock account
+                from app import tracking
+                return self._json(200, [{"results": [{"customer": {"finalUrlSuffix": tracking.SUFFIX}}]}])
             if q.rstrip().endswith("FROM customer"):
                 return self._json(200, [{"results": [{"customer": {
                     "id": target, "descriptiveName": "MCDP Manager" if target == MCC else CLIENTS.get(target, target),
@@ -488,7 +491,8 @@ class H(BaseHTTPRequestHandler):
             if "FROM campaign WHERE campaign.status != 'REMOVED'" in q:
                 return self._json(200, [{"results": [
                     {"campaign": {"id": cid, "resourceName": f"{cust}/campaigns/{cid}", "name": c["name"], "status": c["status"],
-                                  "advertisingChannelType": c["channel"]},
+                                  "advertisingChannelType": c["channel"],
+                                  "urlCustomParameters": [{"key": "campaign", "value": _slug(c["name"])}]},
                      "campaignBudget": {"resourceName": f"{cust}/campaignBudgets/{c['budget']}",
                                         "amountMicros": str(STATE["g_budgets"][c["budget"]]["micros"]),
                                         "explicitlyShared": STATE["g_budgets"][c["budget"]]["shared"]}}
@@ -511,6 +515,11 @@ class H(BaseHTTPRequestHandler):
                     {"searchTermView": {"searchTerm": "invisalign jobs"}, "campaign": {"name": "Invisalign - Search"},
                      "metrics": {"costMicros": "60450000", "impressions": "402", "clicks": "31"}}]}])
         self._json(404, {"error": {"message": "not found"}})
+
+
+def _slug(name):
+    from app import tracking
+    return tracking.slug(name)
 
 
 def start(port=9944):

@@ -366,14 +366,26 @@ def attention(rep, ls, per):
     out = []
     t = rep["totals"]
     rows = [r for r in rep["rows"] if r["active"]]
+    fix_href, fix_on = None, False
     if ls and ls["bookings"]:
+        from . import tracking
+        st = tracking.status()
+        fix_on = bool(st["on"])
+        owner = next((m for m in rep.get("masters") or []), None)
+        fix_href = f"/p/{owner['id']}#fixes" if owner else "/practices"
         share = ls["direct"] / ls["bookings"]
-        if share >= 0.5:
-            extra = (f" Ad links reach LeadSigma with {', '.join(ls['unfilled'][:2])} as plain text, so bookings from ads can't "
-                     "be tied to a campaign: fix the tracking template in Google Ads.") if ls["unfilled"] else \
-                    " Add UTM tags to ad and post links so bookings can be tied to them."
+        if share >= 0.5 or ls["unfilled"]:
+            if ls["unfilled"] and fix_on:
+                extra = (f" Google Ads tracking was fixed in the hub, but this export still shows {', '.join(ls['unfilled'][:2])}: "
+                         "upload an export covering days after the fix to see campaigns by name.")
+            elif ls["unfilled"]:
+                extra = (f" Ad links reach LeadSigma with {', '.join(ls['unfilled'][:2])} as plain text, so bookings from ads "
+                         "can't be tied to a campaign. “Fix ad tracking” on the master record's fixes repairs it in one click.")
+            else:
+                extra = " Add UTM tags to ad and post links so bookings can be tied to them."
             out.append((f"{share:.0%} of online bookings have no source ({ls['direct']} of {ls['bookings']})",
-                        "Without a source, cost per booking and cost per start can't be worked out." + extra, "LeadSigma"))
+                        "Without a source, cost per booking and cost per start can't be worked out." + extra, "LeadSigma",
+                        fix_href if ls["unfilled"] and not fix_on else None))
         for d in ls["dead"][:1]:
             names = {"an": "Meta's Audience Network (ads in other apps)", "fb": "Facebook", "ig": "Instagram", "adwords": "Google Ads"}
             src = ", ".join(f"{v:,} from {names.get(s_, s_)}" for s_, v in sorted(d["sources"], key=lambda x: -x[1]))
@@ -410,7 +422,8 @@ def attention(rep, ls, per):
     if t["goal_of"] and t["goal_met"] < t["goal_of"] / 2:
         out.append((f"{t['goal_met']} of {t['goal_of']} practices met their review goal",
                     f"{t['reviews_new']} new Google reviews in the {'week' if per['kind'] == 'week' else 'month'}.", "Hub"))
-    return [{"n": i + 1, "title": a, "body": b, "src": s} for i, (a, b, s) in enumerate(out[:5])]
+    return [{"n": i + 1, "title": x[0], "body": x[1], "src": x[2], "href": x[3] if len(x) > 3 else None}
+            for i, x in enumerate(out[:5])]
 
 
 def build(kind="week", key=None, today=None):

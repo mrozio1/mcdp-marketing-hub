@@ -26,11 +26,11 @@ MIN_TERM_SPEND = 5.0
 BUDGET_MIN_FACTOR, BUDGET_MAX_FACTOR = 0.5, 1.5
 BUDGET_DEADBAND = 0.10          # ignore drift under 10%
 MIN_DAILY_BUDGET = 1.0
-FIX_KINDS = ("negative_keyword", "pause", "budget")
+FIX_KINDS = ("negative_keyword", "pause", "budget", "tracking")
 KIND_LABELS = {"negative_keyword": "Block wasted searches", "pause": "Pause campaigns",
                "budget": "Bring budgets in line", "draft_ad": "New ads (created paused)",
                "new_campaign": "New campaigns (created paused)",
-               "add_keyword": "Add keywords"}
+               "add_keyword": "Add keywords", "tracking": "Fix ad tracking"}
 
 
 class ActionError(RuntimeError):
@@ -100,6 +100,14 @@ def prepare(practice, views):
             proposals += _google_proposals(practice, vmap["google"], notes)
         except cx.ConnectorError as e:
             notes.append(f"Google: {e}")
+        if "google_customer_id" not in (practice.get("inherited") or []):   # the record that owns the account
+            from . import tracking
+            try:
+                t = tracking.proposal(practice["google_customer_id"], practice)
+                if t:
+                    proposals.append(t)
+            except Exception as e:      # never let the tracking check stop the other fixes
+                notes.append(f"Google tracking couldn't be checked: {e}")
     if practice.get("meta_account_id") and cx.meta_configured():
         try:
             proposals += _meta_proposals(practice, vmap["meta"], notes)
@@ -516,6 +524,9 @@ def _apply_google(ch):
             return {"resource": res[0]["resourceName"], "review": True,
                     "warning": f"Google asked for a review of “{pl['text']}” (health term); it usually shows as "
                                "Eligible (limited) within a day."}
+    if kind == "tracking":
+        from . import tracking
+        return tracking.apply(g, cid, pl)
     if kind == "draft_ad":
         res = g.mutate(cid, "adGroupAds", [{"create": {
             "adGroup": pl["ad_group_rn"], "status": "PAUSED",
@@ -559,6 +570,9 @@ def _undo_google(ch):
     if kind in ("negative_keyword", "draft_ad", "add_keyword"):
         service = {"negative_keyword": "campaignCriteria", "draft_ad": "adGroupAds", "add_keyword": "adGroupCriteria"}[kind]
         g.mutate(cid, service, [{"remove": res["resource"]}])
+    elif kind == "tracking":
+        from . import tracking
+        tracking.undo(g, cid, res)
     elif kind == "pause":
         cur = _gaql_one(g, cid, f"SELECT campaign.status FROM campaign WHERE campaign.id = {int(pl['campaign_id'])}")
         st = cur.get("campaign", {}).get("status")

@@ -2227,3 +2227,5 @@ body.home-dash .topbar .nav-count { background: #2995d2; color: #fff; }
   .dash-card { padding: 1.1rem; }
   .dash-barrow { grid-template-columns: minmax(0, 110px) minmax(0, 1fr) 64px; }
 }
+.dash-alert-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.dash-fix { font-size: 0.82rem; font-weight: 600; color: #2c6396; }
