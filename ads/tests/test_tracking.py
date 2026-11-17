@@ -110,3 +110,27 @@ def test_refusals_and_stale(env):
     g.customer["finalUrlSuffix"] = "changed=by-someone"               # ...and changes it again before Apply
     with pytest.raises(actions.ActionError):
         tracking.apply(g, "1", pl2)
+
+
+def test_fix_every_account(env, monkeypatch):
+    g, tracking, db, actions = env
+    from app import scope, users
+    users.init()
+    master = db.add_practice("MCDP Ads", 0, 0, "")
+    db.set_practice_accounts(master, "", "1")
+    heights = db.add_practice("Heights Orthodontics", 700, 0, "heights")          # uses the master's account
+    algonac = db.add_practice("Algonac Dental", 280, 0, "algonac")                # its own account
+    db.set_practice_accounts(algonac, "", "2")
+    accts = {a["cid"]: a for a in tracking.accounts()}
+    assert accts["1"]["owner_id"] == master and "Heights Orthodontics" in accts["1"]["uses"]
+    assert accts["2"]["owner_id"] == algonac
+    tracking.fix_all("Mark")
+    st = tracking.run_state()
+    assert not st["running"] and st["total"] == 2
+    stat = sorted(r["status"] for r in st["results"])
+    assert stat == ["fixed", "ok"]              # the stand-in shares one state: the first account checked gets fixed
+    fixed = next(r for r in st["results"] if r["status"] == "fixed")
+    assert "{adname}" in fixed["note"]
+    ch = db.change(fixed["change_id"])
+    assert ch["status"] == "applied" and ch["kind"] == "tracking" and ch["practice_id"] in (master, algonac)
+    assert set(tracking.status()["on"]) == {"1", "2"}

@@ -290,3 +290,93 @@ def status():
     auto = _auto()
     log = _log()
     return {"on": sorted(auto), "last": log[0] if log else None}
+
+
+# ------------------------------------------------------------------ every account at once
+import threading  # noqa: E402
+
+_run_lock = threading.Lock()
+
+
+def accounts():
+    """Every Google Ads account to check: those linked to practices (with the record that owns each one, so its fix
+    shows and can be undone there), plus any other account the hub can reach (filed under the master record).
+    [{cid, name, owner_id, owner, uses: [practice names]}]"""
+    from . import scope, sync
+    plist = scope.with_inherited(db.practices())
+    out = {}
+    for p in plist:
+        cid = cx._clean_id(p.get("google_customer_id") or "")
+        if not cid:
+            continue
+        a = out.setdefault(cid, {"cid": cid, "name": "", "owner_id": None, "owner": "", "uses": [], "_rank": 9})
+        a["uses"].append(p["name"])
+        own = "google_customer_id" not in (p.get("inherited") or [])
+        rank = 0 if own and not scope.has_filter(p) else 1 if own else 2
+        if rank < a["_rank"]:
+            a.update(owner_id=p["id"], owner=p["name"], _rank=rank)
+    master = next((p for p in plist if not scope.has_filter(p) and p.get("google_customer_id")), None)
+    for acct in sync.cached_accounts("google"):
+        cid = cx._clean_id(str(acct.get("id") or ""))
+        if not cid or acct.get("manager") or acct.get("active") is False:
+            continue
+        a = out.setdefault(cid, {"cid": cid, "name": "", "owner_id": master["id"] if master else None,
+                                 "owner": master["name"] if master else "", "uses": [], "_rank": 9})
+        a["name"] = acct.get("name") or a["name"]
+    for a in out.values():
+        a.pop("_rank", None)
+    return sorted(out.values(), key=lambda a: (a["name"] or a["owner"] or a["cid"]).lower())
+
+
+def run_state():
+    try:
+        return json.loads(db.get_setting("tracking_run") or "{}")
+    except ValueError:
+        return {}
+
+
+def fix_all(by=""):
+    """Check every account and apply the fix where it's needed. Each fix is recorded as an applied change on the
+    owning record (so it can be undone there). Progress and results go in setting tracking_run."""
+    from . import actions
+    if not _run_lock.acquire(blocking=False):
+        return
+    try:
+        accts = accounts()
+        state = {"running": True, "started": db.now(), "by": by, "total": len(accts), "results": []}
+        db.set_setting("tracking_run", json.dumps(state))
+        for a in accts:
+            row = {"cid": a["cid"], "name": a["name"] or a["owner"], "uses": a["uses"][:6], "more": max(0, len(a["uses"]) - 6)}
+            if not a["owner_id"]:
+                row.update(status="skipped", note="Not linked to any practice; link it on a practice page first.")
+            else:
+                try:
+                    prop = proposal(a["cid"], {"id": a["owner_id"]})
+                    if not prop:
+                        row.update(status="ok", note="Already tracking properly.")
+                        auto = _auto()
+                        auto[a["cid"]] = True               # keep new campaigns tagged here too
+                        db.set_setting("tracking_auto", json.dumps(auto))
+                    else:
+                        with db.conn() as c:            # an older unapplied proposal for this account goes
+                            c.execute("DELETE FROM changes WHERE kind='tracking' AND status='proposed' AND account=?",
+                                      (a["cid"],))
+                        ch_id = actions._add_proposal(a["owner_id"], prop)
+                        ok, msg = actions.apply_change(db.change(ch_id), by)
+                        n = len(prop["payload"]["tags"])
+                        row.update(status="fixed" if ok else "failed", change_id=ch_id, owner_id=a["owner_id"],
+                                   note=(f"{', '.join(prop['payload']['bad']) + ' removed; ' if prop['payload']['bad'] else ''}"
+                                         f"{n} campaign{'' if n == 1 else 's'} tagged." + (f" {msg}" if msg else ""))
+                                   if ok else msg)
+                except Exception as e:      # one account's trouble never stops the rest
+                    row.update(status="failed", note=str(e)[:300])
+            state["results"].append(row)
+            db.set_setting("tracking_run", json.dumps(state))
+        state.update(running=False, finished=db.now())
+        db.set_setting("tracking_run", json.dumps(state))
+    finally:
+        _run_lock.release()
+
+
+def fix_all_in_background(by=""):
+    threading.Thread(target=fix_all, args=(by,), name="tracking-fix-all", daemon=True).start()

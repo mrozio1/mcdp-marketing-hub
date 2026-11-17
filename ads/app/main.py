@@ -778,9 +778,27 @@ def dashboard(request: Request, m: str = ""):
                       "issues": sum(1 for v in views for f in v["findings"] if f["severity"] in ("high", "medium")),
                       "problems": problems, "organic": organic_summary(p, allp, month)})
     items.sort(key=lambda it: (not it["master"], it["p"]["name"].lower()))
+    from . import tracking
     return page(request, "dashboard.html", items=items, kits_waiting=brand.waiting_review(allp), hidden=db.hidden_practices(),
+                tracking_run=tracking.run_state(), google_ok=actions.google_ready(),
                 month=month, is_current=month == month_opts[0], month_label=reviews.month_label(month),
                 month_opts=[(k, reviews.month_label(k)) for k in month_opts])
+
+
+@app.post("/tracking/fix-all")
+def tracking_fix_all(request: Request):
+    """Check every Google Ads account and fix its tracking where needed (in the background)."""
+    if (r := guard(request)):
+        return r
+    from . import tracking
+    if not actions.google_ready():
+        flash(request, "Connect Google Ads first (Connections page).", "error")
+    elif tracking.run_state().get("running"):
+        flash(request, "Already going through the accounts; this page shows the progress.")
+    else:
+        tracking.fix_all_in_background(actor(request))
+        flash(request, "Checking and fixing every Google Ads account. Refresh in a minute to see each one.")
+    return RedirectResponse("/practices#tracking", status_code=303)
 
 
 @app.post("/practices")

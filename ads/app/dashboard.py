@@ -371,8 +371,7 @@ def attention(rep, ls, per):
         from . import tracking
         st = tracking.status()
         fix_on = bool(st["on"])
-        owner = next((m for m in rep.get("masters") or []), None)
-        fix_href = f"/p/{owner['id']}#fixes" if owner else "/practices"
+        fix_href = "/practices#tracking"
         share = ls["direct"] / ls["bookings"]
         if share >= 0.5 or ls["unfilled"]:
             if ls["unfilled"] and fix_on:
@@ -380,7 +379,7 @@ def attention(rep, ls, per):
                          "upload an export covering days after the fix to see campaigns by name.")
             elif ls["unfilled"]:
                 extra = (f" Ad links reach LeadSigma with {', '.join(ls['unfilled'][:2])} as plain text, so bookings from ads "
-                         "can't be tied to a campaign. “Fix ad tracking” on the master record's fixes repairs it in one click.")
+                         "can't be tied to a campaign. “Fix tracking in every account” on the Practices page repairs every Google Ads account in one click.")
             else:
                 extra = " Add UTM tags to ad and post links so bookings can be tied to them."
             out.append((f"{share:.0%} of online bookings have no source ({ls['direct']} of {ls['bookings']})",

@@ -61,6 +61,28 @@
 <p class="muted small">{% if items|selectattr('master')|list %}The master record covers every campaign, so its numbers include the practices below it. {% endif %}“Money at stake” adds up spend on campaigns and search terms with no conversions, plus the extra cost of campaigns far above the practice’s average cost per conversion, for {{ month_label }}.</p>
 {% endif %}
 
+{% if google_ok %}
+{% set tr = tracking_run %}
+<details class="drawer" id="tracking" {% if tr.running %}open{% endif %}>
+  <summary><span class="drawer-title">Ad tracking (Google Ads)</span><span class="drawer-hint">{% if tr.running %}Going through the accounts… {{ tr.results|length }} of {{ tr.total }}{% elif tr.finished %}{{ tr.results|selectattr('status', 'in', ['fixed', 'ok'])|list|length }} of {{ tr.results|length }} accounts tracking properly · checked {{ tr.finished[:10] }}{% else %}UTM tags so bookings show which campaign they came from{% endif %}</span></summary>
+  <div class="drawer-body">
+    <p class="muted small" style="margin-top: 0">Every Google Ads account gets the same tracking: UTM tags on every ad click, codes Google doesn't fill in (like {campaignname}) taken out, and each campaign named in {_campaign}. New campaigns are tagged after each sync. Each fix shows on the record that owns the account, where it can be undone.</p>
+    {% if can_edit %}<form method="post" action="/tracking/fix-all" data-busy="Starting…"><button class="btn" type="submit" {% if tr.running %}disabled{% endif %}>{{ 'Working…' if tr.running else ('Check and fix every account again' if tr.finished else 'Fix tracking in every account') }}</button></form>{% endif %}
+    {% if tr.results %}
+    <table class="data" style="margin-top: .8rem">
+      <thead><tr><th>Account</th><th>Used by</th><th>Result</th></tr></thead>
+      <tbody>{% for r in tr.results %}<tr>
+        <td>{{ r.name or r.cid }}<br><span class="muted small">{{ r.cid }}</span></td>
+        <td class="small">{{ r.uses|join(', ') or '—' }}{% if r.more %} +{{ r.more }} more{% endif %}</td>
+        <td class="small"><strong>{{ {'fixed': 'Fixed', 'ok': 'Already fine', 'failed': 'Not fixed', 'skipped': 'Skipped'}[r.status] }}</strong> · {{ r.note }}{% if r.change_id %} <a href="/p/{{ r.owner_id }}#fixes">See or undo</a>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+    {% if tr.running %}<script>setTimeout(() => location.reload(), 5000)</script>{% endif %}
+  </div>
+</details>
+{% endif %}
+
 {% if hidden %}
 <details class="drawer" id="hidden-practices">
   <summary><span class="drawer-title">Hidden practices ({{ hidden|length }})</span><span class="drawer-hint">Off every page, list and report; nothing deleted</span></summary>
