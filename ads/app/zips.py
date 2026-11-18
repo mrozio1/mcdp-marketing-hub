@@ -236,7 +236,7 @@ def for_offices(offices=None, miles=None):
     return out
 
 
-def export_xlsx(rows):
+def export_xlsx(rows, assigned=None):
     from openpyxl import Workbook
     from openpyxl.styles import Font
     wb = Workbook()
@@ -254,6 +254,17 @@ def export_xlsx(rows):
     for col, w in zip("ABCDEFGHI", (28, 8, 10, 7, 14, 11, 14, 12, 11)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
+    if assigned is not None:
+        wa = wb.create_sheet("Who markets where", 0)
+        wa.append(["Practice", "Location", "Line of work", "ZIP", "Tier", "Miles", "Median household income",
+                   "Households", "Households with children", "Also near (given to this location instead)"])
+        for c in wa[1]:
+            c.font = Font(bold=True)
+        for r in assigned:
+            wa.append(r)
+        for col, w in zip("ABCDEFGHIJ", (28, 28, 13, 8, 10, 7, 14, 11, 14, 40)):
+            wa.column_dimensions[col].width = w
+        wa.freeze_panes = "A2"
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

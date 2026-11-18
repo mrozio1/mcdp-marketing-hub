@@ -2385,9 +2385,13 @@ def map_zips(request: Request):
     """Target zip codes around each office: income and families, from the Census."""
     if (r := guard(request)):
         return r
-    from . import zips
+    from . import zips, zip_plan
     rows = _zip_rows(request)
-    return page(request, "map_zips.html", rows=rows, status=zips.status(), miles=zips.miles_setting(), has_key=zips.has_key(),
+    plan = zip_plan.assign() if any(r["zips"] for r in rows) else None
+    only = users.practice_ids(me(request))
+    if plan and only is not None:
+        plan = {**plan, "offices": [r for r in plan["offices"] if r["practice"]["id"] in only]}
+    return page(request, "map_zips.html", rows=rows, plan=plan, lines=zip_plan.LINES, status=zips.status(), miles=zips.miles_setting(), has_key=zips.has_key(),
                 any_data=any(r["zips"] for r in rows), min_hh=zips.MIN_HOUSEHOLDS)
 
 
@@ -2438,8 +2442,12 @@ def map_zips_miles(request: Request, miles: str = Form("")):
 def map_zips_xlsx(request: Request):
     if (r := guard(request)):
         return r
-    from . import zips
-    return Response(zips.export_xlsx(_zip_rows(request)),
+    from . import zips, zip_plan
+    plan = zip_plan.assign()
+    only = users.practice_ids(me(request))
+    if only is not None:
+        plan = {**plan, "offices": [r for r in plan["offices"] if r["practice"]["id"] in only]}
+    return Response(zips.export_xlsx(_zip_rows(request), zip_plan.export_rows(plan)),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="target-zip-codes.xlsx"'})
 

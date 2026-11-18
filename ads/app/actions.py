@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 from collections import defaultdict
+from datetime import date
 
 from . import connectors as cx
 from . import brand, db, scope
@@ -26,13 +27,15 @@ MIN_TERM_SPEND = 5.0
 BUDGET_MIN_FACTOR, BUDGET_MAX_FACTOR = 0.5, 1.5
 BUDGET_DEADBAND = 0.10          # ignore drift under 10%
 MIN_DAILY_BUDGET = 1.0
-FIX_KINDS = ("negative_keyword", "pause", "budget", "tracking", "placements", "meta_tags", "conversion_goal")
+FIX_KINDS = ("negative_keyword", "pause", "budget", "tracking", "placements", "meta_tags", "conversion_goal",
+             "geo_zips", "meta_zips")
 KIND_LABELS = {"negative_keyword": "Block wasted searches", "pause": "Pause campaigns",
                "budget": "Bring budgets in line", "draft_ad": "New ads (created paused)",
                "new_campaign": "New campaigns (created paused)",
                "add_keyword": "Add keywords", "tracking": "Fix ad tracking",
                "placements": "Keep Meta ads to Facebook and Instagram", "meta_tags": "Tag Meta ads for LeadSigma",
-               "conversion_goal": "Count bookings, not clicks"}
+               "conversion_goal": "Count bookings, not clicks", "geo_zips": "Aim at the practice's zip codes",
+               "meta_zips": "Aim Meta ad sets at the practice's zip codes"}
 
 
 class ActionError(RuntimeError):
@@ -128,7 +131,34 @@ def prepare(practice, views):
     if not practice.get("google_customer_id") and not practice.get("meta_account_id"):
         notes.append("Link this practice's ad accounts first; fixes are applied through those connections.")
     db.replace_proposals(practice["id"], proposals, kinds=FIX_KINDS)
+    plan = _plan_proposals(practice, vmap, notes)          # December plan: keywords and benefits ads
+    if plan:
+        db.replace_proposals(practice["id"], plan, kinds=["-"])
+        proposals += plan
     return len(proposals), notes
+
+
+def _plan_proposals(practice, vmap, notes):
+    """Standard keywords for campaigns that barely run, and paused "use your benefits" ads. Not on the master record
+    (its campaigns belong to the practices). Old ones not yet applied are replaced."""
+    from . import report, targeting
+    with db.conn() as c:
+        c.execute("DELETE FROM changes WHERE practice_id=? AND status='proposed' AND kind IN ('add_keyword', 'draft_ad') "
+                  "AND payload LIKE '%\"plan\": true%'", (practice["id"],))
+    plist = db.practices()
+    if not practice.get("google_customer_id") or not google_ready() or not scope.has_filter(practice) \
+            or report._is_master(practice, plist):
+        return []
+    out = []
+    try:
+        g, cid = _google(), practice["google_customer_id"]
+        camps = [c for c in google_campaigns(g, cid) if scope.matches(c["name"], practice)]
+        out += targeting.keyword_proposals(g, cid, practice, camps, vmap.get("google") or {})
+        if date.today() <= date(date.today().year, 12, 31) and date.today().month in (11, 12):
+            out += targeting.benefits_ads(practice, camps)
+    except Exception as e:
+        notes.append(f"Google: the December plan's keywords and ads couldn't be prepared ({e}).")
+    return out
 
 
 def _budget_plan(view, items, notes, label):
@@ -147,6 +177,12 @@ def _budget_plan(view, items, notes, label):
     if abs(factor - 1) < BUDGET_DEADBAND:
         return [], None
     capped = min(max(factor, BUDGET_MIN_FACTOR), BUDGET_MAX_FACTOR)
+    if capped < 1:          # lowering only helps a campaign that uses its budget; one that doesn't is keyword-limited
+        days = max(pc.get("days_elapsed") or 1, 1)
+        spent = {c["name"]: c["spend"] for c in view.get("campaigns", [])}
+        items = [i for i in items if spent.get(i["name"].split(" › ")[0], i["budget"] * days) / days >= 0.5 * i["budget"]]
+        if not items:
+            return [], None
     plan = [(i, round(max(i["budget"] * capped, MIN_DAILY_BUDGET), 2)) for i in items]
     plan = [(i, n) for i, n in plan if abs(n - i["budget"]) >= 0.01]
     why = (f"To land on the {money(pc['budget'])} {label} monthly budget, the remaining "
@@ -166,6 +202,14 @@ def _google_proposals(p, view, notes):
     one = _unique_by_name(camps)
     out = []
     base = {"platform": "google", "account": cid}
+
+    # 0. Aim at the practice's own zip codes (each zip goes to one of our practices only).
+    if scope.has_filter(p):
+        from . import targeting
+        try:
+            out += targeting.google_geo_proposals(g, cid, p, camps, notes)
+        except Exception as e:
+            notes.append(f"Google: zip targeting couldn't be prepared ({e}).")
 
     # 1. Negative keywords from search terms that cost money and never converted.
     st_up = db.latest_upload(p["id"], "google", "search_term")
@@ -245,6 +289,12 @@ def _meta_proposals(p, view, notes):
             out.append({**base, "kind": "pause", "title": f"Pause {c['name']}", "detail": f["title"] + ".",
                         "payload": {"object_id": c["id"], "campaign": c["name"], "from": "ACTIVE", "to": "PAUSED"}})
 
+    if scope.has_filter(p):          # aim at the practice's own zip codes
+        from . import targeting
+        try:
+            out += targeting.meta_geo_proposals(acct, p, camps)
+        except Exception as e:
+            notes.append(f"Meta: zip targeting couldn't be prepared ({e}).")
     from . import leaks             # the leaks: no-booking campaigns, Audience Network, untagged links
     for fn in (lambda: leaks.leadsigma_pauses(acct, camps, {o["payload"]["object_id"] for o in out}),
                lambda: leaks.placement_proposals(acct, camps), lambda: [leaks.tag_proposal(acct, camps)]):
@@ -553,6 +603,9 @@ def _apply_google(ch):
     if kind == "conversion_goal":
         from . import leaks
         return leaks.apply_conversion_goal(g, cid, pl)
+    if kind == "geo_zips":
+        from . import targeting
+        return targeting.apply_geo(g, cid, pl)
     if kind == "draft_ad":
         res = g.mutate(cid, "adGroupAds", [{"create": {
             "adGroup": pl["ad_group_rn"], "status": "PAUSED",
@@ -602,6 +655,9 @@ def _undo_google(ch):
     elif kind == "conversion_goal":
         from . import leaks
         leaks.undo_conversion_goal(g, cid, res)
+    elif kind == "geo_zips":
+        from . import targeting
+        targeting.undo_geo(g, cid, pl, res)
     elif kind == "pause":
         cur = _gaql_one(g, cid, f"SELECT campaign.status FROM campaign WHERE campaign.id = {int(pl['campaign_id'])}")
         st = cur.get("campaign", {}).get("status")
@@ -634,6 +690,9 @@ def _apply_meta(ch):
     if kind in ("placements", "meta_tags"):
         from . import leaks
         return leaks.apply_placements(pl) if kind == "placements" else leaks.apply_tags(acct, pl)
+    if kind == "meta_zips":
+        from . import targeting
+        return targeting.apply_meta_geo(pl)
     if kind == "draft_ad":
         spec = pl["object_story_spec"]
         if pl.get("image_id"):
@@ -672,6 +731,9 @@ def _undo_meta(ch):
     if kind in ("placements", "meta_tags"):
         from . import leaks
         return leaks.undo_placements(pl) if kind == "placements" else leaks.undo_tags(res)
+    if kind == "meta_zips":
+        from . import targeting
+        return targeting.undo_meta_geo(pl)
     if kind == "pause":
         st = _meta_get_fields(pl["object_id"], "status").get("status")
         if st != pl["to"]:

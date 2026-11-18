@@ -25,6 +25,21 @@
 <form method="post" action="/map/zips/key" class="copy-row" id="ck" hidden><input type="password" name="key" autocomplete="off" placeholder="New 40-character key" aria-label="Census API key" required><button class="btn btn-small" type="submit">Save</button></form>{% endif %}
 {% if can_edit %}<form method="post" action="/map/zips/miles" class="inline-form small">Within <input name="miles" value="{{ miles }}" size="3" inputmode="numeric" aria-label="Miles"> miles of each office <button class="btn btn-small btn-quiet" type="submit">Change</button></form>{% endif %}
 
+{% if plan and plan.offices %}
+<section class="panel section-gap" id="who">
+  <div class="title-row"><h2 style="margin:0">Who markets where</h2><span class="small muted">{{ plan.offices|length }} locations · {{ plan.contested }} zip codes wanted by more than one location, each given to one</span></div>
+  <p class="small muted">Each zip goes to one brand and location only, so our practices never chase the same families. Orthodontics, dentistry and oral surgery are kept apart (different audiences). A zip near several locations goes to the nearest, then shared ones are spread so overlapping locations reach a similar number of households (never more than 5 miles farther). These are the zips “Aim at the practice's zip codes” sets in Google and Meta.</p>
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>Practice</th><th>Location</th><th>Line</th><th class="num">Zips</th><th class="num">Households</th><th class="num">With children</th><th>Zip codes</th></tr></thead>
+    <tbody>{% for r in plan.offices %}<tr>
+      <td><strong>{{ r.practice.name }}</strong></td><td>{{ r.office.label }}</td><td class="small">{{ lines[r.line] }}</td>
+      <td class="num">{{ r.zips|length }}</td><td class="num">{{ '{:,}'.format(r.households) }}</td><td class="num">{{ '{:,}'.format(r.families) }}</td>
+      <td class="small">{% for z in r.zips %}<span title="{{ z.miles }} mi · ${{ '{:,}'.format(z.income) }}{% if z.shared_with %} · also near {{ z.shared_with|join(', ') }}{% endif %}"{% if z.tier == 'target' %} style="font-weight:600"{% endif %}>{{ z.zip }}{% if z.shared_with %}*{% endif %}</span>{% if not loop.last %}, {% endif %}{% else %}<span class="muted">none: every nearby zip went to a closer location</span>{% endfor %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="small muted">Bold = Target (top third by income), plain = Also good. * = also near another of our locations and given to this one. Hover a zip for details.</p>
+</section>
+{% endif %}
+
 {% if not any_data %}
 <p class="empty">{% if status.busy %}Fetching the Census numbers now; refresh this page in a minute.{% elif not status.at %}No Census numbers yet. {% if not has_key %}Add the free Census API key above first.{% elif acc.refresh %}Click “Get the Census numbers” (one free download, about a minute).{% else %}Ask someone with refresh access to fetch them.{% endif %}{% else %}No offices with a location on the Map yet.{% endif %}</p>
 {% else %}

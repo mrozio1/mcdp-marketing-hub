@@ -938,6 +938,21 @@ class GoogleClient:
             out.extend(b.get("results", []))
         return out
 
+    def zip_targets(self, zips):
+        """{zip: 'geoTargetConstants/NNN'} for US postal codes (GeoTargetConstantService.SuggestGeoTargetConstants)."""
+        out = {}
+        url = f"{GOOGLE_BASE}/{GOOGLE_VERSION}/geoTargetConstants:suggest"
+        zips = [z for z in dict.fromkeys(zips) if z]
+        for i in range(0, len(zips), 25):
+            chunk = zips[i:i + 25]
+            res = _http(url, data={"locale": "en", "countryCode": "US", "locationNames": {"names": chunk}},
+                        headers=self._headers())
+            for sug in res.get("geoTargetConstantSuggestions", []):
+                g = sug.get("geoTargetConstant") or {}
+                if g.get("targetType") == "Postal Code" and g.get("countryCode", "US") == "US" and g.get("name") in chunk:
+                    out.setdefault(g["name"], g["resourceName"])
+        return out
+
     def mutate(self, customer_id, service, operations):
         """service e.g. 'campaigns', 'campaignBudgets', 'campaignCriteria', 'adGroupAds'."""
         cid = _clean_id(customer_id)
