@@ -2391,7 +2391,10 @@ def map_zips(request: Request):
     only = users.practice_ids(me(request))
     if plan and only is not None:
         plan = {**plan, "offices": [r for r in plan["offices"] if r["practice"]["id"] in only]}
-    return page(request, "map_zips.html", rows=rows, plan=plan, lines=zip_plan.LINES, status=zips.status(), miles=zips.miles_setting(), has_key=zips.has_key(),
+    plan_practices = sorted({r["practice"]["id"]: r["practice"] for r in (plan or {}).get("offices", [])}.values(),
+                            key=lambda p: p["name"].lower())
+    return page(request, "map_zips.html", rows=rows, plan=plan, lines=zip_plan.LINES, plan_practices=plan_practices,
+                priority=zip_plan.priority_ids(), status=zips.status(), miles=zips.miles_setting(), has_key=zips.has_key(),
                 any_data=any(r["zips"] for r in rows), min_hh=zips.MIN_HOUSEHOLDS)
 
 
@@ -2424,6 +2427,21 @@ def map_zips_key(request: Request, key: str = Form("")):
     else:
         flash(request, "That doesn't look like a Census API key (40 letters and numbers, from their email).", "error")
     return RedirectResponse("/map/zips", status_code=303)
+
+
+@app.post("/map/zips/priority")
+async def map_zips_priority(request: Request):
+    """Practices that get first claim on shared zip codes (admins)."""
+    if (r := guard(request)):
+        return r
+    if (me(request) or {}).get("role") != "admin":
+        flash(request, "That needs admin access. Ask an admin.", "error")
+        return RedirectResponse("/map/zips#who", status_code=303)
+    form = await request.form()
+    from . import zip_plan
+    zip_plan.set_priority([int(x) for x in form.getlist("pid") if str(x).isdigit()])
+    flash(request, "Saved which practices come first for shared zip codes.")
+    return RedirectResponse("/map/zips#who", status_code=303)
 
 
 @app.post("/map/zips/miles")

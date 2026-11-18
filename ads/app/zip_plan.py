@@ -10,6 +10,8 @@ How a zip is assigned:
      the office with the most households to the office with the fewest, when that evens them out and the zip
      isn't more than SPREAD_MILES farther from its new office. So overlapping offices end up with similar reach.
 Offices of the same brand share out zips the same way (Havens Clarkston and Havens Clawson don't both get one).
+Priority practices (set on the page) go first: a shared zip goes to a priority practice's location when it's no
+more than SPREAD_MILES farther than the nearest, and it's never moved away when spreading the rest.
 """
 from __future__ import annotations
 
@@ -18,6 +20,20 @@ import re
 from . import db, field, places, zips
 
 SPREAD_MILES = 5.0
+
+
+def priority_ids():
+    import json
+    try:
+        return {int(x) for x in json.loads(db.get_setting("zip_priority") or "[]")}
+    except (ValueError, TypeError):
+        return set()
+
+
+def set_priority(ids):
+    import json
+    db.set_setting("zip_priority", json.dumps(sorted({int(i) for i in ids})))
+    _cache.clear()
 LINES = {"ortho": "Orthodontics", "dental": "Dentistry", "surgery": "Oral surgery"}
 
 
@@ -53,7 +69,7 @@ _cache = {}
 def assign(miles=None):
     """Cached until the Census numbers, the radius, the offices or their practices change."""
     miles = miles or zips.miles_setting()
-    key = (zips.status().get("at"), miles, tuple(sorted(field.practice_links().items())),
+    key = (zips.status().get("at"), miles, tuple(sorted(priority_ids())), tuple(sorted(field.practice_links().items())),
            tuple((o["id"], o.get("lat"), o.get("lng")) for o in places.offices()),
            tuple((p["id"], p["name"], bool(p.get("google_customer_id")), bool(p.get("meta_account_id")))
                  for p in db.practices()))
@@ -75,13 +91,22 @@ def _assign(miles):
     for i, e in enumerate(entries):
         for zc in e["cands"]:
             wants.setdefault((e["line"], zc), []).append(i)
-    owner = {}
+    owner, locked = {}, set()
+    prio = priority_ids()
     for key, idx in wants.items():
-        owner[key] = min(idx, key=lambda i: entries[i]["cands"][key[1]]["miles"])
+        near_i = min(idx, key=lambda i: entries[i]["cands"][key[1]]["miles"])
+        owner[key] = near_i
+        pri = [i for i in idx if entries[i]["practice"]["id"] in prio and
+               entries[i]["cands"][key[1]]["miles"] <= entries[near_i]["cands"][key[1]]["miles"] + SPREAD_MILES]
+        if pri:                                    # a priority practice keeps it
+            owner[key] = min(pri, key=lambda i: entries[i]["cands"][key[1]]["miles"])
+            locked.add(key)
     load = [0] * len(entries)
     for key, i in owner.items():
         load[i] += entries[i]["cands"][key[1]].get("households") or 0
     contested = {k: v for k, v in wants.items() if len(v) > 1}
+    n_contested = len(contested)
+    contested = {k: v for k, v in contested.items() if k not in locked}
     # even out: move a contested zip from a fuller office to an emptier one while it narrows the gap
     for _ in range(4 * len(contested) + 10):
         best = None
@@ -123,7 +148,8 @@ def _assign(miles):
     for p in practices.values():
         p["zips"] = sorted(set(p["zips"]))
     offices.sort(key=lambda r: (r["practice"]["name"].lower(), r["office"]["label"].lower()))
-    return {"offices": offices, "practices": practices, "contested": len(contested), "miles": miles}
+    return {"offices": offices, "practices": practices, "contested": n_contested, "miles": miles,
+            "priority": sorted(prio)}
 
 
 def practice_zips(pid, plan=None):

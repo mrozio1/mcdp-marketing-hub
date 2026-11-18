@@ -136,3 +136,15 @@ def test_budget_not_raised_for_a_campaign_that_isnt_using_it():
     plan, _ = actions._budget_plan(view, [{"name": "Findlay - Search", "budget": 20.0},
                                           {"name": "Busy - Search", "budget": 20.0}], [], "Google Ads")
     assert [i["name"] for i, _ in plan] == ["Busy - Search"]
+
+
+def test_priority_practice_keeps_shared_zips(world):
+    c, db, a, b, k = world
+    from app import zip_plan
+    before = {z["zip"] for r in zip_plan.assign(miles=15)["offices"] if r["practice"]["id"] == a for z in r["zips"]}
+    c.post("/map/zips/priority", data={"pid": [str(a)]})
+    plan = zip_plan.assign(miles=15)
+    mine = {z["zip"] for r in plan["offices"] if r["practice"]["id"] == a for z in r["zips"]}
+    theirs = {z["zip"] for r in plan["offices"] if r["practice"]["id"] == b for z in r["zips"]}
+    assert len(mine) > len(before) and not (mine & theirs) and plan["priority"] == [a]
+    assert "Priority:" in c.get("/map/zips").text

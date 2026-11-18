@@ -29,6 +29,11 @@
 <section class="panel section-gap" id="who">
   <div class="title-row"><h2 style="margin:0">Who markets where</h2><span class="small muted">{{ plan.offices|length }} locations · {{ plan.contested }} zip codes wanted by more than one location, each given to one</span></div>
   <p class="small muted">Each zip goes to one brand and location only, so our practices never chase the same families. Orthodontics, dentistry and oral surgery are kept apart (different audiences). A zip near several locations goes to the nearest, then shared ones are spread so overlapping locations reach a similar number of households (never more than 5 miles farther). These are the zips “Aim at the practice's zip codes” sets in Google and Meta.</p>
+  {% if priority %}<p class="small"><strong>Priority:</strong> {% for p in plan_practices if p.id in priority %}{{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %} get first claim on shared zips within {{ 5 }} miles of their nearest competitor location.</p>{% endif %}
+  {% if is_admin %}<details class="drawer"><summary><span class="drawer-title">Priority practices</span><span class="drawer-hint">First claim on shared zip codes</span></summary><div class="drawer-body">
+    <form method="post" action="/map/zips/priority" class="acc-form" style="display:block">
+      {% for p in plan_practices %}<label class="check" style="display:inline-flex;gap:.4rem;margin:.2rem 1rem .2rem 0"><input type="checkbox" name="pid" value="{{ p.id }}" {% if p.id in priority %}checked{% endif %}> {{ p.name }}</label>{% endfor %}
+      <p><button class="btn btn-small" type="submit">Save</button></p></form></div></details>{% endif %}
   <div class="table-scroll"><table class="data">
     <thead><tr><th>Practice</th><th>Location</th><th>Line</th><th class="num">Zips</th><th class="num">Households</th><th class="num">With children</th><th>Zip codes</th></tr></thead>
     <tbody>{% for r in plan.offices %}<tr>
