@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Target zip codes{% endblock %}
+{% block content %}
+<div class="title-row">
+  <h1>Target zip codes</h1>
+  <div class="title-actions">
+    {% if any_data and acc.reports %}<a class="btn btn-quiet" href="/map/zips.xlsx">Download Excel</a>{% endif %}
+    {% if acc.refresh %}<form method="post" action="/map/zips/refresh" data-busy="Starting…"><button class="btn {{ 'btn-quiet' if status.at else '' }}" type="submit" {% if status.busy %}disabled{% endif %}>{{ 'Fetching…' if status.busy else ('Refresh Census numbers' if status.at else 'Get the Census numbers') }}</button></form>{% endif %}
+  </div>
+</div>
+<p class="lede muted">Where to aim ads at mid- to high-income families: every zip code within {{ miles }} miles of each office, ranked by median household income, with how many households have children. The top third by income is <strong>Target</strong>, the middle third <strong>Also good</strong>. Copy a list straight into Meta's or Google's location targeting.</p>
+{% if status.error %}<p class="flash flash-error">{{ status.error }}</p>{% endif %}
+{% if status.at %}<p class="small muted">U.S. Census Bureau, American Community Survey {{ status.year }} 5-year estimates · {{ '{:,}'.format(status.zips or 0) }} zip codes · fetched {{ status.at[:10] }}. Zips with fewer than {{ min_hh }} households are left out.</p>{% endif %}
+{% if can_edit %}<form method="post" action="/map/zips/miles" class="inline-form small">Within <input name="miles" value="{{ miles }}" size="3" inputmode="numeric" aria-label="Miles"> miles of each office <button class="btn btn-small btn-quiet" type="submit">Change</button></form>{% endif %}
+
+{% if not any_data %}
+<p class="empty">{% if status.busy %}Fetching the Census numbers now; refresh this page in a minute.{% elif not status.at %}No Census numbers yet. {% if acc.refresh %}Click “Get the Census numbers” (one free download, about a minute).{% else %}Ask someone with refresh access to fetch them.{% endif %}{% else %}No offices with a location on the Map yet.{% endif %}</p>
+{% else %}
+{% for r in rows if r.zips %}
+<section class="panel section-gap zip-office">
+  <div class="title-row"><h2 style="margin:0">{{ r.office.label }}</h2>
+    <span class="small muted">{{ r.target|length }} target zip{{ '' if r.target|length == 1 else 's' }}{% if r.income_floor %} · median income ${{ '{:,}'.format(r.income_floor) }}+{% endif %} · {{ '{:,}'.format(r.families) }} households with children</span></div>
+  {% if r.target %}
+  <div class="copy-row"><input value="{{ r.target|map(attribute='zip')|join(', ') }}" readonly aria-label="Target zip codes for {{ r.office.label }}" data-zips><button class="btn btn-small" type="button" data-copy>Copy target zips</button>
+    {% if r.good %}<button class="btn btn-small btn-quiet" type="button" data-copy-both="{{ (r.target + r.good)|map(attribute='zip')|join(', ') }}">Copy target + also good</button>{% endif %}</div>
+  {% endif %}
+  <div class="table-scroll"><table class="data">
+    <thead><tr><th>ZIP</th><th>Tier</th><th class="num">Miles</th><th class="num">Median household income</th><th class="num">Households</th><th class="num">With children</th></tr></thead>
+    <tbody>{% for z in r.zips %}<tr class="{{ 'muted' if z.tier == 'other' else '' }}">
+      <td><strong>{{ z.zip }}</strong></td>
+      <td>{% if z.tier == 'target' %}<span class="tag tag-ok">Target</span>{% elif z.tier == 'good' %}<span class="tag">Also good</span>{% else %}Other{% endif %}</td>
+      <td class="num">{{ z.miles }}</td><td class="num">${{ '{:,}'.format(z.income) }}</td>
+      <td class="num">{{ '{:,}'.format(z.households or 0) }}</td>
+      <td class="num">{{ '{:,}'.format(z.hh_kids or 0) }}{% if z.kids_share is not none %} <span class="muted small">({{ '%.0f'|format(z.kids_share * 100) }}%)</span>{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endfor %}
+{% endif %}
+<script>
+document.querySelectorAll(".zip-office").forEach(sec => {
+  const input = sec.querySelector("[data-zips]");
+  const copy = async (text, btn) => { try { await navigator.clipboard.writeText(text); } catch { input.value = text; input.select(); document.execCommand("copy"); } const t = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = t, 1500); };
+  sec.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copy(input.value, b));
+  sec.querySelectorAll("[data-copy-both]").forEach(b => b.onclick = () => copy(b.dataset.copyBoth, b));
+});
+</script>
+{% endblock %}

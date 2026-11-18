@@ -4,6 +4,7 @@
 <div class="title-row">
   <h1>Market map</h1>
   <div class="title-actions">
+  {% if offices %}<a class="btn btn-quiet" href="/map/zips">Target zip codes</a>{% endif %}
   {% if offices and acc.reports %}<a class="btn btn-quiet" href="/map/list">Export Map List</a>{% endif %}
   {% if server_key_set and offices and acc.refresh %}
   <form method="post" action="/map/refresh" data-busy="Starting…">

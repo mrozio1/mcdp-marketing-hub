@@ -76,8 +76,8 @@ TAB_PATHS = [("dashboard", re.compile(r"^/(dashboard/.*)?$")), ("practices", re.
              ("studio", re.compile(r"^/studio(/|$)")), ("map", re.compile(r"^/map(/|$)")),
              ("field", re.compile(r"^/field(/|\.xlsx|$)")), ("calendar", re.compile(r"^/calendar(/|$)"))]
 REPORT_PATHS = re.compile(r"^/(reports(/|$)|field/report|field\.xlsx|reviews\.xlsx|reviews/report|search\.xlsx"
-                          r"|p/\d+/(report|posts\.csv|email)|map/(referrals|schools)\.xlsx)")
-REFRESH_PATHS = re.compile(r"^/(sync(/run)?$|sync/(?!status)|map/(refresh|schools/refresh|referrals/refresh)$"
+                          r"|p/\d+/(report|posts\.csv|email)|map/(referrals|schools|zips)\.xlsx)")
+REFRESH_PATHS = re.compile(r"^/(sync(/run)?$|sync/(?!status)|map/(refresh|schools/refresh|referrals/refresh|zips/refresh)$"
                            r"|reviews/(sync|locations/refresh)$|search/refresh$|studio/posts/sync$|tracking/fix-all$)")
 PRACTICE_PATH = re.compile(r"^/p/(\d+)(/|$)")
 
@@ -217,6 +217,8 @@ def _startup():
     places.purge_old()
     referrals.init()
     schools.init()
+    from . import zips
+    zips.init()
     field.init()
     salesforce.init()
     cal.init()
@@ -240,6 +242,8 @@ def _startup():
         places.start_scheduler()
         referrals.start_scheduler()
         schools.start_scheduler()
+        if zips.due():
+            zips.refresh_in_background()        # new Census numbers come out each December
         salesforce.start_scheduler(PUBLIC_URL)
         cal.start_scheduler()
 
@@ -2364,6 +2368,62 @@ def map_schools_refresh(request: Request):
         schools.refresh_in_background()
         flash(request, "Fetching private and charter schools from NCES in the background. Refresh the page in a minute or two.")
     return RedirectResponse("/map#schools", status_code=303)
+
+
+def _zip_rows(request):
+    offs = places.offices()
+    only = users.practice_ids(me(request))
+    if only is not None:
+        links = field.practice_links()
+        offs = [o for o in offs if links.get(o["id"]) in only]
+    from . import zips
+    return zips.for_offices(offs)
+
+
+@app.get("/map/zips", response_class=HTMLResponse)
+def map_zips(request: Request):
+    """Target zip codes around each office: income and families, from the Census."""
+    if (r := guard(request)):
+        return r
+    from . import zips
+    rows = _zip_rows(request)
+    return page(request, "map_zips.html", rows=rows, status=zips.status(), miles=zips.miles_setting(),
+                any_data=any(r["zips"] for r in rows), min_hh=zips.MIN_HOUSEHOLDS)
+
+
+@app.post("/map/zips/refresh")
+def map_zips_refresh(request: Request):
+    if (r := guard(request)):
+        return r
+    from . import zips
+    if zips.status().get("busy"):
+        flash(request, "Already fetching the Census numbers; refresh the page in a minute.")
+    else:
+        zips.refresh_in_background()
+        flash(request, "Fetching income and family numbers for every US zip code from the Census Bureau. Refresh the page in a minute.")
+    return RedirectResponse("/map/zips", status_code=303)
+
+
+@app.post("/map/zips/miles")
+def map_zips_miles(request: Request, miles: str = Form("")):
+    if (r := guard(request)):
+        return r
+    if miles.isdigit() and 3 <= int(miles) <= 40:
+        db.set_setting("zip_miles", miles)
+        flash(request, f"Zip codes within {miles} miles of each office.")
+    else:
+        flash(request, "Pick between 3 and 40 miles.", "error")
+    return RedirectResponse("/map/zips", status_code=303)
+
+
+@app.get("/map/zips.xlsx")
+def map_zips_xlsx(request: Request):
+    if (r := guard(request)):
+        return r
+    from . import zips
+    return Response(zips.export_xlsx(_zip_rows(request)),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="target-zip-codes.xlsx"'})
 
 
 @app.get("/map/schools.xlsx")
