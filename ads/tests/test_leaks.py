@@ -10,6 +10,8 @@ class FakeMeta:
                     "targeting": {"geo_locations": {"zips": [{"key": "US:48314"}]}, "age_min": 30}},
             "as2": {"name": "Adults", "campaign_id": "c1", "status": "ACTIVE",
                     "targeting": {"publisher_platforms": ["facebook", "instagram"]}},
+            "as3": {"name": "Spring (ended)", "campaign_id": "c1", "status": "ACTIVE", "end_time": "2026-03-31T23:59:00-0400",
+                    "targeting": {}},
             "ad1": {"name": "Price ad", "campaign_id": "c1", "status": "ACTIVE",
                     "creative": {"id": "cr1", "name": "Price", "url_tags": "ref=mc",
                                  "object_story_spec": {"page_id": "7", "link_data": {"link": "https://x.example"}}}},
@@ -63,7 +65,7 @@ CAMPS = [{"id": "c1", "name": "Price is right at Heights campaign 10-1-2026", "s
 def test_audience_network_out_and_back(meta):
     m, leaks = meta
     props = leaks.placement_proposals("1", CAMPS)
-    assert [p["payload"]["adset"] for p in props] == ["Parents 30-55"]          # as2 is already Facebook + Instagram
+    assert [p["payload"]["adset"] for p in props] == ["Parents 30-55"]   # as2 already Facebook + Instagram; as3 has ended
     pl = props[0]["payload"]
     leaks.apply_placements(pl)
     t = m.objects["as1"]["targeting"]

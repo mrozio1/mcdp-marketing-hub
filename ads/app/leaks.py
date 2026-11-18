@@ -44,10 +44,22 @@ def _norm(s):
 
 
 # ------------------------------------------------------------------ Meta: placements
+def _running(end_time):
+    """False for an ad set whose end date has passed (it's on, but it stopped delivering and can't be edited)."""
+    if not end_time:
+        return True
+    from datetime import datetime, timezone
+    try:
+        return datetime.fromisoformat(end_time.replace("Z", "+00:00").replace("+0000", "+00:00")) > datetime.now(timezone.utc)
+    except ValueError:
+        return True
+
+
 def _active_adsets(acct, camp_ids):
-    rows = cx._meta_paged(f"act_{acct}/adsets", {"fields": "id,name,campaign_id,status,effective_status,targeting",
+    rows = cx._meta_paged(f"act_{acct}/adsets", {"fields": "id,name,campaign_id,status,effective_status,end_time,targeting",
                                                   "limit": 200})
-    return [a for a in rows if a.get("campaign_id") in camp_ids and a.get("status") == "ACTIVE"]
+    return [a for a in rows if a.get("campaign_id") in camp_ids and a.get("status") == "ACTIVE"
+            and _running(a.get("end_time"))]
 
 
 def without_audience_network(targeting):
@@ -152,9 +164,10 @@ def leadsigma_pauses(acct, camps, already=()):
 # ------------------------------------------------------------------ Meta: UTM tags on ads
 def _active_ads(acct, camp_ids):
     rows = cx._meta_paged(f"act_{acct}/ads", {
-        "fields": "id,name,campaign_id,status,creative{id,url_tags,object_story_id,asset_feed_spec}",
+        "fields": "id,name,campaign_id,status,adset{end_time},creative{id,url_tags,object_story_id,asset_feed_spec}",
         "effective_status": '["ACTIVE"]', "limit": 25})          # small pages: Meta refuses big creative reads
-    return [a for a in rows if a.get("campaign_id") in camp_ids and a.get("status") == "ACTIVE"]
+    return [a for a in rows if a.get("campaign_id") in camp_ids and a.get("status") == "ACTIVE"
+            and _running((a.get("adset") or {}).get("end_time"))]
 
 
 def tag_proposal(acct, camps):
