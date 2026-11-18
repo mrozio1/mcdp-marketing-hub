@@ -111,8 +111,11 @@ def prepare(practice, views):
             except Exception as e:      # never let the tracking check stop the other fixes
                 notes.append(f"Google tracking couldn't be checked: {e}")
             from . import leaks
-            try:
-                cg = leaks.conversion_proposal(_google(), practice["google_customer_id"], notes)
+            cid_ = str(practice["google_customer_id"])
+            sharers = [q for q in db.practices() if str(q.get("google_customer_id") or "") == cid_]
+            owner = next((q for q in sharers if not scope.has_filter(q)), sharers[0] if sharers else practice)
+            try:                  # account-wide, so it's offered once: on the record without a filter (the master)
+                cg = leaks.conversion_proposal(_google(), cid_, notes) if owner["id"] == practice["id"] else None
                 if cg:
                     proposals.append(cg)
             except Exception as e:
@@ -189,6 +192,9 @@ def _google_proposals(p, view, notes):
                 continue
             if len(term) > 80 or len(term.split()) > 10:
                 continue
+            from . import leaks
+            if not leaks.safe_to_block(term, v["spend"], v["clicks"], p, cname):
+                continue                  # our own name, or a core search without enough behind it yet
             out.append({**base, "kind": "negative_keyword",
                         "title": f"Block “{term}” in {cname}",
                         "detail": f"{money(v['spend'])} spent, {v['clicks']} click{'s' if v['clicks'] != 1 else ''}, "

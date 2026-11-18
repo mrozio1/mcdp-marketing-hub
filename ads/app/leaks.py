@@ -149,8 +149,8 @@ def leadsigma_pauses(acct, camps, already=()):
 # ------------------------------------------------------------------ Meta: UTM tags on ads
 def _active_ads(acct, camp_ids):
     rows = cx._meta_paged(f"act_{acct}/ads", {
-        "fields": "id,name,campaign_id,status,creative{id,name,url_tags,object_story_id,object_story_spec,asset_feed_spec}",
-        "limit": 200})
+        "fields": "id,name,campaign_id,status,creative{id,url_tags,object_story_id,asset_feed_spec}",
+        "effective_status": '["ACTIVE"]', "limit": 25})          # small pages: Meta refuses big creative reads
     return [a for a in rows if a.get("campaign_id") in camp_ids and a.get("status") == "ACTIVE"]
 
 
@@ -163,7 +163,7 @@ def tag_proposal(acct, camps):
         cr = a.get("creative") or {}
         if "utm_source" in (cr.get("url_tags") or ""):
             continue
-        if cr.get("asset_feed_spec") or not (cr.get("object_story_id") or cr.get("object_story_spec")):
+        if cr.get("asset_feed_spec"):
             skipped.append(a["name"])
             continue
         todo.append({"ad_id": a["id"], "ad": a["name"], "campaign": names[a["campaign_id"]], "creative_id": cr["id"],
@@ -294,6 +294,40 @@ def apply_conversion_goal(g, cid, pl):
 def undo_conversion_goal(g, cid, res):
     g.mutate(cid, "conversionActions", [{"update": {"resourceName": a["resource"], "primaryForGoal": True},
                                          "updateMask": "primary_for_goal"} for a in res.get("actions", [])])
+
+
+# ------------------------------------------------------------------ Google: which searches are safe to block
+CORE = re.compile(r"orthodont|\bortho\b|braces|invisalign|aligner|retainer|\bdentist|\bdental", re.I)
+JUNK = re.compile(r"medicaid|molina|meridian|medicare|\bcheap|\bjobs?\b|salary|careers?|school|course|\bdiy\b|"
+                  r"emergency|how to|what is|\bfree\b|cost of living|reddit", re.I)
+GENERIC = {"the", "and", "orthodontics", "orthodontic", "orthodontist", "ortho", "dental", "dentistry", "family",
+           "smiles", "smile", "llc", "pllc", "search", "care", "pediatric", "center", "group", "specialists", "dds", "dr"}
+CORE_MIN_SPEND, CORE_MIN_CLICKS = 40.0, 5
+
+
+def brand_words(practice, campaign=""):
+    words = set()
+    for s in (practice.get("name"), practice.get("campaign_filter"), (campaign or "").split(" - ")[0]):
+        for part in (s or "").split(","):
+            if part.strip().startswith("-"):
+                continue
+            words |= {w for w in re.findall(r"[a-z0-9]+", part.lower())
+                      if len(w) > 3 and w not in GENERIC and not CORE.search(w)}   # 'Invisalign - Search' isn't a name
+    return words
+
+
+def safe_to_block(term, spend, clicks, practice, campaign=""):
+    """A search worth blocking: never one with our own name in it; a core search ('invisalign near me',
+    'orthodontist canton mi') only with real spend and clicks behind it, unless it's clearly the wrong person
+    (jobs, Medicaid, cheap, DIY ...)."""
+    if JUNK.search(term):
+        return True                                   # "havens orthodontics jobs" is still the wrong person
+    words = set(re.findall(r"[a-z0-9]+", term.lower()))
+    if words & brand_words(practice, campaign):
+        return False
+    if CORE.search(term):
+        return spend >= CORE_MIN_SPEND and clicks >= CORE_MIN_CLICKS
+    return True
 
 
 # ------------------------------------------------------------------ shared

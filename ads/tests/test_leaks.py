@@ -134,3 +134,15 @@ def test_conversion_goal(meta):
     only_weak = FakeGoogle({"a/1": {"name": "Website visit", "category": "PAGE_VIEW", "primary": True, "n": 200}})
     notes = []
     assert leaks.conversion_proposal(only_weak, "1", notes) is None and "Add a booking or call conversion" in notes[0]
+
+
+def test_brand_and_core_searches_are_not_blocked_on_one_click():
+    from app import leaks
+    havens = {"name": "Havens Orthodontics", "campaign_filter": "havens"}
+    assert not leaks.safe_to_block("havens orthodontics near me", 7, 2, havens)         # our own name: never
+    assert not leaks.safe_to_block("orthodontist in st clair shores", 9, 1, havens)      # core search, one click
+    assert leaks.safe_to_block("orthodontist in st clair shores", 60, 7, havens)         # ...unless it keeps costing
+    assert leaks.safe_to_block("orthodontists that accept medicaid", 8, 1, havens)       # the wrong person
+    assert leaks.safe_to_block("cheap braces near me", 6, 1, havens)
+    assert not leaks.safe_to_block("invisalign near me", 9, 1, {"name": "MCDP Ads"}, "Wheeler - Search - Toledo")
+    assert leaks.safe_to_block("teeth whitening kit", 6, 1, havens)                      # not what we offer
