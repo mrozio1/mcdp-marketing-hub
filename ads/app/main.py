@@ -2387,7 +2387,7 @@ def map_zips(request: Request):
         return r
     from . import zips
     rows = _zip_rows(request)
-    return page(request, "map_zips.html", rows=rows, status=zips.status(), miles=zips.miles_setting(),
+    return page(request, "map_zips.html", rows=rows, status=zips.status(), miles=zips.miles_setting(), has_key=zips.has_key(),
                 any_data=any(r["zips"] for r in rows), min_hh=zips.MIN_HOUSEHOLDS)
 
 
@@ -2401,6 +2401,24 @@ def map_zips_refresh(request: Request):
     else:
         zips.refresh_in_background()
         flash(request, "Fetching income and family numbers for every US zip code from the Census Bureau. Refresh the page in a minute.")
+    return RedirectResponse("/map/zips", status_code=303)
+
+
+@app.post("/map/zips/key")
+def map_zips_key(request: Request, key: str = Form("")):
+    """The free Census API key (admins). Saved in the hub's settings; never shown again."""
+    if (r := guard(request)):
+        return r
+    key = key.strip()
+    if (me(request) or {}).get("role") != "admin":
+        flash(request, "That needs admin access. Ask an admin.", "error")
+    elif re.fullmatch(r"[0-9a-fA-F]{40}", key):
+        db.set_setting("census_key", key)
+        from . import zips
+        zips.refresh_in_background()
+        flash(request, "Key saved. Fetching the Census numbers now; refresh the page in a minute.")
+    else:
+        flash(request, "That doesn't look like a Census API key (40 letters and numbers, from their email).", "error")
     return RedirectResponse("/map/zips", status_code=303)
 
 

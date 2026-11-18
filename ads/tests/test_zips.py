@@ -36,6 +36,12 @@ def test_parse_rank_and_page(client, monkeypatch):
     acs, gaz = zips.parse_acs(ACS), zips.parse_gazetteer(_zipped(GAZ))
     assert acs["48357"]["income"] is None and gaz["48306"] == (42.724, -83.14)
     monkeypatch.setattr(zips, "_fetch", lambda url, timeout=120: ACS if "api.census" in url else _zipped(GAZ))
+    import pytest
+    with pytest.raises(zips.ZipError, match="Census API key"):
+        zips.refresh()
+    assert "Add the free Census API key" in c.get("/map/zips").text
+    c.post("/map/zips/key", data={"key": "a" * 40})
+    assert db.get_setting("census_key") == "a" * 40 and "a" * 40 not in c.get("/map/zips").text
     assert zips.refresh() == 8 and zips.status()["zips"] == 8
     places.add_office("Waterford", "ChIJ_office_waterford1", 42.660, -83.200)
     r = zips.for_offices()[0]

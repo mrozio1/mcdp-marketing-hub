@@ -2,7 +2,7 @@
 U.S. Census Bureau (American Community Survey 5-year estimates, by ZIP Code Tabulation Area), for aiming ads at
 mid- to high-income families.
 
-Sources (free, public domain, no key needed for one request a day):
+Sources (free, public domain; the Census API needs a free key, kept in the hub's settings):
   - ACS 5-year API: median household income (B19013), households and households with someone under 18 (B11005),
     population (B01003), for every ZCTA in one request.
   - Census Gazetteer: each ZCTA's centre point, to work out which zips are near which office.
@@ -62,6 +62,10 @@ def status():
 
 def _set_status(**kw):
     db.set_setting("zips_status", json.dumps({**status(), **kw}))
+
+
+def has_key():
+    return bool(db.get_setting("census_key") or os.environ.get("CENSUS_KEY"))
 
 
 def miles_setting():
@@ -137,7 +141,16 @@ def refresh():
         raise ZipError("Already fetching the Census numbers.")
     try:
         _set_status(busy=True, error="")
-        acs = parse_acs(_fetch(f"{ACS_URL}?get={','.join(VARS)}&for=zip%20code%20tabulation%20area:*"))
+        key = db.get_setting("census_key") or os.environ.get("CENSUS_KEY", "")
+        if not key:
+            raise ZipError("Add the free Census API key first (below).")
+        raw = _fetch(f"{ACS_URL}?get={','.join(VARS)}&for=zip%20code%20tabulation%20area:*&key={key}")
+        if raw.lstrip()[:1] != b"[":
+            low = raw[:2000].decode("utf-8", "replace").lower()
+            raise ZipError("The Census Bureau didn't accept the API key. Check it was copied whole, and that you clicked "
+                           "the link in their email to activate it." if "key" in low else
+                           "The Census answer wasn't the table expected. Try again later.")
+        acs = parse_acs(raw)
         gaz = parse_gazetteer(_fetch(GAZ_URL))
         n = store(acs, gaz)
         if not n:

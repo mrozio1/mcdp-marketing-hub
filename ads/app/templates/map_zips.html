@@ -11,10 +11,22 @@
 <p class="lede muted">Where to aim ads at mid- to high-income families: every zip code within {{ miles }} miles of each office, ranked by median household income, with how many households have children. The top third by income is <strong>Target</strong>, the middle third <strong>Also good</strong>. Copy a list straight into Meta's or Google's location targeting.</p>
 {% if status.error %}<p class="flash flash-error">{{ status.error }}</p>{% endif %}
 {% if status.at %}<p class="small muted">U.S. Census Bureau, American Community Survey {{ status.year }} 5-year estimates · {{ '{:,}'.format(status.zips or 0) }} zip codes · fetched {{ status.at[:10] }}. Zips with fewer than {{ min_hh }} households are left out.</p>{% endif %}
+{% if is_admin and not has_key %}
+<section class="panel section-gap" id="census-key">
+  <h2 style="margin:0">Add the free Census API key</h2>
+  <ol class="small">
+    <li>Open <a href="https://api.census.gov/data/key_signup.html" target="_blank" rel="noopener">the Census Bureau's key sign-up</a>, enter MCDP as the organization and your work email.</li>
+    <li>Click the activation link in the email they send (it takes a minute or two).</li>
+    <li>Paste the key here. It's saved in the hub's settings and never shown again.</li>
+  </ol>
+  <form method="post" action="/map/zips/key" class="copy-row"><input type="password" name="key" autocomplete="off" placeholder="40-character key" aria-label="Census API key" required><button class="btn" type="submit">Save and fetch</button></form>
+</section>
+{% elif is_admin %}<p class="small muted">Census API key saved. <a href="#" onclick="document.getElementById('ck').hidden=false;return false">Replace it</a></p>
+<form method="post" action="/map/zips/key" class="copy-row" id="ck" hidden><input type="password" name="key" autocomplete="off" placeholder="New 40-character key" aria-label="Census API key" required><button class="btn btn-small" type="submit">Save</button></form>{% endif %}
 {% if can_edit %}<form method="post" action="/map/zips/miles" class="inline-form small">Within <input name="miles" value="{{ miles }}" size="3" inputmode="numeric" aria-label="Miles"> miles of each office <button class="btn btn-small btn-quiet" type="submit">Change</button></form>{% endif %}
 
 {% if not any_data %}
-<p class="empty">{% if status.busy %}Fetching the Census numbers now; refresh this page in a minute.{% elif not status.at %}No Census numbers yet. {% if acc.refresh %}Click “Get the Census numbers” (one free download, about a minute).{% else %}Ask someone with refresh access to fetch them.{% endif %}{% else %}No offices with a location on the Map yet.{% endif %}</p>
+<p class="empty">{% if status.busy %}Fetching the Census numbers now; refresh this page in a minute.{% elif not status.at %}No Census numbers yet. {% if not has_key %}Add the free Census API key above first.{% elif acc.refresh %}Click “Get the Census numbers” (one free download, about a minute).{% else %}Ask someone with refresh access to fetch them.{% endif %}{% else %}No offices with a location on the Map yet.{% endif %}</p>
 {% else %}
 {% for r in rows if r.zips %}
 <section class="panel section-gap zip-office">
