@@ -207,3 +207,11 @@ def test_dental_services_are_core_for_dentists_not_for_orthodontists():
     assert leaks.safe_to_block("root canal near me", 9, 1, {"name": "MCDP Ads"}, "Wheeler - Search - Toledo Orthodontics")
     assert not leaks.safe_to_block("root canal near me", 9, 1, {"name": "MCDP Ads"}, "Algonac - Search - Algonac Dental Care")
     assert not leaks.safe_to_block("free braces consultation", 6, 1, havens)          # free consults are good leads
+
+
+def test_misspelled_brand_and_aligner_brands_are_kept():
+    from app import leaks
+    charchut = {"name": "Charchut Orthodontics", "campaign_filter": "charchut"}
+    assert not leaks.safe_to_block("dr charcut", 7, 1, charchut)
+    assert not leaks.safe_to_block("clearcorrect near me", 7, 1, {"name": "Norwick Orthodontics", "campaign_filter": "norwick"})
+    assert leaks.safe_to_block("dr hummon", 7, 1, charchut)                      # a competitor's name: fine to block

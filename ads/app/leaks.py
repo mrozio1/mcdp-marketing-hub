@@ -405,7 +405,7 @@ def undo_conversion_goal(g, cid, res):
 
 
 # ------------------------------------------------------------------ Google: which searches are safe to block
-CORE = re.compile(r"orthodont|\bortho\b|braces|invisalign|aligner|retainer|\bdentist|\bdental", re.I)
+CORE = re.compile(r"orthodont|\bortho\b|braces|invisalign|aligner|retainer|clear ?correct|spark|\bdentist|\bdental", re.I)
 # What a general or pediatric dentist (or oral surgeon) offers: core for them, not wasted searches.
 DENTAL_CORE = re.compile(r"\bteeth\b|\btooth\b|implant|root canal|crown|cleaning|filling|extraction|denture|veneer|"
                          r"whitening|cavit|emergency|wisdom|gum|bridge|sedation|check ?up|exam", re.I)
@@ -428,6 +428,19 @@ def brand_words(practice, campaign=""):
     return words
 
 
+def _close(a, b):
+    """One or two letters off a name of 6+ letters (a typo of it)."""
+    if len(a) < 5 or len(b) < 6 or abs(len(a) - len(b)) > 2:
+        return False
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1] <= 2
+
+
 def line_for(practice, campaign=""):
     """What the campaign sells: the practice's line of work; on the master record, that of the practice whose
     campaign filter words match the campaign (else what the campaign name says)."""
@@ -448,8 +461,8 @@ def safe_to_block(term, spend, clicks, practice, campaign=""):
     if JUNK.search(term):
         return True                                   # "havens orthodontics jobs" is still the wrong person
     words = set(re.findall(r"[a-z0-9]+", term.lower()))
-    if words & brand_words(practice, campaign):
-        return False
+    if words & brand_words(practice, campaign) or any(_close(w, b) for w in words for b in brand_words(practice, campaign)):
+        return False                                  # our own name, even misspelled ("dr charcut")
     if line == "ortho" and ORTHO_JUNK.search(term) and not CORE.search(term.replace("dentist", "")):
         return True                                   # "emergency dentist" in an orthodontist's campaign
     if CORE.search(term) or (line != "ortho" and DENTAL_CORE.search(term)):
