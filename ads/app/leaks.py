@@ -32,11 +32,11 @@ LS_MIN_VISITS = 500                      # booking-page visits with no bookings 
 GOOD_CATEGORIES = {"SUBMIT_LEAD_FORM", "BOOK_APPOINTMENT", "PHONE_CALL_LEAD", "CONTACT", "IMPORTED_LEAD",
                    "QUALIFIED_LEAD", "CONVERTED_LEAD", "REQUEST_QUOTE", "SIGNUP", "PURCHASE", "GET_DIRECTIONS",
                    "STORE_VISIT"}
-WEAK_CATEGORIES = {"PAGE_VIEW", "ENGAGEMENT", "OUTBOUND_CLICK", "DOWNLOAD", "ADD_TO_CART", "BEGIN_CHECKOUT",
-                   "DEFAULT"}
+WEAK_CATEGORIES = {"PAGE_VIEW", "ENGAGEMENT", "OUTBOUND_CLICK", "DOWNLOAD", "ADD_TO_CART", "BEGIN_CHECKOUT"}
+# "Default" is the category many form-submit and imported-lead actions keep, so it isn't a sign of a weak one
 WEAK_NAME = re.compile(r"page ?view|pageview|scroll|engag|time on|session|visit|all clicks|outbound|"
                        r"click|website traffic|button", re.I)
-GOOD_NAME = re.compile(r"book|appoint|lead|form|submit|call|consult|schedul|contact|confirm", re.I)
+GOOD_NAME = re.compile(r"book|appoint|lead|form|submit|call|consult|schedul|contact|confirm|\bmql\b|\bsql\b|qualified", re.I)
 
 
 def _norm(s):

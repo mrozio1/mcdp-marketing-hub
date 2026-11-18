@@ -215,3 +215,10 @@ def test_misspelled_brand_and_aligner_brands_are_kept():
     assert not leaks.safe_to_block("dr charcut", 7, 1, charchut)
     assert not leaks.safe_to_block("clearcorrect near me", 7, 1, {"name": "Norwick Orthodontics", "campaign_filter": "norwick"})
     assert leaks.safe_to_block("dr hummon", 7, 1, charchut)                      # a competitor's name: fine to block
+
+
+def test_qualified_leads_and_default_forms_keep_counting():
+    from app import leaks
+    assert not leaks.is_weak({"name": "MQL - Howell (GCLID)", "category": "DEFAULT"})
+    assert not leaks.is_weak({"name": "chelseaorthodontics.com (web) contactus_formsubmit", "category": "DEFAULT"})
+    assert leaks.is_weak({"name": "Local actions - Website visits", "category": "PAGE_VIEW"})
