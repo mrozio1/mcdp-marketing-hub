@@ -26,11 +26,13 @@ MIN_TERM_SPEND = 5.0
 BUDGET_MIN_FACTOR, BUDGET_MAX_FACTOR = 0.5, 1.5
 BUDGET_DEADBAND = 0.10          # ignore drift under 10%
 MIN_DAILY_BUDGET = 1.0
-FIX_KINDS = ("negative_keyword", "pause", "budget", "tracking")
+FIX_KINDS = ("negative_keyword", "pause", "budget", "tracking", "placements", "meta_tags", "conversion_goal")
 KIND_LABELS = {"negative_keyword": "Block wasted searches", "pause": "Pause campaigns",
                "budget": "Bring budgets in line", "draft_ad": "New ads (created paused)",
                "new_campaign": "New campaigns (created paused)",
-               "add_keyword": "Add keywords", "tracking": "Fix ad tracking"}
+               "add_keyword": "Add keywords", "tracking": "Fix ad tracking",
+               "placements": "Keep Meta ads to Facebook and Instagram", "meta_tags": "Tag Meta ads for LeadSigma",
+               "conversion_goal": "Count bookings, not clicks"}
 
 
 class ActionError(RuntimeError):
@@ -108,6 +110,13 @@ def prepare(practice, views):
                     proposals.append(t)
             except Exception as e:      # never let the tracking check stop the other fixes
                 notes.append(f"Google tracking couldn't be checked: {e}")
+            from . import leaks
+            try:
+                cg = leaks.conversion_proposal(_google(), practice["google_customer_id"], notes)
+                if cg:
+                    proposals.append(cg)
+            except Exception as e:
+                notes.append(f"Google conversion actions couldn't be checked: {e}")
     if practice.get("meta_account_id") and cx.meta_configured():
         try:
             proposals += _meta_proposals(practice, vmap["meta"], notes)
@@ -229,6 +238,14 @@ def _meta_proposals(p, view, notes):
         if c and c.get("status") == "ACTIVE":
             out.append({**base, "kind": "pause", "title": f"Pause {c['name']}", "detail": f["title"] + ".",
                         "payload": {"object_id": c["id"], "campaign": c["name"], "from": "ACTIVE", "to": "PAUSED"}})
+
+    from . import leaks             # the leaks: no-booking campaigns, Audience Network, untagged links
+    for fn in (lambda: leaks.leadsigma_pauses(acct, camps, {o["payload"]["object_id"] for o in out}),
+               lambda: leaks.placement_proposals(acct, camps), lambda: [leaks.tag_proposal(acct, camps)]):
+        try:
+            out += [x for x in fn() if x]
+        except Exception as e:      # never let one check stop the other fixes
+            notes.append(f"Meta: a check couldn't run ({e}).")
 
     active = [c for c in camps if c.get("status") == "ACTIVE"]
     items = []
@@ -527,6 +544,9 @@ def _apply_google(ch):
     if kind == "tracking":
         from . import tracking
         return tracking.apply(g, cid, pl)
+    if kind == "conversion_goal":
+        from . import leaks
+        return leaks.apply_conversion_goal(g, cid, pl)
     if kind == "draft_ad":
         res = g.mutate(cid, "adGroupAds", [{"create": {
             "adGroup": pl["ad_group_rn"], "status": "PAUSED",
@@ -573,6 +593,9 @@ def _undo_google(ch):
     elif kind == "tracking":
         from . import tracking
         tracking.undo(g, cid, res)
+    elif kind == "conversion_goal":
+        from . import leaks
+        leaks.undo_conversion_goal(g, cid, res)
     elif kind == "pause":
         cur = _gaql_one(g, cid, f"SELECT campaign.status FROM campaign WHERE campaign.id = {int(pl['campaign_id'])}")
         st = cur.get("campaign", {}).get("status")
@@ -602,6 +625,9 @@ def _apply_meta(ch):
     if kind == "budget":
         _meta_set_budget(pl["object_id"], expect=pl["old"], new=pl["new"], name=pl["campaign"])
         return {}
+    if kind in ("placements", "meta_tags"):
+        from . import leaks
+        return leaks.apply_placements(pl) if kind == "placements" else leaks.apply_tags(acct, pl)
     if kind == "draft_ad":
         spec = pl["object_story_spec"]
         if pl.get("image_id"):
@@ -637,6 +663,9 @@ def _meta_set_budget(obj_id, expect, new, name):
 
 def _undo_meta(ch):
     pl, kind, res = ch["payload"], ch["kind"], ch["result"]
+    if kind in ("placements", "meta_tags"):
+        from . import leaks
+        return leaks.undo_placements(pl) if kind == "placements" else leaks.undo_tags(res)
     if kind == "pause":
         st = _meta_get_fields(pl["object_id"], "status").get("status")
         if st != pl["to"]:

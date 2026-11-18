@@ -66,7 +66,7 @@ def test_apply_then_undo_each_kind(hub):
     c.post(f"/p/{pid}/fixes/prepare")
     ids = [str(ch["id"]) for ch in db.changes(pid, ["proposed"])]
     r = c.post(f"/p/{pid}/fixes/apply", data={"ids": ids})
-    assert r.status_code == 200 and "Applied 7 changes" in r.text
+    assert r.status_code == 200 and "Applied 8 changes" in r.text     # incl. keeping an ad set off Audience Network
     S = mp.STATE
     assert list(S["g_negatives"].values()) == [("901", "invisalign jobs")]
     assert S["g_campaigns"]["902"]["status"] == "PAUSED"
