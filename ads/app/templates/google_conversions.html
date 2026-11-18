@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Google conversions{% endblock %}
+{% block content %}
+<h1>Google Ads conversions</h1>
+<p class="lede muted">What each conversion action counted in the last 30 days. “Conversions” is what the hub reports and what bidding uses; “All conversions” includes the ones set to secondary or switched off. Nothing here changes anything.</p>
+{% if ids|length > 1 %}<form method="get" class="inline-form"><label>Account <select name="cid" onchange="this.form.submit()">{% for i in ids %}<option {% if i == cid %}selected{% endif %}>{{ i }}</option>{% endfor %}</select></label></form>{% endif %}
+{% if err %}<p class="flash flash-error">{{ err }}</p>{% endif %}
+{% if rep %}
+<div class="table-scroll"><table class="data">
+  <thead><tr><th>Conversion action</th><th>Category</th><th>Source</th><th>Counts?</th><th class="num">Conversions</th><th class="num">All conversions</th></tr></thead>
+  <tbody>{% for a in rep.actions %}<tr>
+    <td>{{ a.name }}</td><td class="small">{{ (a.category or '')|replace('_', ' ')|lower }}</td><td class="small">{{ (a.origin or '')|replace('_', ' ')|lower }}</td>
+    <td>{% if a.primary %}Yes{% elif a.primary is none %}<span class="muted">?</span>{% else %}No{% endif %}</td>
+    <td class="num"><strong>{{ '{:,.1f}'.format(a.counted) }}</strong></td><td class="num">{{ '{:,.1f}'.format(a.conv) }}</td></tr>{% endfor %}</tbody>
+</table></div>
+<h2 class="section-gap">Conversions by campaign</h2>
+<div class="table-scroll"><table class="data">
+  <thead><tr><th>Campaign</th><th>Counted as</th><th class="num">Conversions</th></tr></thead>
+  <tbody>{% for camp, by in rep.by_campaign|dictsort %}{% for name, n in by|dictsort(by='value', reverse=true) %}<tr><td>{% if loop.first %}{{ camp }}{% endif %}</td><td>{{ name }}</td><td class="num">{{ '{:,.1f}'.format(n) }}</td></tr>{% endfor %}{% endfor %}</tbody>
+</table></div>
+<h2 class="section-gap">Goals</h2>
+<p class="small">{% for (c, o), b in rep.goals|dictsort %}{{ c|replace('_', ' ')|lower }} · {{ o|replace('_', ' ')|lower }}: <strong>{{ 'counts' if b else 'off' }}</strong>{% if not loop.last %} — {% endif %}{% endfor %}</p>
+{% elif not err %}<p class="empty">Connect Google Ads first.</p>{% endif %}
+{% endblock %}

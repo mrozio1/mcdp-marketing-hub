@@ -270,6 +270,32 @@ def conversion_actions(g, cid):
     return list(acts.values())
 
 
+def conversion_report(g, cid):
+    """What every conversion action did in the last 30 days: counted in Conversions (what the hub reports) and in
+    All conversions, with its category, source and whether it counts. For the Connections page."""
+    acts = {a["resource"]: {**a, "counted": 0.0} for a in conversion_actions(g, cid)}
+    for r in g.search(cid, "SELECT segments.conversion_action, segments.conversion_action_name, metrics.conversions "
+                           "FROM customer WHERE segments.date DURING LAST_30_DAYS"):
+        rn = (r.get("segments") or {}).get("conversionAction")
+        n = float((r.get("metrics") or {}).get("conversions") or 0)
+        if rn not in acts:
+            acts[rn] = {"resource": rn, "name": (r.get("segments") or {}).get("conversionActionName") or rn,
+                        "category": "", "origin": "", "primary": None, "conv": 0.0, "counted": 0.0}
+        acts[rn]["counted"] += n
+    by_camp = {}
+    try:
+        for r in g.search(cid, "SELECT campaign.name, segments.conversion_action_name, metrics.conversions FROM campaign "
+                               "WHERE segments.date DURING LAST_30_DAYS AND metrics.conversions > 0"):
+            k = (r.get("campaign") or {}).get("name") or "(no name)"
+            by_camp.setdefault(k, {})[(r.get("segments") or {}).get("conversionActionName") or "?"] = \
+                by_camp.get(k, {}).get((r.get("segments") or {}).get("conversionActionName") or "?", 0) + \
+                float((r.get("metrics") or {}).get("conversions") or 0)
+    except cx.ConnectorError:
+        pass
+    rows = sorted(acts.values(), key=lambda a: (-a["counted"], -a["conv"]))
+    return {"actions": rows, "goals": _goals(g, cid), "by_campaign": by_camp}
+
+
 def _hosted(a):
     """Google's own conversions (e.g. 'Local actions' from the Business Profile): they can't be edited one by one,
     only switched off as a goal."""

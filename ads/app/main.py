@@ -2112,6 +2112,23 @@ def summarize_sync(status):
     return msg, ("error" if bad else "ok")
 
 
+@app.get("/connections/google/conversions", response_class=HTMLResponse)
+def google_conversions(request: Request, cid: str = ""):
+    """Read-only: what each Google Ads conversion action counted in the last 30 days, and in which campaigns."""
+    if (r := guard(request)):
+        return r
+    from . import leaks
+    ids = sorted({str(p["google_customer_id"]) for p in db.practices(include_hidden=True) if p.get("google_customer_id")})
+    cid = cid if cid in ids else (ids[0] if ids else "")
+    rep, err = None, ""
+    if cid and actions.google_ready():
+        try:
+            rep = leaks.conversion_report(actions._google(), cid)
+        except cx.ConnectorError as e:
+            err = str(e)
+    return page(request, "google_conversions.html", rep=rep, err=err, cid=cid, ids=ids)
+
+
 @app.get("/connections", response_class=HTMLResponse)
 def connections(request: Request):
     if (r := guard(request)):
