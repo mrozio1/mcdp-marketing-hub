@@ -177,12 +177,14 @@ def _budget_plan(view, items, notes, label):
     if abs(factor - 1) < BUDGET_DEADBAND:
         return [], None
     capped = min(max(factor, BUDGET_MIN_FACTOR), BUDGET_MAX_FACTOR)
-    if capped < 1:          # lowering only helps a campaign that uses its budget; one that doesn't is keyword-limited
-        days = max(pc.get("days_elapsed") or 1, 1)
-        spent = {c["name"]: c["spend"] for c in view.get("campaigns", [])}
-        items = [i for i in items if spent.get(i["name"].split(" › ")[0], i["budget"] * days) / days >= 0.5 * i["budget"]]
-        if not items:
-            return [], None
+    # A budget only matters to a campaign that uses it: one spending well under it is held back by its keywords
+    # or bids, so neither lowering nor raising its budget changes anything. Raises go to campaigns using 70%+.
+    days = max(pc.get("days_elapsed") or 1, 1)
+    spent = {c["name"]: c["spend"] for c in view.get("campaigns", [])}
+    use = lambda i: spent.get(i["name"].split(" › ")[0], i["budget"] * days) / days / i["budget"] if i["budget"] else 1
+    items = [i for i in items if use(i) >= (0.5 if capped < 1 else 0.7)]
+    if not items:
+        return [], None
     plan = [(i, round(max(i["budget"] * capped, MIN_DAILY_BUDGET), 2)) for i in items]
     plan = [(i, n) for i, n in plan if abs(n - i["budget"]) >= 0.01]
     why = (f"To land on the {money(pc['budget'])} {label} monthly budget, the remaining "

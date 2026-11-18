@@ -127,3 +127,12 @@ def test_budget_not_lowered_for_a_campaign_that_isnt_using_it():
     plan, why = actions._budget_plan(view, [{"name": "Findlay - Search", "budget": 20.0},
                                             {"name": "Busy - Search", "budget": 20.0}], [], "Google Ads")
     assert [i["name"] for i, _ in plan] == ["Busy - Search"]
+
+
+def test_budget_not_raised_for_a_campaign_that_isnt_using_it():
+    from app import actions
+    view = {"pacing": {"available": True, "budget": 3000, "spend": 300, "days_in_month": 30, "days_elapsed": 18},
+            "campaigns": [{"name": "Findlay - Search", "spend": 12.0}, {"name": "Busy - Search", "spend": 350.0}]}
+    plan, _ = actions._budget_plan(view, [{"name": "Findlay - Search", "budget": 20.0},
+                                          {"name": "Busy - Search", "budget": 20.0}], [], "Google Ads")
+    assert [i["name"] for i, _ in plan] == ["Busy - Search"]
