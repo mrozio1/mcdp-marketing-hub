@@ -248,10 +248,17 @@ CREATE TABLE IF NOT EXISTS ad_daily (
   impressions INTEGER DEFAULT 0,
   clicks INTEGER DEFAULT 0,
   conversions REAL DEFAULT 0,
+  listing REAL DEFAULT 0,
   PRIMARY KEY (practice_id, platform, account, campaign, day)
 );
 CREATE INDEX IF NOT EXISTS ad_daily_day ON ad_daily(day);
 """
+
+
+def _ad_daily(c):
+    c.executescript(AD_DAILY)
+    if "listing" not in {r["name"] for r in c.execute("PRAGMA table_info(ad_daily)")}:
+        c.execute("ALTER TABLE ad_daily ADD COLUMN listing REAL DEFAULT 0")   # Google listing actions (clicks, not bookings)
 
 
 def archive_rows(pid, platform, rows, since, until):
@@ -259,7 +266,7 @@ def archive_rows(pid, platform, rows, since, until):
     that were renamed or removed don't linger. rows: campaign-day dicts (with 'account' when known)."""
     s, u = since.isoformat(), until.isoformat()
     with conn() as c:
-        c.executescript(AD_DAILY)
+        _ad_daily(c)
         c.execute("DELETE FROM ad_daily WHERE practice_id=? AND platform=? AND day>=? AND day<=?", (pid, platform, s, u))
         agg = {}
         for r in rows:
@@ -270,20 +277,22 @@ def archive_rows(pid, platform, rows, since, until):
             if d < s or d > u:
                 continue
             k = (str(r.get("account") or ""), r.get("campaign") or "(no name)", d)
-            a = agg.setdefault(k, [0.0, 0, 0, 0.0])
+            a = agg.setdefault(k, [0.0, 0, 0, 0.0, 0.0])
             a[0] += float(r.get("spend") or 0)
             a[1] += int(r.get("impressions") or 0)
             a[2] += int(r.get("clicks") or 0)
             a[3] += float(r.get("conversions") or 0)
+            a[4] += float(r.get("listing") or 0)
         c.executemany("INSERT OR REPLACE INTO ad_daily(practice_id, platform, account, campaign, day, spend, impressions, "
-                      "clicks, conversions) VALUES (?,?,?,?,?,?,?,?,?)",
-                      [(pid, platform, k[0], k[1], k[2], round(v[0], 2), v[1], v[2], round(v[3], 2)) for k, v in agg.items()])
+                      "clicks, conversions, listing) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      [(pid, platform, k[0], k[1], k[2], round(v[0], 2), v[1], v[2], round(v[3], 2), round(v[4], 2))
+                       for k, v in agg.items()])
 
 
 def archived(pid, platform, since, until):
     """Archived campaign-day rows for a practice in [since, until], shaped like upload rows."""
     with conn() as c:
-        c.executescript(AD_DAILY)
+        _ad_daily(c)
         out = []
         for r in c.execute("SELECT * FROM ad_daily WHERE practice_id=? AND platform=? AND day>=? AND day<=?",
                            (pid, platform, since.isoformat(), until.isoformat())):
@@ -291,7 +300,7 @@ def archived(pid, platform, since, until):
             out.append({"platform": platform, "level": "campaign", "account": r["account"], "campaign": r["campaign"],
                         "name": "", "date": d, "date_start": d, "date_end": d, "spend": r["spend"],
                         "impressions": r["impressions"], "clicks": r["clicks"], "conversions": r["conversions"],
-                        "conv_value": 0.0, "status": "", "budget": 0.0, "match_type": ""})
+                        "listing": r["listing"] or 0.0, "conv_value": 0.0, "status": "", "budget": 0.0, "match_type": ""})
         return out
 
 

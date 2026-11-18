@@ -100,20 +100,53 @@ def test_tag_meta_ads_and_undo(meta):
 
 
 class FakeGoogle:
-    def __init__(self, acts):
-        self.acts = acts
+    def __init__(self, acts, goals=None, camp_goals=None):
+        self.acts, self.goals, self.camp_goals = acts, goals or {}, camp_goals or {}
 
     def search(self, cid, q):
+        if "FROM customer_conversion_goal" in q:
+            return [{"customerConversionGoal": {"category": c, "origin": o, "biddable": b}} for (c, o), b in self.goals.items()]
+        if "FROM campaign_conversion_goal" in q:
+            return [{"campaignConversionGoal": {"resourceName": rn, "biddable": b}} for rn, b in self.camp_goals.items() if b]
         if "FROM conversion_action" in q:
             return [{"conversionAction": {"resourceName": rn, "name": a["name"], "category": a["category"],
-                                          "primaryForGoal": a["primary"]}} for rn, a in self.acts.items()]
+                                          "origin": a.get("origin", "WEBSITE"), "primaryForGoal": a["primary"]}}
+                    for rn, a in self.acts.items()]
         return [{"segments": {"conversionAction": rn}, "metrics": {"allConversions": a["n"]}} for rn, a in self.acts.items()]
 
     def mutate(self, cid, service, ops):
-        assert service == "conversionActions"
         for op in ops:
-            self.acts[op["update"]["resourceName"]]["primary"] = op["update"]["primaryForGoal"]
+            u = op["update"]
+            if service == "conversionActions":
+                if self.acts[u["resourceName"]].get("origin") == "GOOGLE_HOSTED":
+                    raise RuntimeError("Mutates are not allowed for the requested resource.")
+                self.acts[u["resourceName"]]["primary"] = u["primaryForGoal"]
+            elif service == "customerConversionGoals":
+                cat, origin = u["resourceName"].split("/")[-1].split("~")
+                self.goals[(cat, origin)] = u["biddable"]
+            else:
+                self.camp_goals[u["resourceName"]] = u["biddable"]
         return [{}]
+
+
+def test_google_hosted_local_actions_switched_off_as_a_goal(meta):
+    _, leaks = meta
+    g = FakeGoogle({"a/1": {"name": "Local actions - Website visits", "category": "PAGE_VIEW", "origin": "GOOGLE_HOSTED",
+                            "primary": True, "n": 121},
+                    "a/2": {"name": "Local actions - Other engagements", "category": "ENGAGEMENT",
+                            "origin": "GOOGLE_HOSTED", "primary": True, "n": 394},
+                    "a/3": {"name": "Calls from ad", "category": "PHONE_CALL_LEAD", "origin": "CALL_FROM_ADS", "primary": True, "n": 6}},
+                   goals={("PAGE_VIEW", "GOOGLE_HOSTED"): True, ("ENGAGEMENT", "GOOGLE_HOSTED"): True,
+                          ("PHONE_CALL_LEAD", "CALL_FROM_ADS"): True},
+                   camp_goals={"customers/1/campaignConversionGoals/9~PAGE_VIEW~GOOGLE_HOSTED": True})
+    prop = leaks.conversion_proposal(g, "1")
+    assert "515 in the last 30 days" in prop["detail"]
+    res = leaks.apply_conversion_goal(g, "1", prop["payload"])
+    assert g.goals[("PAGE_VIEW", "GOOGLE_HOSTED")] is False and g.goals[("ENGAGEMENT", "GOOGLE_HOSTED")] is False
+    assert g.goals[("PHONE_CALL_LEAD", "CALL_FROM_ADS")] is True and res["campaign_goals"]
+    assert leaks.conversion_proposal(g, "1") is None                    # no longer counting: not offered again
+    leaks.undo_conversion_goal(g, "1", res)
+    assert all(g.goals.values()) and all(g.camp_goals.values())
 
 
 def test_conversion_goal(meta):
@@ -146,3 +179,17 @@ def test_brand_and_core_searches_are_not_blocked_on_one_click():
     assert leaks.safe_to_block("cheap braces near me", 6, 1, havens)
     assert not leaks.safe_to_block("invisalign near me", 9, 1, {"name": "MCDP Ads"}, "Wheeler - Search - Toledo")
     assert leaks.safe_to_block("teeth whitening kit", 6, 1, havens)                      # not what we offer
+
+
+def test_listing_actions_kept_apart_from_conversions(meta):
+    _, leaks = meta
+    from datetime import date
+    from app import db, report
+    pid = db.add_practice("Waterford Orthodontics", 1500, 0, "")
+    d = date(2026, 11, 3)
+    db.archive_rows(pid, "google", [{"date": d, "campaign": "Waterford Oct2026", "spend": 40, "impressions": 900,
+                                     "clicks": 60, "conversions": 2, "listing": 31}], d, d)
+    row = db.archived(pid, "google", d, d)[0]
+    assert row["listing"] == 31 and row["conversions"] == 2
+    paid = report._paid(db.practice(pid), d, d)
+    assert paid["listing"] == 31 and paid["clicks"] == 60 and paid["conversions"] == 2

@@ -366,6 +366,13 @@ def platform_view(practice, key, label, all_practices=None, month=None):
         if rows:
             camps, tot, findings = analyze_campaigns(rows)
             view.update(campaigns=camps, totals=tot, findings=findings, pacing=pacing(rows, budget))
+        if key == "google" and up.get("date_start"):     # Google listing actions: clicks, kept apart from conversions
+            try:
+                lst = scope.apply(db.archived(practice["id"], "google", date.fromisoformat(up["date_start"][:10]),
+                                              date.fromisoformat(up["date_end"][:10])), practice, platform="google")
+                view["listing"] = round(sum(r.get("listing") or 0 for r in lst))
+            except (ValueError, TypeError):
+                pass
         if not view["filtered"] and all_practices is not None:
             view["breakdown"] = scope.breakdown(practice, key, all_rows, all_practices)
     st_up = db.latest_upload(practice["id"], key, "search_term", month)

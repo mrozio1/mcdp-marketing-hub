@@ -182,7 +182,7 @@ def _budget_share(p, platform, per):
 
 
 def _paid(p, start, end):
-    out = {"spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "by": {}, "daily": {}}
+    out = {"spend": 0.0, "clicks": 0, "impressions": 0, "conversions": 0.0, "listing": 0.0, "by": {}, "daily": {}}
     for key, _ in PLATFORMS:
         rows = scope.apply(db.archived(p["id"], key, start, end), p, platform=key)
         sp = round(sum(r["spend"] for r in rows), 2)
@@ -193,11 +193,13 @@ def _paid(p, start, end):
         out["conversions"] += cv
         out["clicks"] += sum(r["clicks"] for r in rows)
         out["impressions"] += sum(r["impressions"] for r in rows)
+        out["listing"] += sum(r.get("listing") or 0 for r in rows)
         for r in rows:
             k = r["date"].isoformat()
             out["daily"].setdefault(k, {"google": 0.0, "meta": 0.0})[key] += r["spend"]
     out["spend"] = round(out["spend"], 2)
     out["conversions"] = round(out["conversions"], 2)
+    out["listing"] = round(out["listing"])
     out["cpa"] = out["spend"] / out["conversions"] if out["conversions"] else None
     camps = {}
     for key, _ in PLATFORMS:
@@ -374,6 +376,7 @@ def _paid_totals(rows):
                 day[k] += v.get(k, 0)
     budget = round(sum(r["budget_total"] for r in rows), 2)
     return {"spend": spend, "conversions": conv, "clicks": sum(r["paid"]["clicks"] for r in rows),
+            "listing": round(sum(r["paid"].get("listing", 0) for r in rows)),
             "cpa": spend / conv if conv else None, "prev_spend": pspend, "prev_conversions": pconv,
             "prev_cpa": pspend / pconv if pconv else None, "daily": daily, "unassigned": 0.0,
             "budget": budget, "pace": spend / budget if budget else None,
@@ -431,6 +434,7 @@ def totals(rows, masters, plist, per):
     n = sum(t for _, t in rated)
     linked_rv = [r for r in rows if r["reviews"]["linked"]]
     return {"spend": round(spend, 2), "conversions": round(conv, 2), "clicks": clicks,
+            "listing": round(sum(r["paid"].get("listing", 0) for r in rows)),
             "cpa": spend / conv if conv else None, "budget": round(budget, 2), "pace": spend / budget if budget else None,
             "prev_spend": round(prev_spend, 2), "prev_conversions": round(prev_conv, 2),
             "prev_cpa": prev_spend / prev_conv if prev_conv else None,

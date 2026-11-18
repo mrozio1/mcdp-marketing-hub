@@ -119,6 +119,7 @@
         <p class="rp-m-v">{{ money(pd.spend) }}{% if r.budget_total %} <span class="rp-m-of">of {{ money(r.budget_total) }}</span>{% endif %}</p>
         {% if r.budget_total %}{{ meter(pd.spend, r.budget_total, colors.paid, true) }}{% endif %}
         <p class="rp-m-s">{{ num(pd.conversions) }} conv. · {{ money(pd.cpa) }} each {% if rep.has_prev.paid %}<span class="muted">({{ num(pv.conversions) }} · {{ money(pv.cpa) }})</span>{% endif %}</p>
+        {% if pd.clicks or pd.listing %}<p class="rp-m-s">{{ '{:,}'.format(pd.clicks or 0) }} ad clicks{% if pd.listing %} · {{ '{:,}'.format(pd.listing) }} listing actions{% endif %}</p>{% endif %}
       </div>
       <div class="rp-m">
         <p class="rp-m-h"><span class="rp-dot" style="background: {{ colors.organic }}"></span>Organic</p>

@@ -10,7 +10,10 @@ honest. Each is a proposal on the practice's fixes list (nothing changes until A
                    undo puts the old creative back. Meta reviews the ad again (usually minutes).
 - conversion_goal: a Google Ads conversion action that counts something other than a booking or a lead (page
                    views, engagement, clicks) and is set as "primary" is made "secondary": it is still reported
-                   under All conversions, but stops counting in Conversions and stops steering bidding.
+                   under All conversions, but stops counting in Conversions and stops steering bidding. Google's own
+                   ones ("Local actions" from the Business Profile) can't be edited one by one, so their goal
+                   (e.g. Page view · Google hosted) is switched off instead, account-wide and on campaigns with
+                   their own goals. Those clicks still show in the hub as "listing actions".
 """
 from __future__ import annotations
 
@@ -228,16 +231,34 @@ def undo_tags(res):
 
 
 # ------------------------------------------------------------------ Google: what counts as a conversion
+def _goals(g, cid):
+    """{(category, origin): biddable} for the account's conversion goals (what counts in Conversions)."""
+    out = {}
+    try:
+        for r in g.search(cid, "SELECT customer_conversion_goal.category, customer_conversion_goal.origin, "
+                               "customer_conversion_goal.biddable FROM customer_conversion_goal"):
+            x = r.get("customerConversionGoal") or {}
+            out[(x.get("category"), x.get("origin"))] = bool(x.get("biddable"))
+    except cx.ConnectorError:
+        pass
+    return out
+
+
 def conversion_actions(g, cid):
-    """Every enabled conversion action, with what it counted in the last 30 days."""
+    """Every enabled conversion action, with what it counted in the last 30 days and whether it counts in
+    Conversions (primary, and its goal is in use)."""
     acts = {}
+    goals = _goals(g, cid)
     for r in g.search(cid, "SELECT conversion_action.resource_name, conversion_action.id, conversion_action.name, "
-                           "conversion_action.category, conversion_action.type, conversion_action.primary_for_goal, "
-                           "conversion_action.status FROM conversion_action WHERE conversion_action.status = 'ENABLED'"):
+                           "conversion_action.category, conversion_action.type, conversion_action.origin, "
+                           "conversion_action.primary_for_goal, conversion_action.status FROM conversion_action "
+                           "WHERE conversion_action.status = 'ENABLED'"):
         a = r.get("conversionAction") or {}
+        cat, origin = a.get("category") or "", a.get("origin") or ""
+        primary = bool(a.get("primaryForGoal"))
         acts[a.get("resourceName")] = {"resource": a.get("resourceName"), "name": a.get("name") or "",
-                                       "category": a.get("category") or "", "type": a.get("type") or "",
-                                       "primary": bool(a.get("primaryForGoal")), "conv": 0.0}
+                                       "category": cat, "type": a.get("type") or "", "origin": origin,
+                                       "primary": primary and goals.get((cat, origin), True), "conv": 0.0}
     try:
         for r in g.search(cid, "SELECT segments.conversion_action, metrics.all_conversions FROM customer "
                                "WHERE segments.date DURING LAST_30_DAYS"):
@@ -247,6 +268,13 @@ def conversion_actions(g, cid):
     except cx.ConnectorError:
         pass
     return list(acts.values())
+
+
+def _hosted(a):
+    """Google's own conversions (e.g. 'Local actions' from the Business Profile): they can't be edited one by one,
+    only switched off as a goal."""
+    return a.get("origin") == "GOOGLE_HOSTED" or "GOOGLE_HOSTED" in (a.get("type") or "") or \
+        (a.get("name") or "").lower().startswith("local actions")
 
 
 def is_weak(a):
@@ -282,18 +310,59 @@ def conversion_proposal(g, cid, notes=None):
 
 
 def apply_conversion_goal(g, cid, pl):
-    cur = {a["resource"]: a for a in conversion_actions(g, cid)}
-    todo = [a for a in pl["actions"] if cur.get(a["resource"], {}).get("primary")]
+    acts = conversion_actions(g, cid)
+    cur = {a["resource"]: a for a in acts}
+    todo = [cur[a["resource"]] for a in pl["actions"] if cur.get(a["resource"], {}).get("primary")]
     if not todo:
-        raise _stale("Those conversion actions are already secondary.")
-    g.mutate(cid, "conversionActions", [{"update": {"resourceName": a["resource"], "primaryForGoal": False},
-                                         "updateMask": "primary_for_goal"} for a in todo])
-    return {"actions": todo}
+        raise _stale("Those conversion actions already don't count as conversions.")
+    own = [a for a in todo if not _hosted(a)]
+    hosted = [a for a in todo if _hosted(a)]
+    res = {"actions": [], "goals": [], "campaign_goals": []}
+    if own:
+        g.mutate(cid, "conversionActions", [{"update": {"resourceName": a["resource"], "primaryForGoal": False},
+                                             "updateMask": "primary_for_goal"} for a in own])
+        res["actions"] = [{"resource": a["resource"], "name": a["name"]} for a in own]
+    if hosted:
+        cid_ = cx._clean_id(cid)
+        keep = [a for a in acts if a["primary"] and not is_weak(a)]
+        pairs = sorted({(a["category"], a["origin"] or "GOOGLE_HOSTED") for a in hosted})
+        clash = [p for p in pairs if any((k["category"], k["origin"]) == p for k in keep)]
+        pairs = [p for p in pairs if p not in clash]           # never switch off a goal a booking action is part of
+        ops = [{"update": {"resourceName": f"customers/{cid_}/customerConversionGoals/{c}~{o}", "biddable": False},
+                "updateMask": "biddable"} for c, o in pairs]
+        if ops:
+            g.mutate(cid, "customerConversionGoals", ops)
+            res["goals"] = [o["update"]["resourceName"] for o in ops]
+        if pairs:                                            # campaigns with their own goal settings
+            cond = " OR ".join(f"(campaign_conversion_goal.category = '{c}' AND campaign_conversion_goal.origin = '{o}')"
+                               for c, o in pairs)
+            try:
+                rows = g.search(cid, "SELECT campaign_conversion_goal.resource_name, campaign_conversion_goal.biddable "
+                                     f"FROM campaign_conversion_goal WHERE campaign_conversion_goal.biddable = TRUE AND ({cond})")
+                rns = [(r.get("campaignConversionGoal") or {}).get("resourceName") for r in rows]
+                rns = [x for x in rns if x]
+                if rns:
+                    g.mutate(cid, "campaignConversionGoals", [{"update": {"resourceName": rn, "biddable": False},
+                                                               "updateMask": "biddable"} for rn in rns])
+                    res["campaign_goals"] = rns
+            except cx.ConnectorError as e:
+                res["warning"] = f"Some campaigns' own goal settings couldn't be changed ({e})."
+        if clash:
+            res["warning"] = (res.get("warning", "") + " Left on, because a booking or call conversion shares the goal: "
+                              + ", ".join(f"{c.replace('_', ' ').lower()}" for c, _ in clash) + ".").strip()
+    if not (res["actions"] or res["goals"]):
+        raise ActionError("Nothing could be switched off: " + res.get("warning", "every goal is shared with a booking action."))
+    return res
 
 
 def undo_conversion_goal(g, cid, res):
-    g.mutate(cid, "conversionActions", [{"update": {"resourceName": a["resource"], "primaryForGoal": True},
-                                         "updateMask": "primary_for_goal"} for a in res.get("actions", [])])
+    if res.get("actions"):
+        g.mutate(cid, "conversionActions", [{"update": {"resourceName": a["resource"], "primaryForGoal": True},
+                                             "updateMask": "primary_for_goal"} for a in res["actions"]])
+    for service, key in (("customerConversionGoals", "goals"), ("campaignConversionGoals", "campaign_goals")):
+        if res.get(key):
+            g.mutate(cid, service, [{"update": {"resourceName": rn, "biddable": True}, "updateMask": "biddable"}
+                                    for rn in res[key]])
 
 
 # ------------------------------------------------------------------ Google: which searches are safe to block

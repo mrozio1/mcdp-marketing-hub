@@ -1054,7 +1054,28 @@ class GoogleClient:
                        conversions=round(float(m.get("conversions", 0)), 2),
                        conv_value=round(float(m.get("conversionsValue", 0)), 2))
             rows.append(row)
+        listing = self.listing_actions(customer_id, since, until)
+        for row in rows:
+            row["listing"] = listing.get((row["campaign"], row["date"]), 0.0)
         return rows
+
+    def listing_actions(self, customer_id, since: date, until: date):
+        """{(campaign, day): n} of Google's "Local actions" (website visits, calls, directions, menu views from the
+        Business Profile listing shown with the ads). Kept as their own number: they're clicks, not bookings."""
+        try:
+            res = self.query(customer_id, (
+                "SELECT campaign.name, segments.date, segments.conversion_action_name, metrics.all_conversions "
+                f"FROM campaign WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}' "
+                "AND metrics.all_conversions > 0"), login_cid=self._login_for(customer_id))
+        except ConnectorError:
+            return {}
+        out = {}
+        for r in res:
+            if not ((r.get("segments") or {}).get("conversionActionName") or "").lower().startswith("local actions"):
+                continue
+            k = ((r.get("campaign") or {}).get("name") or "(no name)", date.fromisoformat(r["segments"]["date"]))
+            out[k] = out.get(k, 0.0) + float((r.get("metrics") or {}).get("allConversions") or 0)
+        return out
 
     def search_term_rows(self, customer_id, since: date, until: date):
         res = self.query(customer_id, (

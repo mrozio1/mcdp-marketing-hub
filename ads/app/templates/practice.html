@@ -112,6 +112,8 @@
         <div><dt>Conversions</dt><dd>{{ '%g'|format(v.totals.conversions) }}</dd></div>
         <div><dt>Cost per conversion</dt><dd>{{ v.totals.cpa|money }}</dd></div>
         <div><dt>Click-through rate</dt><dd>{{ v.totals.ctr|pct }}</dd></div>
+        <div><dt>Clicks</dt><dd>{{ '{:,}'.format(v.totals.clicks or 0) }}</dd></div>
+        {% if v.listing %}<div title="Website visits, calls, directions and menu views from the Google listing shown with the ads. Clicks, not bookings, so not counted as conversions."><dt>Listing actions</dt><dd>{{ '{:,}'.format(v.listing) }}</dd></div>{% endif %}
       </dl>
       {% endif %}
 
