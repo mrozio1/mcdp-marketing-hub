@@ -237,7 +237,7 @@
     {% endfor %}
 
     {% set linked = (p.google_customer_id and google_on) or (p.meta_account_id and meta_on) %}
-    {% if (has_data or fixes_open) and linked %}
+    {% if fixes_open or (has_data and linked) %}
     <section class="fixes" id="fixes">
       <h2>Make the fixes</h2>
       <p class="muted">“Prepare fixes” turns the numbers above into exact changes, checked against the live accounts. Nothing changes in Google or Meta until you tick changes and click Apply, and every change can be undone.</p>
