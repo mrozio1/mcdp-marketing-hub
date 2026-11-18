@@ -406,8 +406,12 @@ def undo_conversion_goal(g, cid, res):
 
 # ------------------------------------------------------------------ Google: which searches are safe to block
 CORE = re.compile(r"orthodont|\bortho\b|braces|invisalign|aligner|retainer|\bdentist|\bdental", re.I)
+# What a general or pediatric dentist (or oral surgeon) offers: core for them, not wasted searches.
+DENTAL_CORE = re.compile(r"\bteeth\b|\btooth\b|implant|root canal|crown|cleaning|filling|extraction|denture|veneer|"
+                         r"whitening|cavit|emergency|wisdom|gum|bridge|sedation|check ?up|exam", re.I)
 JUNK = re.compile(r"medicaid|molina|meridian|medicare|\bcheap|\bjobs?\b|salary|careers?|school|course|\bdiy\b|"
-                  r"emergency|how to|what is|\bfree\b|cost of living|reddit", re.I)
+                  r"how to|what is|cost of living|reddit", re.I)
+ORTHO_JUNK = re.compile(r"emergency|root canal|implant|wisdom|extraction|filling|cavit|whitening|denture", re.I)
 GENERIC = {"the", "and", "orthodontics", "orthodontic", "orthodontist", "ortho", "dental", "dentistry", "family",
            "smiles", "smile", "llc", "pllc", "search", "care", "pediatric", "center", "group", "specialists", "dds", "dr"}
 CORE_MIN_SPEND, CORE_MIN_CLICKS = 40.0, 5
@@ -424,16 +428,31 @@ def brand_words(practice, campaign=""):
     return words
 
 
+def line_for(practice, campaign=""):
+    """What the campaign sells: the practice's line of work; on the master record, that of the practice whose
+    campaign filter words match the campaign (else what the campaign name says)."""
+    from . import db, scope, zip_plan
+    if practice.get("campaign_filter") or not campaign:
+        return zip_plan.line_of(practice)
+    for q in db.practices():
+        if scope.has_filter(q) and scope.matches(campaign, q.get("campaign_filter") or ""):
+            return zip_plan.line_of(q)
+    return zip_plan.line_of({"name": campaign})
+
+
 def safe_to_block(term, spend, clicks, practice, campaign=""):
     """A search worth blocking: never one with our own name in it; a core search ('invisalign near me',
     'orthodontist canton mi') only with real spend and clicks behind it, unless it's clearly the wrong person
     (jobs, Medicaid, cheap, DIY ...)."""
+    line = line_for(practice, campaign)
     if JUNK.search(term):
         return True                                   # "havens orthodontics jobs" is still the wrong person
     words = set(re.findall(r"[a-z0-9]+", term.lower()))
     if words & brand_words(practice, campaign):
         return False
-    if CORE.search(term):
+    if line == "ortho" and ORTHO_JUNK.search(term) and not CORE.search(term.replace("dentist", "")):
+        return True                                   # "emergency dentist" in an orthodontist's campaign
+    if CORE.search(term) or (line != "ortho" and DENTAL_CORE.search(term)):
         return spend >= CORE_MIN_SPEND and clicks >= CORE_MIN_CLICKS
     return True
 

@@ -195,3 +195,15 @@ def test_listing_actions_kept_apart_from_conversions(meta):
     assert row["listing"] == 31 and row["conversions"] == 2
     paid = report._paid(db.practice(pid), d, d)
     assert paid["listing"] == 31 and paid["clicks"] == 60 and paid["conversions"] == 2
+
+
+def test_dental_services_are_core_for_dentists_not_for_orthodontists():
+    from app import leaks
+    algonac = {"name": "Algonac Dental", "campaign_filter": "algonac"}
+    for term in ("emergency dentist near me", "root canal near me", "teeth implants near me", "pain free dentist near me"):
+        assert not leaks.safe_to_block(term, 10, 1, algonac), term
+    havens = {"name": "Havens Orthodontics", "campaign_filter": "havens"}
+    assert leaks.safe_to_block("emergency dentist near me", 9, 1, havens)
+    assert leaks.safe_to_block("root canal near me", 9, 1, {"name": "MCDP Ads"}, "Wheeler - Search - Toledo Orthodontics")
+    assert not leaks.safe_to_block("root canal near me", 9, 1, {"name": "MCDP Ads"}, "Algonac - Search - Algonac Dental Care")
+    assert not leaks.safe_to_block("free braces consultation", 6, 1, havens)          # free consults are good leads
