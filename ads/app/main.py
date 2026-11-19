@@ -2444,6 +2444,24 @@ async def map_zips_priority(request: Request):
     return RedirectResponse("/map/zips#who", status_code=303)
 
 
+@app.post("/p/{pid}/offers/uninsured")
+async def offer_uninsured(request: Request, pid: int):
+    """Draft the "$1,000 off without insurance" campaign for some of the practice's locations (created paused)."""
+    if (r := guard(request)):
+        return r
+    from . import campaigns, offers
+    form = await request.form()
+    p = db.practice(pid)
+    ids = {int(x) for x in form.getlist("office") if str(x).isdigit()}
+    try:
+        budget = float(form.get("daily_budget") or 20)
+        prop = offers.draft(p, ids, actions._google(), daily_budget=budget, cities=str(form.get("cities") or "")[:40])
+        flash(request, "Drafted " + prop["title"] + ". Review it under New campaigns, then Apply.")
+    except (campaigns.CampaignError, cx.ConnectorError, ValueError) as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/p/{pid}#fixes", status_code=303)
+
+
 @app.post("/map/zips/miles")
 def map_zips_miles(request: Request, miles: str = Form("")):
     if (r := guard(request)):

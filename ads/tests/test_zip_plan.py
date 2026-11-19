@@ -148,3 +148,34 @@ def test_priority_practice_keeps_shared_zips(world):
     theirs = {z["zip"] for r in plan["offices"] if r["practice"]["id"] == b for z in r["zips"]}
     assert len(mine) > len(before) and not (mine & theirs) and plan["priority"] == [a]
     assert "Priority:" in c.get("/map/zips").text
+
+
+def test_uninsured_offer_campaign_draft(world):
+    c, db, a, b, k = world
+    from app import offers, campaigns, places
+    oid = next(o["id"] for o in places.offices() if o["label"].startswith("Heights"))
+
+    class G:
+        def zip_targets(self, zips):
+            return {z: f"geoTargetConstants/9{z}" for z in zips}
+    prop = offers.draft(db.practice(a), {oid}, G(), daily_budget=25)
+    pl = prop["payload"]
+    assert pl["end_date"].endswith("-12-31") and pl["geo"] and not pl["addresses"]
+    assert all(len(h) <= 30 for h in pl["headlines"]) and all(len(d) <= 90 for d in pl["descriptions"])
+    assert "braces without insurance" in pl["keywords"] and "braces sterling heights" in pl["keywords"]
+    ops = campaigns.operations({**pl, "final_url": "https://heights.example"})
+    camp = next(o["campaignOperation"]["create"] for o in ops if "campaignOperation" in o)
+    assert camp["status"] == "PAUSED" and camp["endDateTime"].endswith("23:59:59")
+    assert sum(1 for o in ops if (o.get("campaignCriterionOperation") or {}).get("create", {}).get("location")) == len(pl["geo"])
+    assert not any((o.get("campaignCriterionOperation") or {}).get("create", {}).get("proximity") for o in ops)
+    offers.draft(db.practice(a), {oid}, G())                         # drafting again replaces, doesn't duplicate
+    assert sum(1 for ch in db.changes(a, ["proposed"]) if ch["kind"] == "new_campaign") == 1
+
+
+def test_competitor_names_kept_sister_brands_blocked(world):
+    c, db, a, b, k = world
+    from app import leaks
+    groeneveld = {"id": 999, "name": "Eric Groeneveld", "campaign_filter": "groeneveld"}
+    for t in ("dr bailey richmond mi", "stephanie fotouhi dds", "chesterfield growing smiles", "dr hummon"):
+        assert not leaks.safe_to_block(t, 9, 1, groeneveld), t
+    assert leaks.safe_to_block("dr lakepointe st clair", 9, 1, db.practice(a))    # our own LakePointe: block in Heights

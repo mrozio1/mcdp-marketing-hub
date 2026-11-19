@@ -428,6 +428,21 @@ def brand_words(practice, campaign=""):
     return words
 
 
+# Searches for a named doctor or practice: competitors we want to show up against, so never blocked.
+COMPETITOR = re.compile(r"^(dr|doctor)\.?\s|\b(dr|dds|dmd|pc|pllc)\b|smiles?\b|\bpgs\b", re.I)
+
+
+def _sister_brand(term, practice):
+    from . import db
+    words = set(re.findall(r"[a-z0-9]+", term.lower()))
+    for q in db.practices():
+        if q["id"] == practice.get("id"):
+            continue
+        if words & brand_words(q):
+            return True
+    return False
+
+
 def _close(a, b):
     """One or two letters off a name of 6+ letters (a typo of it)."""
     if len(a) < 5 or len(b) < 6 or abs(len(a) - len(b)) > 2:
@@ -460,6 +475,10 @@ def safe_to_block(term, spend, clicks, practice, campaign=""):
     line = line_for(practice, campaign)
     if JUNK.search(term):
         return True                                   # "havens orthodontics jobs" is still the wrong person
+    if _sister_brand(term, practice):
+        return True                                   # another of our practices: don't pay to compete with it
+    if COMPETITOR.search(term):
+        return False                                  # a competitor's doctor or office: we want to be there
     words = set(re.findall(r"[a-z0-9]+", term.lower()))
     if words & brand_words(practice, campaign) or any(_close(w, b) for w in words for b in brand_words(practice, campaign)):
         return False                                  # our own name, even misspelled ("dr charcut")

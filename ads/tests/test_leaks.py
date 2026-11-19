@@ -214,7 +214,7 @@ def test_misspelled_brand_and_aligner_brands_are_kept():
     charchut = {"name": "Charchut Orthodontics", "campaign_filter": "charchut"}
     assert not leaks.safe_to_block("dr charcut", 7, 1, charchut)
     assert not leaks.safe_to_block("clearcorrect near me", 7, 1, {"name": "Norwick Orthodontics", "campaign_filter": "norwick"})
-    assert leaks.safe_to_block("dr hummon", 7, 1, charchut)                      # a competitor's name: fine to block
+    assert not leaks.safe_to_block("dr hummon", 7, 1, charchut)                  # a competitor's name: we want to be there
 
 
 def test_qualified_leads_and_default_forms_keep_counting():

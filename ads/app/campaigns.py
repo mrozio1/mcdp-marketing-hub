@@ -197,7 +197,7 @@ def check(pl, kit=None):
     probs = []
     if not re.match(r"^https?://[^\s/]+\.[^\s]+", pl.get("final_url") or ""):
         probs.append("Add the landing page (the practice's web address).")
-    if not pl.get("addresses"):
+    if not pl.get("addresses") and not pl.get("geo"):
         probs.append("Add at least one office address to show the ads around.")
     for a in pl.get("addresses") or []:
         if not parse_address(a):
@@ -268,10 +268,13 @@ def operations(pl):
             "networkSettings": {"targetGoogleSearch": True, "targetSearchNetwork": False,
                                 "targetContentNetwork": False, "targetPartnerSearchNetwork": False},
             "geoTargetTypeSetting": {"positiveGeoTargetType": "PRESENCE"},
+            **({"endDateTime": f"{pl['end_date']} 23:59:59"} if pl.get("end_date") else {}),
             "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"}}},
         {"campaignCriterionOperation": {"create": {"campaign": camp, "language": {"languageConstant": ENGLISH}}}},
     ]
-    for a in pl["addresses"]:
+    for geo in pl.get("geo") or []:              # zip codes (the practice's assigned ones) instead of a radius
+        ops.append({"campaignCriterionOperation": {"create": {"campaign": camp, "location": {"geoTargetConstant": geo}}}})
+    for a in ([] if pl.get("geo") else pl["addresses"]):
         ops.append({"campaignCriterionOperation": {"create": {"campaign": camp, "proximity": {
             "address": parse_address(a), "radius": pl["radius"], "radiusUnits": "MILES"}}}})
     for n in pl.get("negatives") or []:
