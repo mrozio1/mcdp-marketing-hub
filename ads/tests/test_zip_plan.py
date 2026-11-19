@@ -179,3 +179,25 @@ def test_competitor_names_kept_sister_brands_blocked(world):
     for t in ("dr bailey richmond mi", "stephanie fotouhi dds", "chesterfield growing smiles", "dr hummon"):
         assert not leaks.safe_to_block(t, 9, 1, groeneveld), t
     assert leaks.safe_to_block("dr lakepointe st clair", 9, 1, db.practice(a))    # our own LakePointe: block in Heights
+
+
+def test_competitor_name_campaign(world):
+    c, db, a, b, k = world
+    from app import conquest, referrals
+    referrals.init()
+    with db.conn() as cn:
+        cn.execute("INSERT INTO ref_practices(key, name, dentists, address, city, state, zip, lat, lng, ours, kind) VALUES "
+                   "('x1', 'Smile Studio Orthodontics PLLC', '[\"Amy Hummon, DDS\"]', '1 Main', 'Warren', 'MI', '48093', "
+                   "42.58, -83.01, 0, 'competitor'), ('x2', 'Dr. Duchon + 2 more', '[]', '2 Main', 'Warren', 'MI', '48093', "
+                   "42.59, -83.02, 0, 'competitor'), ('x3', 'Lakepointe Orthodontics', '[]', '3 Main', 'SCS', 'MI', "
+                   "'48080', 42.585, -83.0, 0, 'competitor')")
+
+    class G:
+        def zip_targets(self, zips):
+            return {z: f"geoTargetConstants/9{z}" for z in zips}
+    prop = conquest.draft(db.practice(a), G(), 12)
+    kws = prop["payload"]["keywords"]
+    assert "smile studio orthodontics" in kws and "dr hummon orthodontist" in kws and "dr duchon" in kws
+    assert not any("lakepointe" in k for k in kws)                       # our own LakePointe isn't a competitor
+    assert not any("Dec 31" in d for d in prop["payload"]["descriptions"])
+    assert all(len(h) <= 30 for h in prop["payload"]["headlines"])

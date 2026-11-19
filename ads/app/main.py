@@ -2462,6 +2462,33 @@ async def offer_uninsured(request: Request, pid: int):
     return RedirectResponse(f"/p/{pid}#fixes", status_code=303)
 
 
+@app.post("/practices/conquest")
+async def practices_conquest(request: Request):
+    """Draft a competitor-name campaign (created paused) for every orthodontic practice with assigned zips."""
+    if (r := guard(request)):
+        return r
+    from . import campaigns, conquest, zip_plan
+    form = await request.form()
+    try:
+        budget = float(form.get("daily_budget") or 10)
+    except ValueError:
+        budget = 10.0
+    g = actions._google()
+    done, skipped = [], []
+    for pid in zip_plan.assign()["practices"]:
+        p = db.practice(pid)
+        if zip_plan.line_of(p) != "ortho":
+            continue
+        try:
+            conquest.draft(p, g, budget)
+            done.append(p["name"])
+        except (campaigns.CampaignError, cx.ConnectorError) as e:
+            skipped.append(str(e))
+    flash(request, f"Drafted competitor-name campaigns for {len(done)} practices (created paused on Apply)."
+          + (" Skipped: " + " ".join(skipped[:5]) if skipped else ""))
+    return RedirectResponse("/practices", status_code=303)
+
+
 @app.post("/map/zips/miles")
 def map_zips_miles(request: Request, miles: str = Form("")):
     if (r := guard(request)):
