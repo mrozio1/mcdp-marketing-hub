@@ -58,7 +58,7 @@ def draft(practice, office_ids, google, offer=UNINSURED, daily_budget=20.0, end=
     if rating and rating >= 4.5 and n >= 20:
         heads.append(f"{rating} Stars From {n:,} Reviews")
     for h in (practice["name"], f"{place} Orthodontist", f"Orthodontist in {place}"):
-        if len(h) <= 30 and h not in heads:
+        if len(h) <= 30 and h not in heads and not (h.split()[0].isupper() and len(h.split()[0]) > 3):
             heads.append(h)
             break
     kws = []

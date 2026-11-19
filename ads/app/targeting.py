@@ -254,7 +254,7 @@ def benefits_text(practice, kind="google_ad", context=""):
         heads.append(f"Orthodontist in {city}")
     elif city and len(f"Dentist in {city}") <= 30 and line == "dental":
         heads.append(f"Dentist in {city}")
-    if len(name) <= 30:
+    if len(name) <= 30 and not (name.isupper() and len(name) > 3):     # Google refuses all-capitals headlines
         heads.append(name)
     what = {"ortho": "a free orthodontic consult", "dental": "your family's next visit", "surgery": "your consultation"}[line]
     descs = [f"Many dental benefits and FSAs reset Dec 31. Use yours: book {what}."[:90],
