@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Email campaigns{% endblock %}
+{% block content %}
+<p class="small"><a href="/studio">← Studio</a></p>
+<div class="title-row">
+  <div><h1>Email campaigns</h1><p class="muted em-sub">Newsletters and offers, sent from each practice's own address. Every person gets their own copy.</p></div>
+  <div class="em-actions"><a class="btn btn-quiet" href="/studio/email/lists">Email lists</a><a class="btn" href="/studio/email/new{% if pick %}?b={{ pick }}{% endif %}">+ New Email Campaign</a></div>
+</div>
+{% if not configured %}<p class="panel em-note">Sending isn't connected yet. {% if is_admin %}<a href="/connections/email">Set it up</a>{% else %}An admin sets it up under Connections › Email sending{% endif %}. You can still make drafts and lists.</p>{% endif %}
+
+<nav class="em-filters" aria-label="Filter">
+  {% set q = ('&b=' ~ pick) if pick else '' %}
+  <a href="/studio/email?{{ q[1:] }}" class="em-chip {{ 'on' if not status }}">All</a>
+  <a href="/studio/email?status=draft{{ q }}" class="em-chip {{ 'on' if status == 'draft' }}">Drafts · {{ counts.draft }}</a>
+  <a href="/studio/email?status=queued{{ q }}" class="em-chip {{ 'on' if status == 'queued' }}">Scheduled · {{ counts.queued }}</a>
+  <a href="/studio/email?status=sending{{ q }}" class="em-chip {{ 'on' if status == 'sending' }}">Sending · {{ counts.sending }}</a>
+  <a href="/studio/email?status=sent{{ q }}" class="em-chip {{ 'on' if status == 'sent' }}">Sent</a>
+  <form method="get" action="/studio/email" class="em-pick">{% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+    <label><span class="vh">Practice</span><select name="b" onchange="this.form.submit()"><option value="">All my practices</option>
+      {% for p in plist %}<option value="{{ p.id }}" {% if pick == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
+    <noscript><button class="btn btn-small" type="submit">Show</button></noscript></form>
+</nav>
+
+{% if not rows %}
+<section class="panel"><p class="muted">No campaigns {% if status %}here {% endif %}yet. Start one with <strong>+ New Email Campaign</strong>.</p></section>
+{% else %}
+<div class="table-wrap"><table class="em-table">
+  <thead><tr><th scope="col">Campaign</th><th scope="col">Sent as</th><th scope="col">Status</th><th scope="col" class="num">People</th><th scope="col" class="num">Opened</th><th scope="col" class="num">Clicked</th></tr></thead>
+  <tbody>{% for r in rows %}
+    <tr><td><a href="/studio/email/{{ r.id }}"><strong>{{ r.name }}</strong></a><br><span class="muted small">{% if r.status == 'sent' %}Sent {{ (r.sent_at or '')[:10] }}{% elif r.status in ('queued', 'sending') %}Sends {{ (r.send_at or '').replace('T', ' ')[:16] }}{% else %}Edited {{ (r.updated_at or '').replace('T', ' ')[:16] }}{% endif %}</span></td>
+      <td><span class="em-who"><span class="em-dot" style="background: {{ r.color }}" aria-hidden="true"></span><span>{{ r.practice }}{% if r.from_addr %}<br><span class="muted small">{{ r.from_addr }}</span>{% endif %}</span></span></td>
+      <td><span class="em-pill em-{{ r.status }}">{{ {'draft': 'Draft', 'queued': 'Scheduled', 'sending': 'Sending', 'sent': 'Sent', 'cancelled': 'Cancelled', 'paused': 'Paused'}.get(r.status, r.status) }}</span></td>
+      <td class="num">{{ '{:,}'.format(r.n) if r.n else '—' }}</td>
+      <td class="num">{{ '%.0f%%'|format(r.open_rate * 100) if r.open_rate is not none else '—' }}</td>
+      <td class="num">{{ '%.1f%%'|format(r.click_rate * 100) if r.click_rate is not none else '—' }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endif %}
+{% endblock %}

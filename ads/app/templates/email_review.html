@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Review · {{ k.name }}{% endblock %}
+{% block content %}
+{% set blocked = checks|rejectattr('ok')|list %}
+<p class="small"><a href="/studio/email/{{ k.id }}">← Back to design</a></p>
+<ol class="em-steps" aria-label="Steps"><li>1 · From and audience</li><li>2 · Design</li><li class="on">3 · Review and send</li></ol>
+<div class="em-review">
+  <section class="em-col">
+    <div class="panel em-facts">
+      <span class="muted">From</span><span><strong>{{ practice.name }}</strong>{% if s %} &lt;{{ s.from_addr }}&gt;{% if s.reply_to %}<br><span class="muted small">Replies go to {{ s.reply_to }}</span>{% endif %}{% endif %}</span>
+      <span class="muted">To</span><span>{% for l in lists %}{{ l.name }}{{ ' + ' if not loop.last }}{% else %}No list picked{% endfor %} · <strong>{{ '{:,}'.format(n) }}</strong> people{% if skipped %} <span class="muted small">({{ skipped }} unsubscribed or bounced, skipped)</span>{% endif %}</span>
+      <span class="muted">Subject</span><span>{{ k.subject or '—' }}</span>
+      <span class="muted">Each person</span><span>Gets their own copy, addressed only to them, with their own unsubscribe link.</span>
+    </div>
+    <div class="panel">
+      <h2>Wrong-practice check</h2>
+      <ul class="em-checks">
+        {% for c in checks %}
+        <li class="{{ 'ok' if c.ok else 'bad' }}"><span class="em-mark" aria-hidden="true">{{ '✓' if c.ok else '!' }}</span>
+          <div><span>{{ c.text }}</span>{% if not c.ok %}<span class="em-why">{{ c.detail }}{% if 'Connections' not in c.detail %} <a href="/studio/email/{{ k.id }}">Fix it in the design</a>{% endif %}</span>{% endif %}</div></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  <section class="em-col">
+    <div class="panel">
+      <h2>Inbox preview</h2>
+      <div class="em-inbox"><span class="em-av" style="background: {{ color }}" aria-hidden="true">{{ practice.name[:1] }}</span>
+        <div><strong>{{ s.from_name if s and s.from_name else practice.name }}</strong><br><span>{{ k.subject or '(no subject)' }}</span><br><span class="muted small">{{ k.preview }}</span></div></div>
+      <form method="post" action="/studio/email/{{ k.id }}/test" class="em-row">
+        <label>Send a test to<input type="email" name="to" value="{{ my_email }}" required></label>
+        <button class="btn btn-quiet btn-small" type="submit" {% if not s %}disabled{% endif %}>Send test</button>
+      </form>
+      <iframe class="em-mini" title="Email preview" src="/studio/email/{{ k.id }}/preview" sandbox="allow-same-origin"></iframe>
+    </div>
+    <form method="post" action="/studio/email/{{ k.id }}/send" class="em-confirm">
+      <label for="em-when-pick">When</label>
+      <select id="em-when-pick"><option value="now">As soon as possible ({{ cancel_minutes }} minutes to cancel)</option><option value="later">At a set time</option></select>
+      <input type="datetime-local" id="em-when" name="when" hidden>
+      <label for="em-typed">Type <strong>{{ short }}</strong> to send as this practice</label>
+      <input id="em-typed" name="typed" autocomplete="off" placeholder="{{ short }}" required {% if blocked %}disabled{% endif %}>
+      <button class="btn em-send" type="submit" id="em-send" disabled>Send to {{ '{:,}'.format(n) }} {{ 'person' if n == 1 else 'people' }} as {{ short }}</button>
+      <span class="small em-confirm-note">{% if blocked %}Fix the {{ blocked|length }} problem{{ '' if blocked|length == 1 else 's' }} above first.{% else %}You can cancel until it starts sending.{% endif %}</span>
+    </form>
+  </section>
+</div>
+<script>
+(() => {
+  const t = document.getElementById("em-typed"), b = document.getElementById("em-send"), want = {{ short|lower|tojson }};
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  t.addEventListener("input", () => { b.disabled = norm(t.value) !== norm(want) && norm(t.value) !== norm({{ practice.name|tojson }}); });
+  const pick = document.getElementById("em-when-pick"), when = document.getElementById("em-when");
+  pick.addEventListener("change", () => { when.hidden = pick.value !== "later"; when.required = !when.hidden; if (when.hidden) when.value = ""; });
+})();
+</script>
+{% endblock %}

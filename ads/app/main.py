@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import secrets
 import hmac
 import json
 import html
@@ -21,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, wins, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
+from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, wins, emailer, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
 from . import dashboard as home_dash
@@ -39,7 +41,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # ---------- who may do what ----------
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
-PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/")
+PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/", "/e/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
@@ -205,6 +207,7 @@ def render_md(text):
 
 
 templates.env.filters["markdown"] = render_md
+templates.env.filters["poss"] = lambda n: (n or "") + ("'" if (n or "").endswith("s") else "'s")
 
 
 PUBLIC_URL = os.environ.get("ADS_PUBLIC_URL", "").rstrip("/")
@@ -235,11 +238,13 @@ def _startup():
     studio_flow.init()
     home_dash.init()
     intake.init()
+    emailer.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         studio.start_scheduler()
         studio_flow.start_scheduler()
         sync.start_scheduler()
         reviews.start_scheduler()
+        emailer.start_worker()
         visibility.start_scheduler()
         places.start_scheduler()
         referrals.start_scheduler()
@@ -6077,3 +6082,479 @@ async def intake_public_save(request: Request, token: str):
         except Exception:
             pass
     return RedirectResponse(f"/i/{token}" + ("" if submit else "?saved=1") + "#top", status_code=303)
+
+
+# ---- email campaigns (Studio › Email campaigns), sent as each practice through Azure Communication Services
+def _email_gate(request):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if users.rank(u["role"]) < users.rank("editor") or not users.can(u, "email"):
+        flash(request, "Sending email isn't switched on for you. Ask an admin (Team page › Send email).", "error")
+        return RedirectResponse("/studio", status_code=303)
+    return None
+
+
+def _email_practices(request):
+    u = me(request)
+    return [p for p in db.practices() if users.sees_practice(u, p["id"])]
+
+
+def _email_campaign(request, cid):
+    k = emailer.campaign(cid)
+    if not k or not users.sees_practice(me(request), k["practice_id"]):
+        return None, None
+    return k, db.practice(k["practice_id"])
+
+
+def _email_base(request):
+    return PUBLIC_URL or str(request.base_url).rstrip("/")
+
+
+@app.get("/studio/email", response_class=HTMLResponse)
+def email_home(request: Request, status: str = "", b: str = ""):
+    if (r := _email_gate(request)):
+        return r
+    plist = _email_practices(request)
+    ids = {p["id"] for p in plist}
+    pick = int(b) if b.isdigit() and int(b) in ids else None
+    rows = emailer.campaigns({pick} if pick else ids, status)
+    names = {p["id"]: p for p in plist}
+    ss = emailer.senders()
+    for r_ in rows:
+        r_["practice"] = names.get(r_["practice_id"], {}).get("name", "?")
+        r_["from_addr"] = (ss.get(r_["practice_id"]) or {}).get("from_addr", "")
+        r_["color"] = emailer.look(r_["practice_id"])["primary"]
+    counts = {s_: len([x for x in emailer.campaigns(ids) if x["status"] == s_]) for s_ in ("draft", "queued", "sending", "sent")}
+    return page(request, "email_list.html", rows=rows, status=status, plist=plist, pick=pick, counts=counts,
+                configured=emailer.configured())
+
+
+@app.get("/studio/email/new", response_class=HTMLResponse)
+def email_new_page(request: Request, b: str = ""):
+    if (r := _email_gate(request)):
+        return r
+    plist = _email_practices(request)
+    ss = emailer.senders()
+    cards = []
+    for p in plist:
+        s = ss.get(p["id"])
+        cards.append({"p": p, "s": s, "lists": emailer.lists(p["id"]), "color": emailer.look(p["id"])["primary"],
+                      "ready": bool(s and s["ready"]), "short": emailer.short_name(p)})
+    cards.sort(key=lambda c: (not c["ready"], c["p"]["name"].lower()))
+    tmpl = {c["p"]["id"]: emailer.templates(c["p"]["id"])[1] for c in cards}
+    pick = int(b) if b.isdigit() else None
+    return page(request, "email_new.html", cards=cards, builtins=emailer.templates(0)[0], saved=tmpl, pick=pick)
+
+
+@app.post("/studio/email/new")
+async def email_new(request: Request):
+    if (r := _email_gate(request)):
+        return r
+    form = await request.form()
+    try:
+        pid = int(form.get("practice_id") or 0)
+    except ValueError:
+        pid = 0
+    if pid not in {p["id"] for p in _email_practices(request)}:
+        flash(request, "Pick one of your practices.", "error")
+        return RedirectResponse("/studio/email/new", status_code=303)
+    ids = [int(x) for x in form.getlist("list_id") if str(x).isdigit()]
+    cid = emailer.new_campaign(pid, form.get("name"), ids, form.get("start") or "newsletter", actor(request))
+    return RedirectResponse(f"/studio/email/{cid}", status_code=303)
+
+
+def _email_media(pid):
+    out = []
+    for it in studio.items(pid=pid, limit=300):
+        if it["kind"] in ("image", "design") and (it.get("mime") or "").startswith("image/"):
+            out.append({"id": it["id"], "title": it["title"]})
+    return out
+
+
+@app.get("/studio/email/{cid}", response_class=HTMLResponse)
+def email_edit(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return RedirectResponse("/studio/email", status_code=303)
+    if k["status"] != "draft":
+        return page(request, "email_report.html", k=k, practice=p, st=emailer.stats(cid), clicks=emailer.link_clicks(cid),
+                    s=emailer.sender(p["id"]))
+    return page(request, "email_edit.html", k=k, practice=p, s=emailer.sender(p["id"]), lists=emailer.lists(p["id"]),
+                media=_email_media(p["id"]), block_types=emailer.BLOCK_TYPES, color=emailer.look(p["id"])["primary"],
+                blocks_json=json.dumps(k["blocks"]))
+
+
+@app.post("/studio/email/{cid}")
+async def email_save(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return JSONResponse({"error": "Not found."}, status_code=404)
+    form = await request.form()
+    try:
+        emailer.update_campaign(cid, form)
+    except emailer.EmailError as e:
+        if request.headers.get("x-requested-with") == "fetch":
+            return JSONResponse({"error": str(e)}, status_code=422)
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/studio/email/{cid}", status_code=303)
+    if request.headers.get("x-requested-with") == "fetch":
+        return {"ok": True, "saved": db.now()}
+    nxt = form.get("next") or ""
+    return RedirectResponse(f"/studio/email/{cid}/review" if nxt == "review" else f"/studio/email/{cid}", status_code=303)
+
+
+@app.get("/studio/email/{cid}/preview", response_class=HTMLResponse)
+def email_preview(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return HTMLResponse("", status_code=404)
+    return HTMLResponse(emailer.render(k, p, person={"first_name": "Alex"}),
+                        headers={"Content-Security-Policy": "script-src 'none'", "Cache-Control": "no-store"})
+
+
+@app.get("/studio/email/{cid}/review", response_class=HTMLResponse)
+def email_review(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return RedirectResponse("/studio/email", status_code=303)
+    if k["status"] != "draft":
+        return RedirectResponse(f"/studio/email/{cid}", status_code=303)
+    people, skipped = emailer.recipients(k)
+    lists_ = [l for l in emailer.lists(p["id"]) if l["id"] in k["list_ids"]]
+    return page(request, "email_review.html", k=k, practice=p, s=emailer.sender(p["id"]), checks=emailer.checks(k, p),
+                n=len(people), skipped=skipped, lists=lists_, short=emailer.short_name(p),
+                color=emailer.look(p["id"])["primary"], cancel_minutes=emailer.CANCEL_MINUTES,
+                my_email=(me(request) or {}).get("email") or "")
+
+
+@app.post("/studio/email/{cid}/test")
+def email_test(request: Request, cid: int, to: str = Form("")):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return RedirectResponse("/studio/email", status_code=303)
+    try:
+        emailer.test_send(k, p, to.strip(), _email_base(request))
+        flash(request, f"Test sent to {to.strip()}. Check it arrived in the inbox, not spam.")
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/studio/email/{cid}/review", status_code=303)
+
+
+@app.post("/studio/email/{cid}/send")
+def email_send(request: Request, cid: int, typed: str = Form(""), when: str = Form("")):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return RedirectResponse("/studio/email", status_code=303)
+    at = None
+    if when.strip():
+        try:
+            at = datetime.fromisoformat(when.strip())
+        except ValueError:
+            flash(request, "That send time couldn't be read.", "error")
+            return RedirectResponse(f"/studio/email/{cid}/review", status_code=303)
+    try:
+        t = emailer.queue(cid, p, typed, actor(request), _email_base(request), at)
+        flash(request, f"Sending as {p['name']} starts {t.strftime('%b %-d at %-I:%M %p')}. You can cancel until then.")
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/studio/email/{cid}/review", status_code=303)
+    return RedirectResponse(f"/studio/email/{cid}", status_code=303)
+
+
+@app.post("/studio/email/{cid}/cancel")
+def email_cancel(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if k:
+        try:
+            sent = emailer.cancel(cid)
+            flash(request, "Cancelled. " + (f"{sent:,} had already gone out." if sent else "Nothing was sent; it's a draft again."))
+        except emailer.EmailError as e:
+            flash(request, str(e), "error")
+    return RedirectResponse(f"/studio/email/{cid}", status_code=303)
+
+
+@app.post("/studio/email/{cid}/copy")
+def email_copy(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return RedirectResponse("/studio/email", status_code=303)
+    return RedirectResponse(f"/studio/email/{emailer.copy_campaign(cid, actor(request))}", status_code=303)
+
+
+@app.post("/studio/email/{cid}/delete")
+def email_delete(request: Request, cid: int):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if k:
+        emailer.delete_campaign(cid)
+        flash(request, "Draft deleted.")
+    return RedirectResponse("/studio/email", status_code=303)
+
+
+@app.post("/studio/email/{cid}/template")
+def email_template(request: Request, cid: int, name: str = Form("")):
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if k:
+        emailer.save_template(p["id"], name, k["blocks"], actor(request))
+        flash(request, f"Saved as a {p['name']} template.")
+    return RedirectResponse(f"/studio/email/{cid}", status_code=303)
+
+
+# lists
+@app.get("/studio/email/lists", response_class=HTMLResponse)
+def email_lists(request: Request, b: str = ""):
+    if (r := _email_gate(request)):
+        return r
+    plist = _email_practices(request)
+    ids = {p["id"] for p in plist}
+    pick = int(b) if b.isdigit() and int(b) in ids else (plist[0]["id"] if plist else None)
+    return page(request, "email_lists.html", plist=plist, pick=pick, practice=db.practice(pick) if pick else None,
+                lists=emailer.lists(pick) if pick else [], field_n=len(emailer.field_people(pick)) if pick else 0)
+
+
+@app.post("/studio/email/lists/new")
+def email_list_new(request: Request, practice_id: int = Form(...), name: str = Form("")):
+    if (r := _email_gate(request)):
+        return r
+    if practice_id not in {p["id"] for p in _email_practices(request)}:
+        return RedirectResponse("/studio/email/lists", status_code=303)
+    try:
+        lid = emailer.new_list(practice_id, name, actor(request))
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/studio/email/lists?b={practice_id}", status_code=303)
+    return RedirectResponse(f"/studio/email/lists/{lid}", status_code=303)
+
+
+def _email_list(request, lid):
+    l = emailer.get_list(lid)
+    if not l or not users.sees_practice(me(request), l["practice_id"]):
+        return None
+    return l
+
+
+@app.get("/studio/email/lists/{lid}", response_class=HTMLResponse)
+def email_list_page(request: Request, lid: int, q: str = ""):
+    if (r := _email_gate(request)):
+        return r
+    l = _email_list(request, lid)
+    if not l:
+        return RedirectResponse("/studio/email/lists", status_code=303)
+    rows = emailer.contacts(lid, q)
+    return page(request, "email_list_one.html", l=l, practice=db.practice(l["practice_id"]), rows=rows[:500], total=len(rows),
+                q=q, field_n=len(emailer.field_people(l["practice_id"])))
+
+
+@app.post("/studio/email/lists/{lid}/import")
+async def email_list_import(request: Request, lid: int):
+    if (r := _email_gate(request)):
+        return r
+    l = _email_list(request, lid)
+    if not l:
+        return RedirectResponse("/studio/email/lists", status_code=303)
+    form = await request.form()
+    try:
+        if form.get("source") == "field":
+            people, src = emailer.field_people(l["practice_id"]), "field visits"
+        elif form.get("source") == "one":
+            people, src = [{"email": form.get("email"), "first_name": form.get("first_name"), "last_name": form.get("last_name"),
+                            "org": form.get("org")}], "typed in"
+        else:
+            up = form.get("file")
+            if up is None or not getattr(up, "filename", ""):
+                raise emailer.EmailError("Pick a CSV file (save the spreadsheet as CSV first).")
+            data = await up.read()
+            if len(data) > 10 * 1024 * 1024:
+                raise emailer.EmailError("That file is over 10 MB.")
+            people, src = emailer.parse_csv(data), "csv: " + os.path.basename(up.filename)[:80]
+        added, skipped = emailer.add_contacts(lid, people, src)
+        flash(request, f"Added {added:,}." + (f" Skipped {skipped:,} (already on the list or not an email address)." if skipped else ""))
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/studio/email/lists/{lid}", status_code=303)
+
+
+@app.post("/studio/email/lists/{lid}/remove")
+def email_list_remove(request: Request, lid: int, contact_id: int = Form(...)):
+    if (r := _email_gate(request)):
+        return r
+    if _email_list(request, lid):
+        emailer.remove_contact(lid, contact_id)
+    return RedirectResponse(f"/studio/email/lists/{lid}", status_code=303)
+
+
+@app.post("/studio/email/lists/{lid}/delete")
+def email_list_delete(request: Request, lid: int):
+    if (r := _email_gate(request)):
+        return r
+    l = _email_list(request, lid)
+    if l:
+        emailer.delete_list(lid)
+        flash(request, f"Deleted the list “{l['name']}”.")
+        return RedirectResponse(f"/studio/email/lists?b={l['practice_id']}", status_code=303)
+    return RedirectResponse("/studio/email/lists", status_code=303)
+
+
+# admin: the connection and each practice's sending address
+@app.get("/connections/email", response_class=HTMLResponse)
+def email_connections(request: Request):
+    if (r := guard(request)):
+        return r
+    ss = emailer.senders()
+    key = db.get_setting("em_events_key")
+    if not key:
+        key = secrets.token_urlsafe(18)
+        db.set_setting("em_events_key", key)
+    rows = [{"p": p, "s": ss.get(p["id"]), "site": emailer.practice_domain(p["id"])} for p in db.practices()]
+    rows.sort(key=lambda x: (x["s"] is None, x["p"]["name"].lower()))
+    return page(request, "email_senders.html", rows=rows, configured=emailer.configured(), rates=emailer.rates(),
+                events_url=f"{_email_base(request)}/e/events?k={key}", my_email=(me(request) or {}).get("email") or "")
+
+
+@app.post("/connections/email/connection")
+def email_connection(request: Request, connection: str = Form(""), per_minute: str = Form(""), per_hour: str = Form("")):
+    try:
+        if connection.strip():
+            emailer.save_connection(connection)
+        if per_minute.strip() and per_hour.strip():
+            emailer.set_rates(int(per_minute), int(per_hour))
+        flash(request, "Saved.")
+    except (emailer.EmailError, ValueError) as e:
+        flash(request, str(e) if isinstance(e, emailer.EmailError) else "Rates must be whole numbers.", "error")
+    return RedirectResponse("/connections/email", status_code=303)
+
+
+@app.post("/connections/email/sender/{pid}")
+async def email_sender_save(request: Request, pid: int):
+    form = await request.form()
+    try:
+        if not db.practice(pid):
+            raise emailer.EmailError("That practice is gone.")
+        emailer.save_sender(pid, form, actor(request))
+        flash(request, "Saved. Next: Check DNS, then send a test.")
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/connections/email#p{pid}", status_code=303)
+
+
+@app.post("/connections/email/sender/{pid}/check")
+def email_sender_check(request: Request, pid: int):
+    try:
+        d = emailer.check_dns(pid)
+        missing = [x.upper() for x in ("spf", "dkim", "dmarc") if not d.get(x)]
+        flash(request, "SPF, DKIM and DMARC all found." if not missing else "Still missing: " + ", ".join(missing) + ".",
+              "ok" if not missing else "error")
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/connections/email#p{pid}", status_code=303)
+
+
+@app.post("/connections/email/sender/{pid}/test")
+def email_sender_test(request: Request, pid: int, to: str = Form("")):
+    try:
+        ready = emailer.sender_test(pid, to.strip(), db.practice(pid)["name"])
+        flash(request, f"Test sent to {to.strip()}." + (" This practice is ready to send." if ready else " Fix the DNS checks to finish."))
+    except emailer.EmailError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/connections/email#p{pid}", status_code=303)
+
+
+@app.post("/connections/email/sender/{pid}/remove")
+def email_sender_remove(request: Request, pid: int):
+    emailer.remove_sender(pid)
+    flash(request, "Sending address removed. That practice can't send until one is added again.")
+    return RedirectResponse("/connections/email", status_code=303)
+
+
+# public: tracking, images, unsubscribe, Azure delivery reports (no sign-in)
+_GIF = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
+
+
+@app.get("/e/o/{token}.gif")
+def email_open(token: str):
+    emailer.opened(token)
+    return Response(_GIF, media_type="image/gif", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/e/c/{token}/{n}")
+def email_click(token: str, n: int):
+    url = emailer.clicked(token, n)
+    return RedirectResponse(url or "/", status_code=302)
+
+
+@app.get("/e/i/{key}/{iid}")
+async def email_image(key: str, iid: int):
+    with db.conn() as c:
+        k = c.execute("SELECT id FROM em_campaigns WHERE key=?", (key,)).fetchone()
+    k = emailer.campaign(k["id"]) if k else None
+    it = studio.item(iid)
+    if not k or not it or it.get("practice_id") != k["practice_id"] or iid not in [b.get("item") for b in k["blocks"]]:
+        return Response(status_code=404)
+    return await _send_studio_file(it, 0)
+
+
+@app.get("/e/logo/{pid}")
+def email_logo(pid: int):
+    from fastapi.responses import FileResponse
+    a = images.logo(pid) if emailer.sender(pid) else None
+    p_ = images.path(a) if a else None
+    if not p_:
+        return Response(status_code=404)
+    return FileResponse(p_, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/e/u/{token}", response_class=HTMLResponse)
+def email_unsub_page(request: Request, token: str):
+    m = emailer.by_token(token)
+    p = db.practice(m["practice_id"]) if m else None
+    return templates.TemplateResponse(request, "email_unsub.html", {"m": m, "practice": p, "done": False, "static_v": STATIC_V},
+                                      headers={"X-Robots-Tag": "noindex"})
+
+
+@app.post("/e/u/{token}", response_class=HTMLResponse)
+def email_unsub(request: Request, token: str):
+    m = emailer.by_token(token)
+    p = db.practice(m["practice_id"]) if m else None
+    if m:
+        emailer.unsubscribe(m["practice_id"], m["email"])
+    return templates.TemplateResponse(request, "email_unsub.html", {"m": m, "practice": p, "done": bool(m), "static_v": STATIC_V},
+                                      headers={"X-Robots-Tag": "noindex"})
+
+
+@app.post("/e/events")
+async def email_events(request: Request, k: str = ""):
+    key = db.get_setting("em_events_key") or ""
+    if not key or not hmac.compare_digest(k, key):
+        return Response(status_code=403)
+    try:
+        events = await request.json()
+    except Exception:
+        return Response(status_code=400)
+    for ev in events if isinstance(events, list) else [events]:
+        t = ev.get("eventType") or ev.get("type") or ""
+        data = ev.get("data") or {}
+        if t == "Microsoft.EventGrid.SubscriptionValidationEvent":
+            return {"validationResponse": data.get("validationCode")}
+        if t == "Microsoft.Communication.EmailDeliveryReportReceived":
+            emailer.delivery_report(data)
+    return {"ok": True}

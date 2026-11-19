@@ -86,6 +86,12 @@
 <p class="muted small">The next sync covers {{ window[0] }} to {{ window[1] }}. In the first three days of a month it pulls the whole previous month instead, so reports cover a complete month.</p>
 {% endif %}
 
+<section class="panel conn section-gap" id="email-sending">
+  <h2>Email sending <span class="muted small">· Studio email campaigns, as each practice</span></h2>
+  <p class="muted small">Through Azure Communication Services: each practice sends from its own domain, replies go to its Microsoft 365 mailbox.</p>
+  <a class="btn btn-quiet" href="/connections/email">Set up sending addresses</a>
+</section>
+
 <section class="panel conn section-gap" id="microsoft">
   <h2>Microsoft 365 <span class="muted small">· calendar invites</span></h2>
   {% if ms_on %}

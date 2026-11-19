@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}New email campaign{% endblock %}
+{% block content %}
+<p class="small"><a href="/studio/email">← Email campaigns</a></p>
+<ol class="em-steps" aria-label="Steps"><li class="on">1 · From and audience</li><li>2 · Design</li><li>3 · Review and send</li></ol>
+<form method="post" action="/studio/email/new" class="em-new">
+  <section>
+    <h1>Which practice is this email from?</h1>
+    <p class="muted">Picked once, then locked. The sending address, lists, brand and footer all come from it.</p>
+    <div class="em-cards" role="radiogroup" aria-label="Practice">
+      {% for c in cards %}
+      <label class="em-card {{ 'off' if not c.ready }}">
+        <input type="radio" name="practice_id" value="{{ c.p.id }}" required {% if (pick == c.p.id) or (not pick and loop.first) %}checked{% endif %}
+               data-pid="{{ c.p.id }}" data-name="{{ c.p.name }}" data-from="{{ c.s.from_addr if c.s else '' }}" data-reply="{{ c.s.reply_to if c.s else '' }}" data-color="{{ c.color }}">
+        <span class="em-av" style="background: {{ c.color }}" aria-hidden="true">{{ c.p.name[:1] }}</span>
+        <span><strong>{{ c.p.name }}</strong><br><span class="muted small">{% if c.ready %}{{ c.s.from_addr }}{% elif c.s %}{{ c.s.from_addr }} · not ready yet (drafts only){% else %}No sending address yet · drafts only{% endif %}</span></span>
+      </label>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="panel em-side">
+    <div class="em-band" data-band><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg><span><small>Sending as</small><strong data-as>Pick a practice</strong></span></div>
+    <label>Campaign name <span class="muted small">(only you see this)</span><input name="name" required maxlength="120" placeholder="e.g. December newsletter"></label>
+    <fieldset class="em-lists"><legend>Send to</legend>
+      {% for c in cards %}
+      <div data-lists="{{ c.p.id }}" hidden>
+        {% for l in c.lists %}<label class="em-check"><input type="checkbox" name="list_id" value="{{ l.id }}" {% if loop.first %}checked{% endif %}> <span>{{ l.name }}</span> <span class="muted small">{{ '{:,}'.format(l.n) }}</span></label>
+        {% else %}<p class="muted small">No lists yet for {{ c.p.name }}. You can add one after this step, from <a href="/studio/email/lists?b={{ c.p.id }}">Email lists</a>.</p>{% endfor %}
+      </div>
+      {% endfor %}
+      <p class="muted small">Unsubscribed and bounced addresses are skipped on their own. Each person gets their own copy.</p>
+    </fieldset>
+    <fieldset><legend>Start from</legend>
+      <div class="em-starts">
+        {% for k, label in builtins %}<label class="em-start"><input type="radio" name="start" value="{{ k }}" {% if loop.first %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}
+        {% for c in cards %}{% for t in saved[c.p.id] %}<label class="em-start" data-saved="{{ c.p.id }}" hidden><input type="radio" name="start" value="saved:{{ t.id }}"><span>{{ t.name }}</span></label>{% endfor %}{% endfor %}
+      </div>
+    </fieldset>
+    <button class="btn" type="submit">Continue to design →</button>
+  </section>
+</form>
+<script>
+(() => {
+  const sync = () => {
+    const r = document.querySelector('input[name="practice_id"]:checked');
+    document.querySelectorAll("[data-lists]").forEach(d => {
+      const on = r && d.dataset.lists === r.dataset.pid;
+      d.hidden = !on; d.querySelectorAll("input").forEach(i => i.disabled = !on);
+    });
+    document.querySelectorAll("[data-saved]").forEach(d => { const on = r && d.dataset.saved === r.dataset.pid; d.hidden = !on; d.querySelector("input").disabled = !on; });
+    const band = document.querySelector("[data-band]");
+    if (r) { band.style.background = r.dataset.color; band.querySelector("[data-as]").textContent = r.dataset.name + (r.dataset.from ? " <" + r.dataset.from + ">" : " (no sending address yet)"); }
+  };
+  document.addEventListener("change", e => { if (e.target.name === "practice_id") sync(); });
+  sync();
+})();
+</script>
+{% endblock %}

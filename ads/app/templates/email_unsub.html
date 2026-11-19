@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Unsubscribe</title>
+<style>
+  body { margin: 0; background: #f5f7f9; color: #13232f; font: 17px/1.55 Arial, Helvetica, sans-serif; }
+  main { max-width: 34rem; margin: 12vh auto; padding: 2rem 1.5rem; background: #fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(18,33,46,.06); }
+  h1 { font-size: 1.5rem; margin: 0 0 .5rem; }
+  button { font: inherit; font-weight: bold; background: #1e4a73; color: #fff; border: 0; border-radius: 30px; padding: .8rem 1.6rem; cursor: pointer; }
+  button:focus-visible { outline: 3px solid #2995d2; outline-offset: 2px; }
+  .muted { color: #54636e; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+{% if not m %}
+  <h1>This link doesn't work any more</h1>
+  <p>Reply to the email you got and ask to be taken off the list; the office will do it for you.</p>
+{% elif done %}
+  <h1>You're unsubscribed</h1>
+  <p>{{ practice.name }} won't send you these emails again.</p>
+{% else %}
+  <h1>Unsubscribe from {{ practice.name }}?</h1>
+  <p>{{ m.email }} will stop getting marketing emails from {{ practice.name }}.</p>
+  <form method="post"><button type="submit">Unsubscribe</button></form>
+  <p class="muted">Emails about appointments or referrals you're part of aren't affected.</p>
+{% endif %}
+</main>
+</body>
+</html>

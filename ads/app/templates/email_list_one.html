@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ l.name }} · email list{% endblock %}
+{% block content %}
+<p class="small"><a href="/studio/email/lists?b={{ practice.id }}">← {{ practice.name|poss }} lists</a></p>
+<div class="title-row"><div><p class="dash-label">{{ practice.name }}</p><h1>{{ l.name }}</h1></div>
+  <form method="post" action="/studio/email/lists/{{ l.id }}/delete" data-confirm="Delete this list and everyone on it? Unsubscribes are kept."><button class="linklike danger" type="submit">Delete list</button></form></div>
+
+<div class="dash-row">
+  <section class="dash-card dash-grow">
+    <div class="em-head"><h2>{{ '{:,}'.format(total) }} {{ 'person' if total == 1 else 'people' }}</h2>
+      <form method="get" class="em-row"><label><span class="vh">Search</span><input name="q" value="{{ q }}" placeholder="Search"></label></form></div>
+    {% if rows %}
+    <div class="table-wrap"><table class="em-table"><thead><tr><th scope="col">Email</th><th scope="col">Name</th><th scope="col">Office / company</th><th scope="col">Added from</th><th scope="col"></th></tr></thead>
+      <tbody>{% for r in rows %}<tr><td>{{ r.email }}{% if r.unsubscribed %} <span class="em-pill em-cancelled">Unsubscribed</span>{% endif %}</td><td>{{ r.first_name }} {{ r.last_name }}</td><td>{{ r.org }}</td><td class="muted small">{{ r.source }}</td>
+        <td><form method="post" action="/studio/email/lists/{{ l.id }}/remove"><input type="hidden" name="contact_id" value="{{ r.id }}"><button class="linklike danger" type="submit" aria-label="Remove {{ r.email }}">Remove</button></form></td></tr>{% endfor %}</tbody></table></div>
+    {% if total > rows|length %}<p class="muted small">Showing the first {{ rows|length }}; search to find others.</p>{% endif %}
+    {% else %}<p class="muted">Nobody on this list yet.</p>{% endif %}
+  </section>
+  <section class="dash-card dash-side">
+    <h2>Add people</h2>
+    <form method="post" action="/studio/email/lists/{{ l.id }}/import" enctype="multipart/form-data" class="stack">
+      <label>From a spreadsheet (CSV)<input type="file" name="file" accept=".csv,text/csv" required></label>
+      <p class="muted small">Columns it understands: Email, First name, Last name (or Name), Company / Office / Practice, Tags. Save Excel files as CSV first.</p>
+      <button class="btn btn-quiet" type="submit">Import</button>
+    </form>
+    {% if field_n %}
+    <form method="post" action="/studio/email/lists/{{ l.id }}/import" class="stack">
+      <input type="hidden" name="source" value="field">
+      <p class="small"><strong>{{ field_n }}</strong> {{ 'person' if field_n == 1 else 'people' }} met on field visits for {{ practice.name }} gave an email.</p>
+      <button class="btn btn-quiet" type="submit">Add them</button>
+    </form>
+    {% endif %}
+    <details><summary>Add one person</summary>
+      <form method="post" action="/studio/email/lists/{{ l.id }}/import" class="stack">
+        <input type="hidden" name="source" value="one">
+        <label>Email<input type="email" name="email" required></label>
+        <label>First name<input name="first_name"></label><label>Last name<input name="last_name"></label>
+        <label>Office / company<input name="org"></label>
+        <button class="btn btn-quiet" type="submit">Add</button>
+      </form></details>
+    <p class="muted small">Only add people who'd expect to hear from {{ practice.name }}, such as referring offices you work with.</p>
+  </section>
+</div>
+{% endblock %}

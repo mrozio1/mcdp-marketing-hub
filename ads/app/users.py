@@ -96,7 +96,8 @@ EXTRAS = [("reports", "Reports & exports", "Master reports, practice and field r
           ("refresh", "Refresh & sync", "Sync ads, refresh reviews, search, map and schools, fix ad tracking"),
           ("team_field", "Everyone's field visits", "Other people's visits, spend, follow-ups and field reports (off: only their own)"),
           ("team_calendar", "Everyone's calendar", "Other people's events and time off (off: only what they made or are invited to)"),
-          ("see_admins", "Admins' activity", "Admins' field visits and calendar events (off: hidden from this person)")]
+          ("see_admins", "Admins' activity", "Admins' field visits and calendar events (off: hidden from this person)"),
+          ("email", "Send email", "Email campaigns in Studio, sent as the practices they can open (editors and admins)")]
 FLAGS = [k for k, *_ in TABS] + [k for k, *_ in EXTRAS] + ["all_practices"]
 CAL_COLORS = ["#2995D2", "#E0703A", "#3E9E6E", "#8E5BC9", "#D24C7A", "#C9A227", "#1E4A73", "#4AA3A2", "#A0522D", "#6B7A8F"]
 

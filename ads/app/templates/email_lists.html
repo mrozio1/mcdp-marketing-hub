@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Email lists{% endblock %}
+{% block content %}
+<p class="small"><a href="/studio/email">← Email campaigns</a></p>
+<div class="title-row"><h1>Email lists</h1>
+  <form method="get" action="/studio/email/lists" class="em-pick"><label>Practice <select name="b" onchange="this.form.submit()">
+    {% for p in plist %}<option value="{{ p.id }}" {% if pick == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
+    <noscript><button class="btn btn-small" type="submit">Show</button></noscript></form></div>
+{% if practice %}
+<p class="muted">Lists belong to one practice and can only be emailed as that practice. Someone who unsubscribes from {{ practice.name }} is never emailed by {{ practice.name }} again, whichever list they're on.</p>
+<section class="panel">
+  {% if lists %}
+  <table class="em-table"><thead><tr><th scope="col">List</th><th scope="col" class="num">People</th><th scope="col" class="num">Unsubscribed</th><th scope="col">Made</th></tr></thead>
+    <tbody>{% for l in lists %}<tr><td><a href="/studio/email/lists/{{ l.id }}"><strong>{{ l.name }}</strong></a></td><td class="num">{{ '{:,}'.format(l.n) }}</td><td class="num">{{ l.total - l.n }}</td><td>{{ (l.created_at or '')[:10] }}</td></tr>{% endfor %}</tbody></table>
+  {% else %}<p class="muted">No lists for {{ practice.name }} yet.</p>{% endif %}
+  <form method="post" action="/studio/email/lists/new" class="em-row">
+    <input type="hidden" name="practice_id" value="{{ practice.id }}">
+    <label>New list<input name="name" required maxlength="80" placeholder="e.g. Referring dentists"></label>
+    <button class="btn" type="submit">Make list</button>
+  </form>
+  {% if field_n %}<p class="muted small">{{ field_n }} {{ 'person' if field_n == 1 else 'people' }} with an email address were met on field visits for {{ practice.name }}; add them from inside a list.</p>{% endif %}
+</section>
+{% else %}<section class="panel"><p class="muted">None of your practices are set up yet.</p></section>{% endif %}
+{% endblock %}

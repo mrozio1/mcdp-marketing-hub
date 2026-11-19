@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ k.name }} · email{% endblock %}
+{% block content %}
+<p class="small"><a href="/studio/email">← Email campaigns</a></p>
+<ol class="em-steps" aria-label="Steps"><li>1 · From and audience</li><li class="on">2 · Design</li><li>3 · Review and send</li></ol>
+<div class="em-lock" style="background: {{ color }}">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+  <span>Sending as <strong>{{ practice.name }}</strong>{% if s %} &lt;{{ s.from_addr }}&gt;{% else %} · no sending address yet (an admin adds it){% endif %}</span>
+  <span class="em-lock-end">Locked to this practice</span>
+</div>
+
+<form method="post" action="/studio/email/{{ k.id }}" id="em-form" class="em-editor">
+  <input type="hidden" name="blocks" id="em-blocks" value="{{ blocks_json }}">
+  <section class="em-col">
+    <div class="panel em-settings">
+      <label>Campaign name<input name="name" value="{{ k.name }}" maxlength="120"></label>
+      <label>Subject line<input name="subject" value="{{ k.subject }}" maxlength="200" placeholder="What people see in their inbox"></label>
+      <label>Preview text <span class="muted small">(shown after the subject in most inboxes)</span><input name="preview" value="{{ k.preview }}" maxlength="200"></label>
+      <fieldset><legend>Send to {{ practice.name|poss }} lists</legend>
+        {% for l in lists %}<label class="em-check"><input type="checkbox" name="list_id" value="{{ l.id }}" {% if l.id in k.list_ids %}checked{% endif %}> <span>{{ l.name }}</span> <span class="muted small">{{ '{:,}'.format(l.n) }}</span></label>
+        {% else %}<p class="muted small">No lists yet. <a href="/studio/email/lists?b={{ practice.id }}">Add one</a>.</p>{% endfor %}
+      </fieldset>
+    </div>
+    <div class="panel">
+      <div class="em-head"><h2>Blocks</h2><span class="muted small" id="em-saved" aria-live="polite">Saved</span></div>
+      <p class="muted small">Type <code>**bold**</code>, <code>[link text](https://…)</code> and <code>{first_name}</code> in text. Brand colors, logo and footer come from {{ practice.name|poss }} Studio brand.</p>
+      <ol class="em-blocks" id="em-list"></ol>
+      <div class="em-add" role="group" aria-label="Add a block">
+        {% for t, label in block_types %}<button class="btn btn-small btn-quiet" type="button" data-add="{{ t }}">+ {{ label }}</button>{% endfor %}
+      </div>
+    </div>
+    <div class="em-bottom">
+      <button class="btn" type="submit" name="next" value="review">Review and send →</button>
+      <details class="em-more"><summary>More</summary>
+        <div class="em-more-body">
+          <button class="btn btn-quiet btn-small" type="submit" formaction="/studio/email/{{ k.id }}/copy" formnovalidate>Make a copy</button>
+        </div>
+      </details>
+    </div>
+  </section>
+  <section class="em-col em-previewcol">
+    <div class="em-head"><h2>Preview</h2>
+      <span role="group" aria-label="Preview size" class="em-seg"><button type="button" data-w="640" class="on">Desktop</button><button type="button" data-w="380">Phone</button></span></div>
+    <iframe id="em-frame" title="Email preview" src="/studio/email/{{ k.id }}/preview" sandbox="allow-same-origin"></iframe>
+  </section>
+</form>
+
+<section class="panel em-tools">
+  <form method="post" action="/studio/email/{{ k.id }}/template" class="em-row"><label>Save this layout as a {{ practice.name }} template<input name="name" placeholder="Template name" maxlength="80"></label><button class="btn btn-quiet btn-small" type="submit">Save template</button></form>
+  <form method="post" action="/studio/email/{{ k.id }}/delete" data-confirm="Delete this draft?"><button class="linklike danger" type="submit">Delete draft</button></form>
+</section>
+
+<template id="em-media">{% for m in media %}<option value="{{ m.id }}">{{ m.title }}</option>{% endfor %}</template>
+<script>
+(() => {
+  const LABEL = {{ dict(block_types)|tojson }};
+  const FIELDS = {heading: [["text", "Heading", "input"]], text: [["text", "Text", "area"]],
+    image: [["item", "Picture from {{ practice.name|e }}'s Studio", "media"], ["alt", "Describe the picture (for screen readers)", "input"], ["link", "Link when clicked (optional)", "url"]],
+    button: [["label", "Button text", "input"], ["url", "Link", "url"]], columns: [["left", "Left column", "area"], ["right", "Right column", "area"]],
+    offer: [["title", "Offer (exactly as in the brand kit)", "input"], ["text", "Details", "area"], ["label", "Button text", "input"], ["url", "Link", "url"]],
+    divider: [], spacer: []};
+  const hidden = document.getElementById("em-blocks"), list = document.getElementById("em-list"), form = document.getElementById("em-form");
+  const media = document.getElementById("em-media").innerHTML;
+  let blocks = JSON.parse(hidden.value || "[]"), timer = null;
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  function draw() {
+    list.innerHTML = blocks.map((b, i) => `<li class="em-block"><div class="em-block-top"><strong>${esc(LABEL[b.type] || b.type)}</strong>
+      <span><button type="button" class="linklike" data-up="${i}" aria-label="Move up" ${i ? "" : "disabled"}>↑</button>
+      <button type="button" class="linklike" data-down="${i}" aria-label="Move down" ${i < blocks.length - 1 ? "" : "disabled"}>↓</button>
+      <button type="button" class="linklike danger" data-del="${i}">Remove</button></span></div>` +
+      (FIELDS[b.type] || []).map(([f, label, kind]) => {
+        const id = `b${i}_${f}`, v = b[f] ?? "";
+        if (kind === "area") return `<label for="${id}">${label}</label><textarea id="${id}" data-i="${i}" data-f="${f}" rows="4">${esc(v)}</textarea>`;
+        if (kind === "media") return `<label for="${id}">${label}</label><select id="${id}" data-i="${i}" data-f="${f}"><option value="">Pick a picture…</option>${media.replace(`value="${v}"`, `value="${v}" selected`)}</select>`;
+        return `<label for="${id}">${label}</label><input id="${id}" data-i="${i}" data-f="${f}" value="${esc(v)}" ${kind === "url" ? 'type="url" placeholder="https://"' : ""}>`;
+      }).join("") + `</li>`).join("");
+  }
+  function save(now) {
+    hidden.value = JSON.stringify(blocks);
+    clearTimeout(timer);
+    document.getElementById("em-saved").textContent = "Saving…";
+    timer = setTimeout(async () => {
+      const r = await fetch(form.action, {method: "POST", body: new FormData(form), headers: {"x-requested-with": "fetch"}});
+      const j = await r.json().catch(() => ({}));
+      document.getElementById("em-saved").textContent = r.ok ? "Saved" : (j.error || "Couldn't save");
+      if (r.ok) document.getElementById("em-frame").contentWindow.location.reload();
+    }, now ? 0 : 700);
+  }
+  list.addEventListener("input", e => { const t = e.target; if (t.dataset.f) { blocks[+t.dataset.i][t.dataset.f] = t.value; save(); } });
+  list.addEventListener("change", e => { const t = e.target; if (t.tagName === "SELECT") { blocks[+t.dataset.i][t.dataset.f] = t.value; save(true); } });
+  list.addEventListener("click", e => {
+    const t = e.target, mv = (a, b) => { [blocks[a], blocks[b]] = [blocks[b], blocks[a]]; draw(); save(true); };
+    if (t.dataset.up) mv(+t.dataset.up, +t.dataset.up - 1);
+    else if (t.dataset.down) mv(+t.dataset.down, +t.dataset.down + 1);
+    else if (t.dataset.del && confirm("Remove this block?")) { blocks.splice(+t.dataset.del, 1); draw(); save(true); }
+  });
+  document.querySelectorAll("[data-add]").forEach(b => b.addEventListener("click", () => {
+    const n = {type: b.dataset.add}; (FIELDS[n.type] || []).forEach(([f]) => n[f] = ""); blocks.push(n); draw(); save(true);
+    list.lastElementChild?.querySelector("input,textarea,select")?.focus();
+  }));
+  form.querySelectorAll(".em-settings input").forEach(i => i.addEventListener("input", () => save()));
+  form.addEventListener("submit", () => { hidden.value = JSON.stringify(blocks); });
+  document.querySelectorAll("[data-w]").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll("[data-w]").forEach(x => x.classList.toggle("on", x === b));
+    document.getElementById("em-frame").style.width = b.dataset.w + "px";
+  }));
+  draw();
+})();
+</script>
+{% endblock %}

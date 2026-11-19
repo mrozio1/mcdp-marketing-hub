@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ k.name }} · results{% endblock %}
+{% block content %}
+<p class="small"><a href="/studio/email">← Email campaigns</a></p>
+<div class="title-row">
+  <div><p class="dash-label">{% if k.status == 'sent' %}Sent {{ (k.sent_at or '')[:10] }}{% elif k.status in ('queued', 'sending') %}{{ 'Sending' if k.status == 'sending' else 'Scheduled' }}{% else %}{{ k.status|title }}{% endif %} as {{ practice.name }}{% if s %} · {{ s.from_addr }}{% endif %}</p>
+    <h1>{{ k.name }}</h1><p class="muted">{{ k.subject }}</p></div>
+  <div class="em-actions">
+    {% if k.status in ('queued', 'sending') %}<form method="post" action="/studio/email/{{ k.id }}/cancel" data-confirm="Stop this campaign? Emails not sent yet won't go out."><button class="btn btn-quiet" type="submit">Cancel sending</button></form>{% endif %}
+    <form method="post" action="/studio/email/{{ k.id }}/copy"><button class="btn btn-quiet" type="submit">Copy as a new campaign</button></form>
+  </div>
+</div>
+{% if k.status == 'queued' %}<p class="panel em-note">Starts {{ (k.send_at or '').replace('T', ' at ')[:19] }}. Until then you can cancel and it goes back to being a draft.</p>{% endif %}
+{% if k.status == 'paused' %}<p class="panel em-note">Paused: {{ k.error }}</p>{% endif %}
+<div class="em-stats">
+  <div class="panel"><span class="muted small">Sent</span><strong>{{ '{:,}'.format(st.sent) }}</strong><span class="muted small">of {{ '{:,}'.format(st.n) }}{% if st.queued %} · {{ '{:,}'.format(st.queued) }} still to go{% endif %}{% if st.failed %} · {{ st.failed }} failed{% endif %}</span></div>
+  <div class="panel"><span class="muted small">Bounced</span><strong>{{ '{:,}'.format(st.bounced) }}</strong><span class="muted small">taken off this practice's lists</span></div>
+  <div class="panel"><span class="muted small">Opened</span><strong>{{ '%.0f%%'|format(st.open_rate * 100) if st.open_rate is not none else '—' }}</strong><span class="muted small">{{ '{:,}'.format(st.opened) }} people</span></div>
+  <div class="panel"><span class="muted small">Clicked</span><strong>{{ '%.1f%%'|format(st.click_rate * 100) if st.click_rate is not none else '—' }}</strong><span class="muted small">{{ '{:,}'.format(st.clicked) }} people</span></div>
+  <div class="panel"><span class="muted small">Unsubscribed</span><strong>{{ '{:,}'.format(st.unsubscribed) }}</strong><span class="muted small">never emailed again by {{ practice.name }}</span></div>
+</div>
+<div class="dash-row">
+  <section class="dash-card dash-grow"><h2>What people clicked</h2>
+    {% for c in clicks %}<div class="win-split-row"><div><span class="em-url">{{ c.url }}</span><strong>{{ c.n }}</strong></div><i><b style="width: {{ (c.n / clicks[0].n * 100)|round }}%"></b></i></div>
+    {% else %}<p class="muted small">No clicks yet.</p>{% endfor %}
+    <p class="muted small">Links carry utm_source=email, so bookings from this email show up in LeadSigma by campaign.</p></section>
+  <section class="dash-card dash-side"><h2>The email</h2><iframe class="em-mini" title="Email" src="/studio/email/{{ k.id }}/preview" sandbox="allow-same-origin"></iframe>
+    <p class="muted small">Opens are approximate: some mail apps load pictures on their own, others block them.</p></section>
+</div>
+{% endblock %}

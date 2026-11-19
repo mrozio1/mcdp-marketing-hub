@@ -40,6 +40,7 @@
       {% endfor %}
     </ul>
     <div class="st-side-foot">
+      {% if can_edit and acc.email %}<a href="/studio/email" class="st-email-link">Email campaigns</a>{% endif %}
       <a href="/studio?b=mine" class="{{ 'on' if view == 'mine' }}">Waiting for my approval{% if studio_waiting %} <strong class="st-alert">{{ studio_waiting }}</strong>{% endif %}</a>
       <a href="/studio?b=all" class="{{ 'on' if view == 'all' }}">Everything</a>
       <a href="/studio?b=none" class="{{ 'on' if view == 'none' }}">Needs a brand{% if totals.unbranded %} <strong class="st-alert">{{ totals.unbranded }}</strong>{% endif %}</a>

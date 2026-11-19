@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Email sending{% endblock %}
+{% block content %}
+<p class="small"><a href="/connections">← Connections</a></p>
+<h1>Email sending</h1>
+<p class="muted">Studio email campaigns go out through Azure Communication Services, one sending address per practice on its own domain. A practice can send once SPF, DKIM and DMARC are found and a test has gone through.</p>
+
+<section class="panel">
+  <h2>1 · Connect Azure Communication Services {% if configured %}<span class="state state-good">Connected</span>{% endif %}</h2>
+  <ol class="small em-howto">
+    <li>In the Azure portal: create a <strong>Communication Services</strong> resource and an <strong>Email Communication Services</strong> resource.</li>
+    <li>In the Email resource, <strong>Provision domains › Add domain › Custom domain</strong> for each practice (e.g. havensorthodontics.com). Azure shows a TXT and two CNAME records; add them in Cloudflare, then Verify in Azure.</li>
+    <li>Under the domain, <strong>MailFrom addresses</strong>: add the sending address (e.g. news@…) and its display name, e.g. "Havens Orthodontics". That name is what people see as the sender.</li>
+    <li>Connect the domains to the Communication Services resource (<strong>Email › Domains › Connect domain</strong>), then copy its <strong>Keys › Connection string</strong> here.</li>
+  </ol>
+  <form method="post" action="/connections/email/connection" class="stack">
+    <label>Connection string{% if configured %} <span class="muted small">(saved; paste again only to replace it)</span>{% endif %}<input type="password" name="connection" autocomplete="off" placeholder="endpoint=https://….communication.azure.com/;accesskey=…"></label>
+    <div class="em-row">
+      <label>Emails per minute<input name="per_minute" inputmode="numeric" value="{{ rates.minute }}"></label>
+      <label>Emails per hour<input name="per_hour" inputmode="numeric" value="{{ rates.hour }}"></label>
+    </div>
+    <p class="muted small">Azure starts custom domains at 30 a minute and 100 an hour for the whole account. Ask Azure support for more (it wants a bounce rate under 2%), then raise these to match. Big lists send over several hours on their own.</p>
+    <button class="btn" type="submit">Save</button>
+  </form>
+  <details class="small"><summary>Bounces (optional, recommended)</summary>
+    <p>In the Communication Services resource: <strong>Events › + Event Subscription</strong>, event type <em>Email Delivery Report Received</em>, endpoint type <em>Web Hook</em>, this URL:</p>
+    <p><code class="em-url">{{ events_url }}</code></p>
+    <p class="muted">Bounced addresses are then taken off that practice's lists automatically.</p>
+  </details>
+</section>
+
+<h2 class="section-gap">2 · Each practice's sending address</h2>
+{% for r in rows %}
+<section class="panel em-sender" id="p{{ r.p.id }}">
+  <div class="em-head"><h3>{{ r.p.name }}</h3>
+    {% if r.s and r.s.ready %}<span class="em-pill em-sent">Ready</span>{% elif r.s %}<span class="em-pill em-queued">Not ready yet</span>{% else %}<span class="em-pill em-draft">Not set up</span>{% endif %}</div>
+  <details {% if r.s and not r.s.ready %}open{% endif %}>
+    <summary>{% if r.s %}{{ r.s.from_addr }}{% if r.s.reply_to %} · replies to {{ r.s.reply_to }}{% endif %}{% else %}Add a sending address{% endif %}</summary>
+    <form method="post" action="/connections/email/sender/{{ r.p.id }}" class="em-sender-form">
+      <label>Sends from<input type="email" name="from_addr" required value="{{ r.s.from_addr if r.s else '' }}" placeholder="news@{{ r.site or 'practice-domain.com' }}"></label>
+      <label>Sender name <span class="muted small">(set the same in Azure)</span><input name="from_name" value="{{ r.s.from_name if r.s else r.p.name }}"></label>
+      <label>Replies go to <span class="muted small">(the practice's Microsoft 365 mailbox)</span><input type="email" name="reply_to" value="{{ r.s.reply_to if r.s else '' }}"></label>
+      <label>Mailing address for the footer <span class="muted small">(required by law)</span><input name="address" required value="{{ r.s.address if r.s else '' }}"></label>
+      <label>Phone for the footer<input name="phone" value="{{ r.s.phone if r.s else '' }}"></label>
+      <label>Other sites its links may go to <span class="muted small">(space-separated, e.g. its booking site)</span><input name="extra_domains" value="{{ r.s.extra_domains if r.s else '' }}"></label>
+      <label>Most emails a day<input name="daily_cap" inputmode="numeric" value="{{ r.s.daily_cap if r.s else 300 }}"></label>
+      <p class="muted small em-span">{% if r.site %}Must be on {{ r.site }} (from the practice's brand kit website).{% else %}Add the practice's website to its brand kit first; the sending address has to be on that domain.{% endif %}</p>
+      <button class="btn btn-small" type="submit">Save</button>
+    </form>
+  </details>
+  {% if r.s %}
+  <div class="em-sender-checks">
+    {% for key, label in (('spf', 'SPF'), ('dkim', 'DKIM'), ('dmarc', 'DMARC')) %}
+    <span class="em-pill {{ 'em-sent' if r.s.dns.get(key) else ('em-queued' if r.s.checked_at else 'em-draft') }}">{{ label }}{{ ' ✓' if r.s.dns.get(key) }}</span>
+    {% endfor %}
+    <span class="em-pill {{ 'em-sent' if r.s.tested_at else 'em-draft' }}">Test {{ '✓' if r.s.tested_at else 'not sent' }}</span>
+    <form method="post" action="/connections/email/sender/{{ r.p.id }}/check"><button class="btn btn-quiet btn-small" type="submit">Check DNS</button></form>
+    <form method="post" action="/connections/email/sender/{{ r.p.id }}/test" class="em-row"><label><span class="vh">Send test to</span><input type="email" name="to" value="{{ my_email }}" required></label><button class="btn btn-quiet btn-small" type="submit" {% if not configured %}disabled{% endif %}>Send test</button></form>
+    <form method="post" action="/connections/email/sender/{{ r.p.id }}/remove" data-confirm="Remove {{ r.p.name }}'s sending address? It can't send until one is added again."><button class="linklike danger" type="submit">Remove</button></form>
+  </div>
+  {% if r.s.checked_at and not (r.s.dns.spf and r.s.dns.dkim and r.s.dns.dmarc) %}
+  <p class="muted small">{% if not r.s.dns.spf %}SPF: {{ r.s.dns.spf_note }} (needs include:spf.protection.outlook.com). {% endif %}{% if not r.s.dns.dkim %}DKIM: add Azure's two CNAME records. {% endif %}{% if not r.s.dns.dmarc %}DMARC: add a TXT record at _dmarc, e.g. v=DMARC1; p=none; rua=mailto:… {% endif %}</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}
