@@ -1,0 +1,124 @@
+{% import "_doodles.html" as d %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Marketing intake · {{ practice.name }}</title>
+<link rel="icon" href="/static/favicon.svg?v=2" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Caveat:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/intake.css?v={{ static_v }}">
+</head>
+<body>
+{{ d.defs() }}
+{% set v = f.data %}
+{% macro val(k) %}{{ v.get(k, '') }}{% endmacro %}
+{% macro yn(name, label, hint='') %}
+<div class="yn" data-yn="{{ name }}">
+  <span class="yn-q">{{ label }}{% if hint %}<small>{{ hint }}</small>{% endif %}</span>
+  <span class="yn-pick" role="radiogroup" aria-label="{{ label }}">
+    <label><input type="radio" name="{{ name }}" value="yes" {% if v.get(name) == 'yes' %}checked{% endif %}><span>Yes</span></label>
+    <label><input type="radio" name="{{ name }}" value="no" {% if v.get(name) == 'no' %}checked{% endif %}><span>No</span></label>
+    <label><input type="radio" name="{{ name }}" value="unsure" {% if v.get(name) == 'unsure' %}checked{% endif %}><span>Not sure</span></label>
+  </span>
+</div>
+{% endmacro %}
+{% macro field(name, label, kind, extra) %}
+  {% if kind == 'third' %}
+  {{ yn(name, label) }}
+  <div class="reveal third" data-when="{{ name }}">
+    <p class="tiny">Their contact details, so we can work with them:</p>
+    <div class="grid2">
+      <label>Company or name<input name="{{ name }}_name" value="{{ val(name ~ '_name') }}" autocomplete="off"></label>
+      <label>Phone<input name="{{ name }}_phone" type="tel" value="{{ val(name ~ '_phone') }}" autocomplete="off"></label>
+      <label>Email<input name="{{ name }}_email" type="email" value="{{ val(name ~ '_email') }}" autocomplete="off"></label>
+      <label>Account ID / customer number<input name="{{ name }}_account" value="{{ val(name ~ '_account') }}" autocomplete="off"></label>
+    </div>
+  </div>
+  {% elif kind == 'choice' %}
+  <label>{{ label }}<select name="{{ name }}"><option value=""></option>{% for o in extra %}<option {% if v.get(name) == o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></label>
+  {% elif kind == 'area' %}
+  <label>{{ label }}<textarea name="{{ name }}" rows="3" placeholder="{{ extra or '' }}">{{ val(name) }}</textarea></label>
+  {% elif kind == 'secret' %}
+  <label class="secret">{{ label }}<input name="{{ name }}" type="password" autocomplete="new-password" placeholder="{{ 'Saved: leave blank to keep it' if name in f.secret_keys else 'Only if you can’t give us access' }}">
+    <small>Encrypted. Only MCDP admins can see it.</small></label>
+  {% else %}
+  <label>{{ label }}<input name="{{ name }}" type="{{ {'email': 'email', 'tel': 'tel', 'url': 'url'}.get(kind, 'text') }}" value="{{ val(name) }}" placeholder="{{ extra or '' }}" autocomplete="off"></label>
+  {% endif %}
+{% endmacro %}
+
+<header class="top" id="top">
+  <img src="/static/mcdp-seal-white.png" alt="Motor City Dental Partners" width="56" height="56">
+  <div><p class="eyebrow">Marketing intake</p><h1>{{ practice.name }}</h1></div>
+</header>
+
+<main class="wrap">
+{% if saved %}<p class="card saved">{{ d.icon('note', 30) }} Saved. Come back to this same link any time to finish.</p>{% endif %}
+{% if done %}
+<section class="card thanks">{{ d.icon('rocket', 72) }}<h2>Thank you!</h2><p>We've got everything you sent. If anything's missing we'll reach out; you can open this same link to add more until {{ f.expires_at[:10] }}.</p></section>
+{% endif %}
+<section class="card intro">
+  {{ d.icon('hello', 60) }}
+  <div><h2>Hi! This takes about 10 minutes.</h2>
+  <p>Mostly yes / no. A “yes” opens a couple of questions; a “no” skips them. Not sure? That's a fine answer too. You can <strong>save and come back</strong> to this link any time.</p>
+  <p class="tiny">Where you can, <strong>give us access</strong> (each section says how) instead of sharing a password; the access email is <strong>{{ access }}</strong>. Any password you do share is encrypted and only MCDP admins can see it.</p></div>
+</section>
+
+<nav class="steps" aria-label="Sections">{% for s in sections %}<a href="#s-{{ s.key }}">{{ d.icon(s.icon, 22) }}<span>{{ s.title }}</span></a>{% endfor %}</nav>
+
+<form method="post" class="intake" novalidate>
+{% for s in sections %}
+<section class="card sect" id="s-{{ s.key }}">
+  <div class="sect-head">{{ d.icon(s.icon, 56) }}<div><h2>{{ s.title }}</h2><p>{{ s.blurb }}</p></div></div>
+
+  {% for k, label, kind, extra in s.fields or [] %}{% if loop.first %}<div class="grid2">{% endif %}
+    {{ field(s.key ~ '.' ~ k, label, kind, extra) }}
+  {% if loop.last %}</div>{% endif %}{% endfor %}
+
+  {% for k, label, hint in s.yesno or [] %}{{ yn(s.key ~ '.' ~ k, label, (hint or '').replace('{access}', access)) }}{% endfor %}
+
+  {% for p in s.platforms or [] %}
+  {% set base = s.key ~ '.' ~ p.key %}
+  <div class="plat">
+    <div class="plat-head">{{ d.icon(p.icon, 40) }}<strong>{{ p.label }}</strong>{% if p.intro %}<span class="tiny">{{ p.intro }}</span>{% endif %}</div>
+    {{ yn(base ~ '.use', p.ask) }}
+    <div class="reveal" data-when="{{ base }}.use">
+      {% if p.how %}{{ yn(base ~ '.access', 'Have you given us access?', p.how.replace('{access}', access)) }}{% endif %}
+      <div class="grid2">{% for k, label, kind, extra in p.fields if kind != 'third' %}{{ field(base ~ '.' ~ k, label, kind, extra) }}{% endfor %}</div>
+      {% for k, label, kind, extra in p.fields if kind == 'third' %}{{ field(base ~ '.' ~ k, label, kind, extra) }}{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if s.vendors %}
+  <div class="reveal" data-when="vendors.has_vendors">
+    {% for i in range(1, s.vendors + 1) %}
+    <fieldset class="vendor"><legend>Vendor {{ i }}</legend><div class="grid2">
+      {% for k, label in vendor_fields %}<label>{{ label }}<input name="vendors.{{ i }}.{{ k }}" value="{{ val('vendors.' ~ i ~ '.' ~ k) }}" autocomplete="off"></label>{% endfor %}
+    </div></fieldset>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+<div class="actions card">
+  <button class="btn quiet" type="submit" name="_save" value="1">Save and finish later</button>
+  <button class="btn" type="submit" name="_submit" value="1">Send it to MCDP</button>
+  <p class="tiny">{% if f.saved_at %}Last saved {{ f.saved_at.replace('T', ' ')[:16] }}.{% endif %} This link works until {{ f.expires_at[:10] }}.</p>
+</div>
+</form>
+</main>
+<script>
+(() => {
+  const sync = () => document.querySelectorAll("[data-when]").forEach(el => {
+    const on = document.querySelector(`input[name="${CSS.escape(el.dataset.when)}"][value="yes"]`);
+    el.hidden = !(on && on.checked);
+  });
+  document.addEventListener("change", e => { if (e.target.type === "radio") sync(); });
+  sync();
+})();
+</script>
+</body>
+</html>

@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
+from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
 from . import dashboard as home_dash
@@ -39,7 +39,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # ---------- who may do what ----------
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
-PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/")
+PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs")
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
@@ -47,6 +47,7 @@ FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and 
 CAL_WORK = re.compile(r"^/calendar/(new|events|\d+)(/|$)")         # making and changing events: anyone signed in; the routes
                                                                    # let only editors and field agents add non-personal events
 ADMIN_ONLY = (re.compile(r"^/(connections|google|salesforce|microsoft|canva|team)(/|$)"), re.compile(r"^/map/setup$"),
+              re.compile(r"^/intake/(\d+/(reveal|revoke)|email)$"),
               re.compile(r"^/calendar/company(/|$)"),
               re.compile(r"^/p/\d+/(delete|hide|show)$"), re.compile(r"^/dashboard/budget$"))
 
@@ -71,7 +72,7 @@ def needed_role(method, path):
 
 # What each person can open is set per person on the Team page (users.access): a tab, reports and
 # exports, refreshing and syncing, and which practices.
-TAB_PATHS = [("dashboard", re.compile(r"^/(dashboard/.*)?$")), ("practices", re.compile(r"^/(practices|p/\d+|tracking|brand-images|brand-kits)(/|$)")),
+TAB_PATHS = [("dashboard", re.compile(r"^/(dashboard/.*)?$")), ("practices", re.compile(r"^/(practices|p/\d+|tracking|brand-images|brand-kits|intake)(/|$)")),
              ("reviews", re.compile(r"^/reviews")), ("search", re.compile(r"^/search")),
              ("studio", re.compile(r"^/studio(/|$)")), ("map", re.compile(r"^/map(/|$)")),
              ("field", re.compile(r"^/field(/|\.xlsx|$)")), ("calendar", re.compile(r"^/calendar(/|$)"))]
@@ -233,6 +234,7 @@ def _startup():
     studio.init()
     studio_flow.init()
     home_dash.init()
+    intake.init()
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         studio.start_scheduler()
         studio_flow.start_scheduler()
@@ -5908,3 +5910,165 @@ def connections_stock(request: Request, pixabay_key: str = Form(""), freesound_k
                         unsplash=unsplash_key if unsplash_key.strip() else None)
         flash(request, "Saved. Stock photos, video and music search use these in the Studio.")
     return RedirectResponse("/connections#stock", status_code=303)
+
+
+# ---- marketing intake: a private link per practice (no sign-in) with a yes/no form; answers in the hub
+def _intake_editor(request):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if users.rank(u["role"]) < users.rank("editor"):
+        flash(request, "Only editors and admins can open intake forms.", "error")
+        return RedirectResponse("/practices", status_code=303)
+    return None
+
+
+def _intake_link(request, token):
+    base = PUBLIC_URL or str(request.base_url).rstrip("/")
+    return f"{base}/i/{token}"
+
+
+@app.get("/intake", response_class=HTMLResponse)
+def intake_list(request: Request):
+    if (r := _intake_editor(request)):
+        return r
+    u = me(request)
+    mine = [p for p in db.practices() if users.sees_practice(u, p["id"])]
+    names = {p["id"]: p["name"] for p in db.practices(include_hidden=True)}
+    rows = []
+    for f in intake.forms():
+        if not users.sees_practice(u, f["practice_id"]):
+            continue
+        done, total = intake.progress(f["data"])
+        rows.append({**f, "practice": names.get(f["practice_id"], "(removed)"), "done": done, "total": total,
+                     "live": f["expires_at"] > db.now(), "link": _intake_link(request, f["token"])})
+    new_link = request.session.pop("intake_new", None)
+    return page(request, "intake_list.html", rows=rows, practices=mine, new_link=new_link,
+                access=db.get_setting("intake_access_email") or "", link_days=intake.LINK_DAYS)
+
+
+@app.post("/intake/new")
+def intake_new(request: Request, practice_id: int = Form(...)):
+    if (r := _intake_editor(request)):
+        return r
+    if not users.sees_practice(me(request), practice_id) or not db.practice(practice_id):
+        flash(request, "Pick one of your practices.", "error")
+        return RedirectResponse("/intake", status_code=303)
+    fid, token = intake.new_link(practice_id, (me(request) or {}).get("email") or actor(request))
+    request.session["intake_new"] = {"id": fid, "link": _intake_link(request, token)}
+    return RedirectResponse("/intake", status_code=303)
+
+
+@app.post("/intake/email")
+def intake_email(request: Request, email: str = Form("")):
+    email = email.strip()
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        flash(request, "That doesn't look like an email address.", "error")
+    else:
+        db.set_setting("intake_access_email", email)
+        flash(request, "Saved. The form now asks practices to give access to " + (email or "whoever made the link") + ".")
+    return RedirectResponse("/intake", status_code=303)
+
+
+def _intake_form(request, fid):
+    f = intake.get(fid)
+    if not f or not users.sees_practice(me(request), f["practice_id"]):
+        return None
+    return f
+
+
+@app.get("/intake/{fid}", response_class=HTMLResponse)
+def intake_view(request: Request, fid: int):
+    if (r := _intake_editor(request)):
+        return r
+    f = _intake_form(request, fid)
+    if not f:
+        return RedirectResponse("/intake", status_code=303)
+    shown = request.session.pop("intake_shown", None)
+    shown = shown if shown and shown.get("id") == fid else None
+    return page(request, "intake_view.html", f=f, practice=db.practice(f["practice_id"]), sections=intake.answers(f),
+                link=_intake_link(request, f["token"]), live=f["expires_at"] > db.now(), shown=shown,
+                reveals=intake.reveals(fid) if me(request)["role"] == "admin" else [])
+
+
+@app.post("/intake/{fid}/reveal")
+def intake_reveal(request: Request, fid: int, field: str = Form("")):
+    f = _intake_form(request, fid)
+    if not f or field not in f["secret_keys"]:
+        return RedirectResponse(f"/intake/{fid}", status_code=303)
+    val = intake.reveal(fid, field, actor(request))
+    request.session["intake_shown"] = {"id": fid, "field": field, "value": val}
+    return RedirectResponse(f"/intake/{fid}#pw", status_code=303)
+
+
+@app.post("/intake/{fid}/revoke")
+def intake_revoke(request: Request, fid: int):
+    if _intake_form(request, fid):
+        intake.revoke(fid)
+        flash(request, "Link switched off. The answers are kept.")
+    return RedirectResponse(f"/intake/{fid}", status_code=303)
+
+
+@app.post("/intake/{fid}/extend")
+def intake_extend(request: Request, fid: int):
+    if (r := _intake_editor(request)):
+        return r
+    if _intake_form(request, fid):
+        intake.extend(fid)
+        flash(request, f"Link works for another {intake.LINK_DAYS} days.")
+    return RedirectResponse(f"/intake/{fid}", status_code=303)
+
+
+def _intake_public(request, f, done=False, status=200):
+    p = db.practice(f["practice_id"]) or {"name": "Your practice"}
+    f = dict(f, data=dict(f["data"]))
+    f["data"].setdefault("about.practice", p["name"])
+    return templates.TemplateResponse(request, "intake_form.html", {
+        "practice": p, "f": f, "sections": intake.SECTIONS, "vendor_fields": intake.VENDOR_FIELDS,
+        "access": intake.access_email(f), "done": done, "saved": request.query_params.get("saved") == "1" and not done,
+        "static_v": STATIC_V}, status_code=status,
+        headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer"})
+
+
+def _intake_gone(request):
+    return HTMLResponse("<!doctype html><meta name=viewport content='width=device-width'><title>Link ended</title>"
+                        "<body style='font:17px/1.5 system-ui;max-width:36rem;margin:15vh auto;padding:0 1rem'>"
+                        "<h1>This link has ended</h1><p>Ask your MCDP contact for a new one; anything you already sent "
+                        "is safe with us.</p>", status_code=410, headers={"X-Robots-Tag": "noindex"})
+
+
+@app.get("/i/{token}", response_class=HTMLResponse)
+def intake_public(request: Request, token: str):
+    f = intake.by_token(token)
+    if not f:
+        return _intake_gone(request)
+    return _intake_public(request, f, done=request.session.pop(f"intake_done{f['id']}", False))
+
+
+@app.post("/i/{token}")
+async def intake_public_save(request: Request, token: str):
+    f = intake.by_token(token)
+    if not f:
+        return _intake_gone(request)
+    form = await request.form()
+    submit = bool(form.get("_submit"))
+    intake.save(f, form, submit=submit)
+    if submit:
+        request.session[f"intake_done{f['id']}"] = True
+        try:
+            to = [x for x in {f.get("created_by") or "", db.get_setting("intake_access_email") or ""} if "@" in x]
+            if to:
+                p = db.practice(f["practice_id"]) or {"name": "A practice"}
+                from html import escape as _esc
+                url = f"{PUBLIC_URL or str(request.base_url).rstrip('/')}/intake/{f['id']}"
+                def _mail(*a):
+                    try:
+                        microsoft.send_mail(*a)
+                    except Exception:
+                        pass
+                _threading.Thread(target=_mail, daemon=True, args=(
+                    to, f"Marketing intake sent: {p['name']}",
+                    f"<p>{_esc(p['name'])} sent their marketing intake form.</p><p><a href='{url}'>Open the answers</a></p>")).start()
+        except Exception:
+            pass
+    return RedirectResponse(f"/i/{token}" + ("" if submit else "?saved=1") + "#top", status_code=303)

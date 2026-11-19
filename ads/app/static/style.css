@@ -2286,3 +2286,24 @@ body.home-dash main::before {          /* fixed to the window: stays put while t
 
 .fu-pick { margin: .4rem 0 .2rem; }
 .fu-pick legend { font-weight: 600; font-size: .92rem; margin-bottom: .3rem; }
+
+/* marketing intake (hub side) */
+.copy-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.copy-row input { flex: 1 1 320px; min-width: 0; font-family: ui-monospace, monospace; font-size: .85rem; }
+.copy-row form { margin: 0; }
+.intake-new { border-color: var(--teal); }
+.intake-ans dl { display: grid; grid-template-columns: minmax(140px, 260px) 1fr; gap: .35rem 1rem; margin: 0; }
+.intake-ans dt { color: var(--muted, #5b6770); }
+.intake-ans dd { margin: 0; }
+.intake-ans .ia-plat { grid-column: 1 / -1; font-weight: 600; color: inherit; display: flex; align-items: center; gap: .4rem; margin-top: .6rem; }
+.intake-ans dd:has(> .ia-sub) { grid-column: 1 / -1; }
+.intake-ans .ia-sub { padding-left: 1.9rem; }
+.ia-head { display: flex; align-items: center; gap: .5rem; }
+.intake-ans .doodle { color: var(--teal-deep); }
+.intake-ans .doodle path, .intake-ans .doodle circle, .intake-ans .doodle rect, .intake-ans .doodle ellipse { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.intake-ans .doodle .fl { fill: var(--teal); }
+.intake-ans .doodle .ac { stroke: var(--teal); }
+form.inline { display: inline; }
+@media (max-width: 600px) { .intake-ans dl { grid-template-columns: 1fr; } .intake-ans dd { margin-bottom: .4rem; } }
+.pill { display: inline-block; padding: .1rem .55rem; border-radius: 999px; background: #eef2f5; font-size: .8rem; margin-right: .25rem; }
+.pill.ok { background: #e3f4e8; color: #1d6b38; }

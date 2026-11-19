@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% import "_doodles.html" as d %}
+{% block title %}Intake · {{ practice.name if practice else "" }}{% endblock %}
+{% block content %}
+{{ d.defs() }}
+<p class="small"><a href="/intake">← Marketing intake forms</a></p>
+<div class="title-row"><h1>{{ practice.name if practice else "Removed practice" }}: marketing intake</h1></div>
+<p class="muted">
+  {% if f.submitted_at %}Sent {{ f.submitted_at.replace('T', ' ')[:16] }}{% if f.submitted_by %} by {{ f.submitted_by }}{% endif %}.
+  {% elif f.saved_at %}Started, last saved {{ f.saved_at.replace('T', ' ')[:16] }}. Not sent yet.
+  {% else %}Not opened yet.{% endif %}
+  {% if live %}Link works until {{ f.expires_at[:10] }}.{% else %}The link has ended.{% endif %}
+</p>
+
+<section class="panel">
+  <div class="copy-row"><input id="il" value="{{ link }}" readonly onclick="this.select()">
+    <button class="btn btn-quiet" type="button" onclick="navigator.clipboard.writeText(document.getElementById('il').value);this.textContent='Copied'">Copy link</button>
+    <form method="post" action="/intake/{{ f.id }}/extend"><button class="btn btn-quiet" type="submit">{{ "Extend" if live else "Turn back on" }} 45 days</button></form>
+    {% if is_admin and live %}<form method="post" action="/intake/{{ f.id }}/revoke"><button class="btn btn-quiet" type="submit">Switch link off</button></form>{% endif %}
+  </div>
+</section>
+
+{% for s in sections %}{% if s.rows %}
+<section class="panel intake-ans">
+  <h2 class="ia-head">{{ d.icon(s.icon, 34) }} {{ s.title }}</h2>
+  <dl>
+  {% for r in s.rows %}
+    {% if r.platform %}
+      <dt class="ia-plat">{{ d.icon(r.icon, 24) }} {{ r.platform }}</dt>
+      <dd><dl class="ia-sub">{% for x in r.rows %}<dt>{{ x.label }}</dt><dd>
+        {% if x.secret %}
+          {% if shown and shown.field == x.secret %}<code id="pw">{{ shown.value }}</code> <span class="muted small">(this view was logged)</span>
+          {% elif is_admin %}<form method="post" action="/intake/{{ f.id }}/reveal" class="inline"><input type="hidden" name="field" value="{{ x.secret }}"><button class="btn btn-small btn-quiet" type="submit">Show password</button></form> <span class="muted small">Each look is logged.</span>
+          {% else %}<span class="muted">Saved (admins can see it)</span>{% endif %}
+        {% else %}{{ x.value }}{% endif %}</dd>{% endfor %}</dl></dd>
+    {% else %}
+      <dt>{{ r.label }}</dt><dd style="white-space:pre-line">{{ r.value }}</dd>
+    {% endif %}
+  {% endfor %}
+  </dl>
+</section>
+{% endif %}{% endfor %}
+
+{% if not sections|selectattr('rows')|list %}<section class="panel"><p class="muted">No answers yet.</p></section>{% endif %}
+
+{% if reveals %}
+<section class="panel">
+  <h2>Password views</h2>
+  <ul class="small">{% for r in reveals %}<li>{{ r.at.replace('T', ' ')[:16] }} · {{ r.by }} · {{ r.field }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}
