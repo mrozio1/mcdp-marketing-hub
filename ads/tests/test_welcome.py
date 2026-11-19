@@ -39,7 +39,7 @@ def test_welcome_empty(client):
     for href in ('href="/practices"', 'href="https://social.mcdp.com"', 'href="/map"', 'href="/map/list"',
                  'href="/reports?kind=week"', 'href="/reports?kind=month"'):
         assert href in html
-    assert "Nothing stands out" in html
+    assert "Nothing to check" in html and "Wins this week" in html
 
 
 def test_welcome_with_data(client):
@@ -116,3 +116,38 @@ def test_practices_moved_and_drawers(client):
     assert r.headers["location"] == "/practices"
     r = c.post(f"/p/{pid}/delete", follow_redirects=False)
     assert r.headers["location"] == "/practices"
+
+
+def test_wins_section(client):
+    """Good news first: spotlight, clickable tiles with detail, live feed, team and shout-outs from real rows."""
+    from datetime import date, datetime, timedelta
+    c, db, places = client
+    c.post("/login", data={"password": "pw"})
+    pid = db.add_practice("Wins Orthodontics", 0, 0, "wins")
+    today = date.today()
+    from app import field, report, reviews
+    now = (datetime.combine(report.period("week")["start"], datetime.min.time()) + timedelta(hours=10)).isoformat()
+    field.init()
+    reviews.init()
+    with db.conn() as k:
+        k.execute("INSERT INTO gbp_locations(name, title, practice_id, rating, total) VALUES ('locations/w1', 'Wins – Troy', ?, 4.9, 120)", (pid,))
+        for i in range(3):
+            k.execute("INSERT INTO gbp_reviews(id, location, stars, created) VALUES (?, 'locations/w1', 5, ?)", (f"wr{i}", now))
+        k.execute("INSERT INTO field_offices(place_id, name, created_at) VALUES ('ChIJ_wins_office', 'Smile Family Dental', ?)", (now,))
+        oid = k.execute("SELECT id FROM field_offices WHERE place_id='ChIJ_wins_office'").fetchone()[0]
+        cols = {r["name"] for r in k.execute("PRAGMA table_info(visits)")}
+        if "practice_id" in cols:
+            k.execute("INSERT INTO visits(office_id, user_name, visited_at, created_at, practice_id) VALUES (?, 'Rita Rep', ?, ?, ?)",
+                      (oid, now, now, pid))
+        else:
+            k.execute("INSERT INTO visits(office_id, user_name, visited_at, created_at) VALUES (?, 'Rita Rep', ?, ?)", (oid, now, now))
+        k.execute("INSERT INTO changes(practice_id, platform, account, kind, title, payload, status, created_at, applied_at) "
+                  "VALUES (?, 'google', '1', 'negative_keyword', 'Block 4 wasted searches', '{}', 'applied', ?, ?)", (pid, now, now))
+    html = c.get("/").text
+    assert "Wins this week" in html and "Live feed" in html
+    assert "new 5-star review" in html and "1 ad fix applied" in html
+    assert 'data-tile="visits"' in html and 'id="wd-reviews"' in html and "See details" in html
+    assert "New 5-star review for Wins – Troy" in html and "Field visit at Smile Family Dental" in html
+    assert "Wins Orthodontics: Block 4 wasted searches" in html
+    assert "Team this week" in html and "Rita Rep" in html
+    assert "Marketing budget, year to date" in html and "How patients say they found us" in html or "leadsigma" in html

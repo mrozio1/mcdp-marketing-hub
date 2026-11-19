@@ -51,25 +51,119 @@
     </div>
   </section>
 
-  <section class="dash-row">
-    <div class="dash-card dash-grow">
-      <div class="dash-head">
-        <h2>Needs attention</h2>
-        <span class="dash-muted small">Worked out from the numbers on this page</span>
-      </div>
-      {% if d.attention %}
-      <ol class="dash-alerts">
-        {% for a in d.attention %}
-        <li><span class="dash-n" aria-hidden="true">{{ a.n }}</span>
-          <div><strong>{{ a.title }}</strong><span>{{ a.body }}</span><span class="dash-alert-foot"><span class="dash-src">{{ a.src }}</span>{% if a.href %} <a class="dash-fix" href="{{ a.href }}">Fix it →</a>{% endif %}</span></div></li>
+  {% set w = d.wins %}
+  {% macro ico(name, size=18, color='#2c6396') %}<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="{{ color }}" stroke-width="{{ 1.6 if size > 30 else 2 }}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ {
+    'star': 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z',
+    'pin': 'M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+    'cal': 'M4 6h16v14H4zM4 10h16M8 3v5M16 3v5',
+    'wrench': 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z',
+    'image': 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01',
+    'chart': 'M4 20h16M7 16v-5M12 16V7M17 16v-8',
+    'cup': 'M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4'}.get(name, '') }}"></path></svg>{% endmacro %}
+  {% if w %}
+  <section class="win" aria-labelledby="wins-h">
+    <div class="dash-head"><div><p class="dash-label">Good news first</p><h2 id="wins-h">Wins this {{ w.unit }}</h2></div></div>
+    <div class="win-grid">
+      <div class="win-main">
+        <section class="win-spot" aria-label="Spotlight" aria-live="polite" data-spot>
+          {% for s in w.spots %}
+          <div class="win-slide" {% if not loop.first %}hidden{% endif %}>
+            <div class="win-spot-ico">{{ ico(s.icon, 52, '#6fb0e0') }}</div>
+            <div class="win-spot-text"><p class="win-kick">{{ s.kicker }}</p><p class="win-spot-title">{{ s.title }}</p>{% if s.body %}<p class="win-spot-body">{{ s.body }}</p>{% endif %}</div>
+          </div>
+          {% endfor %}
+          {% if w.spots|length > 1 %}
+          <div class="win-dots">{% for s in w.spots %}<button type="button" data-dot="{{ loop.index0 }}" aria-label="Show {{ s.kicker }}" {% if loop.first %}aria-current="true"{% endif %}></button>{% endfor %}</div>
+          {% endif %}
+        </section>
+
+        <div class="win-tiles" style="grid-template-columns: repeat({{ w.tiles|length }}, minmax(0, 1fr))">
+          {% for t in w.tiles %}
+          <button type="button" class="win-tile" data-tile="{{ t.key }}" aria-expanded="false" aria-controls="wd-{{ t.key }}">
+            <span class="win-tile-label">{{ t.label }}</span>
+            <span class="win-tile-value">{{ t.value }}</span>
+            {% if t.delta %}<span class="win-delta{% if t.delta.up %} up{% elif t.delta.up is sameas false %} down{% endif %}">{% if t.delta.up %}▲ {% elif t.delta.up is sameas false %}▼ {% endif %}{{ t.delta.text }}</span>{% else %}<span class="win-delta">&nbsp;</span>{% endif %}
+            {% if t.spark %}<svg class="win-spark" viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true"><path d="{{ t.spark }}"></path></svg>{% else %}<span class="win-spark"></span>{% endif %}
+            <span class="win-more">See details</span>
+          </button>
+          {% endfor %}
+        </div>
+
+        {% for t in w.tiles %}
+        <section class="win-detail" id="wd-{{ t.key }}" hidden aria-label="{{ t.label }} details">
+          <div class="dash-head"><h3>{{ t.label }}{% if t.bars %}, {{ t.history }}{% endif %}</h3>
+            <span class="win-detail-links"><a href="{{ t.link[0] }}">{{ t.link[1] }}</a><button type="button" class="win-close" data-close aria-label="Close details">×</button></span></div>
+          <div class="win-detail-grid">
+            <div>
+              {% if t.bars %}
+              <div class="win-bars" role="img" aria-label="{{ t.label }} per {{ w.unit }}: {% for b in t.bars %}{{ b.label }} {{ b.v }}{{ ', ' if not loop.last }}{% endfor %}">
+                {% for b in t.bars %}<div class="win-bar"><span>{{ b.v }}</span><i class="{{ 'last' if b.last }}" style="height: {{ b.h }}px"></i><em>{{ b.label }}</em></div>{% endfor %}
+              </div>
+              {% else %}<p class="dash-muted small">{{ t.note or 'No trend yet.' }}</p>{% endif %}
+            </div>
+            <div class="win-split">
+              <span class="dash-muted small">{{ t.split_title }} this {{ w.unit }}</span>
+              {% for r in t.split %}<div class="win-split-row"><div><span>{{ r.name }}</span><strong>{{ r.v }}</strong></div><i><b style="width: {{ r.w }}%"></b></i></div>
+              {% else %}<p class="dash-muted small">Nothing yet this {{ w.unit }}.</p>{% endfor %}
+              {% if t.split2 %}<span class="dash-muted small" style="margin-top:.4rem">{{ t.split2_title }}</span>
+              {% for r in t.split2 %}<div class="win-split-row"><div><span>{{ r.name }}</span><strong>{{ r.v }}</strong></div><i><b style="width: {{ r.w }}%"></b></i></div>{% endfor %}{% endif %}
+            </div>
+          </div>
+        </section>
         {% endfor %}
-      </ol>
-      {% else %}<p class="dash-muted">Nothing stands out this {{ 'week' if kind == 'week' else 'month' }}.</p>{% endif %}
-      {% if look %}<ul class="dash-look">{% for it in look %}<li>{% if it.href %}<a href="{{ it.href }}">{{ it.text }}</a>{% else %}<span class="dash-muted">{{ it.text }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+      </div>
+
+      <div class="win-side">
+        <section class="dash-card" aria-labelledby="feed-h">
+          <div class="dash-head"><h3 id="feed-h">Live feed</h3><span class="dash-muted small win-live"><i></i>Last two weeks</span></div>
+          {% if w.feed %}<ul class="win-feed">
+            {% for f in w.feed %}<li><span class="win-feed-ico">{{ ico(f.icon) }}</span><div><span>{{ f.text }}</span><small>{{ f.when }}</small></div></li>{% endfor %}
+          </ul>{% else %}<p class="dash-muted small">New reviews, field visits, posts and ad fixes show up here.</p>{% endif %}
+        </section>
+        {% if w.team_ok %}
+        <section class="dash-card" aria-labelledby="team-h">
+          <div class="dash-head"><h3 id="team-h">Team this {{ w.unit }}</h3>{% if acc.field %}<a class="small" href="/field">Field page</a>{% endif %}</div>
+          {% for p in w.team %}
+          <div class="win-person"><span class="win-av" aria-hidden="true">{{ p.initials }}</span>
+            <div><div class="win-person-top"><span>{{ p.name }}</span><strong>{{ p.visits }}</strong></div><i><b style="width: {{ p.w }}%"></b></i><small>{{ p.note }}</small></div></div>
+          {% else %}<p class="dash-muted small">No field visits logged this {{ w.unit }} yet.</p>{% endfor %}
+        </section>
+        {% endif %}
+      </div>
     </div>
 
-    {% if not d.limited %}
-    <div class="dash-card dash-side" id="budget">
+    {% if w.shouts %}
+    <div class="win-shouts">
+      {% for s in w.shouts %}
+      <article class="win-shout"><p class="win-kick">{{ ico(s.icon, 20, '#6fb0e0') }} {{ s.kicker }}</p><strong>{{ s.title }}</strong><span>{{ s.body }}</span></article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <details class="win-check">
+    <summary>
+      <span class="win-check-ico" aria-hidden="true">!</span>
+      <span class="win-check-text"><strong>{% if d.attention %}{{ d.attention|length }} thing{{ '' if d.attention|length == 1 else 's' }} to check{% else %}Nothing to check{% endif %}</strong>
+        {% if d.attention %}<span class="dash-muted"> · top one: {{ d.attention[0].title }}</span>{% endif %}</span>
+      {% for it in look %}{% if it.href %}<a href="{{ it.href }}">{{ it.text }}</a>{% else %}<span class="dash-muted small">{{ it.text }}</span>{% endif %}{% endfor %}
+      {% if d.attention %}<span class="win-check-open">See them</span>{% endif %}
+    </summary>
+    {% if d.attention %}
+    <ol class="dash-alerts">
+      {% for a in d.attention %}
+      <li><span class="dash-n" aria-hidden="true">{{ a.n }}</span>
+        <div><strong>{{ a.title }}</strong><span>{{ a.body }}</span><span class="dash-alert-foot"><span class="dash-src">{{ a.src }}</span>{% if a.href %} <a class="dash-fix" href="{{ a.href }}">Fix it →</a>{% endif %}</span></div></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+  </details>
+
+
+  {% if not d.limited %}
+  <section class="dash-row win-budget-row">
+    <div class="dash-card" id="budget">
       <div class="dash-head stack">
         <h2>Marketing budget, year to date</h2>
         <span class="dash-muted small">{% if d.budget.through %}Through {{ d.budget.through }} · {% endif %}from accounting</span>
@@ -99,8 +193,8 @@
       {% endif %}
       <span><span class="dash-src pbi">Power BI · Marketing</span></span>
     </div>
-    {% endif %}
   </section>
+  {% endif %}
 
   {% if not d.limited %}
   <section class="dash-row" id="leadsigma">
@@ -202,4 +296,27 @@
 
   <footer class="dash-foot">Hub numbers sync from Google Ads, Meta, Google Business Profile and the Field log. LeadSigma numbers come from its CSV export. The budget is typed in from Power BI until it's connected. Counts only; no patient names are stored in the hub.</footer>
 </div>
+<script>
+(() => {
+  const spot = document.querySelector("[data-spot]");
+  if (spot) {
+    const slides = [...spot.querySelectorAll(".win-slide")], dots = [...spot.querySelectorAll("[data-dot]")];
+    let i = 0, timer;
+    const show = k => { i = k; slides.forEach((s, n) => s.hidden = n !== k); dots.forEach((d, n) => d.toggleAttribute("aria-current", n === k)); };
+    const go = () => { clearInterval(timer); if (!matchMedia("(prefers-reduced-motion: reduce)").matches && slides.length > 1) timer = setInterval(() => show((i + 1) % slides.length), 6000); };
+    dots.forEach(d => d.addEventListener("click", () => { show(+d.dataset.dot); go(); }));
+    spot.addEventListener("mouseenter", () => clearInterval(timer));
+    spot.addEventListener("mouseleave", go);
+    go();
+  }
+  const tiles = [...document.querySelectorAll("[data-tile]")];
+  const open = key => tiles.forEach(t => {
+    const on = t.dataset.tile === key, p = document.getElementById("wd-" + t.dataset.tile);
+    t.setAttribute("aria-expanded", on ? "true" : "false"); t.classList.toggle("on", on); if (p) p.hidden = !on;
+    t.querySelector(".win-more").textContent = on ? "Showing details" : "See details";
+  });
+  tiles.forEach(t => t.addEventListener("click", () => open(t.getAttribute("aria-expanded") === "true" ? null : t.dataset.tile)));
+  document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => open(null)));
+})();
+</script>
 {% endblock %}

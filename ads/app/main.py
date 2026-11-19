@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
+from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, wins, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
 from . import dashboard as home_dash
@@ -763,6 +763,11 @@ def welcome(request: Request, kind: str = "week", key: str = ""):
         return r
     kind = "month" if kind == "month" else "week"
     d = home_dash.build(kind, key or None)
+    try:
+        d["wins"] = wins.build(d["rep"], d["ls"], me(request))
+    except Exception:
+        import logging; logging.getLogger("ads").exception("home wins")
+        d["wins"] = None
     opts = master_report.week_options() if kind == "week" else master_report.month_options()
     if d["period"]["key"] not in [k for k, _ in opts]:
         opts = [(d["period"]["key"], d["period"]["label"])] + opts
