@@ -180,9 +180,11 @@ def test_followups_and_map_overlay(env):
     assert v["rating"] == "warm" and v["overdue"] and v["n"] >= 3
     assert any(x["name"] == "Riverside Dental" for x in data["visited_offices"])
     html = env["agent"].get("/field").text
-    assert "Follow-ups due" in html and "Overdue" in html
+    assert "Your follow-ups due" in html and "Overdue" in html
     assert "Overdue" not in env["viewer"].get("/field").text                    # the viewer has none of their own
-    assert "Overdue" in env["admin"].get("/field").text                         # admins see everyone's
+    admin_page = env["admin"].get("/field").text
+    assert "Overdue" not in admin_page.split("Your follow-ups due")[1].split("</section>")[0]   # only the owner's own
+    assert "Manage follow-ups" in admin_page and "Maple Street Family Dental" in admin_page     # admins manage everyone's
 
 
 def test_route_ordering_and_links(env):
@@ -598,3 +600,36 @@ def test_visiting_for_lists_practice_addresses(env):
     with db.conn() as c:
         c.execute("UPDATE visits SET sf_status='sent' WHERE notes='addr-test'")
         c.execute("DELETE FROM gbp_locations WHERE name IN ('accounts/1/locations/71', 'accounts/1/locations/72')")
+
+
+
+def test_followup_intervals_owner_and_reminders(env, monkeypatch):
+    field, users = env["field"], env["users"]
+    from app import cal, microsoft
+    log(env["agent"], name="Birchwood Family Dental", phone_lat="41.32", phone_lng="-84.31", followup="",
+        followup_days="60", visited_at=date.today().isoformat() + "T11:00")
+    v = [x for x in field.visits_between(date.today(), date.today() + timedelta(days=1))
+         if x["office_name"] == "Birchwood Family Dental"][0]
+    assert v["followup"] == (date.today() + timedelta(days=60)).isoformat()
+    assert v["reminder_at"] == (date.today() + timedelta(days=120)).isoformat()
+    abe, ann = users.by_email("abe@example.com"), users.by_email("ann@example.com")
+    day = date.today() + timedelta(days=60)
+    on = lambda u: [i for i in cal.items_between(day, day, u) if i["kind"] == "followup"]
+    assert on(abe) and not on(ann)                                  # only on its owner's calendar
+    assert env["agent"].post(f"/field/followups/{v['id']}/remove").status_code in (200, 303)   # agents can't manage
+    assert field.visit(v["id"])["followup"]
+    env["admin"].post(f"/field/followups/{v['id']}/owner", data={"owner": str(ann["id"])})
+    assert on(ann) and not on(abe)
+    # the 120-day reminder goes to the owner by email, once
+    sent = []
+    monkeypatch.setattr(microsoft, "connected", lambda: True)
+    monkeypatch.setattr(microsoft, "send_mail", lambda to, subj, body, reply_to=None: sent.append((to, subj)))
+    assert field.send_reminders(today=date.today() + timedelta(days=121)) >= 1
+    assert (["ann@example.com"], "Follow-up reminder: Birchwood Family Dental") in sent
+    n = len(sent)
+    field.send_reminders(today=date.today() + timedelta(days=122))
+    assert len(sent) == n
+    env["admin"].post(f"/field/followups/{v['id']}/reset")
+    assert field.visit(v["id"])["reminder_at"] == (date.today() + timedelta(days=120)).isoformat()
+    env["admin"].post(f"/field/followups/{v['id']}/remove")
+    assert not field.visit(v["id"])["followup"] and not field.visit(v["id"])["reminder_at"]

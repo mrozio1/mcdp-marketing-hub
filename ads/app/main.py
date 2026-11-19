@@ -246,6 +246,7 @@ def _startup():
             zips.refresh_in_background()        # new Census numbers come out each December
         salesforce.start_scheduler(PUBLIC_URL)
         cal.start_scheduler()
+        field.start_reminders(PUBLIC_URL)
 
 
 SHARED = {"id": 0, "name": "Team password", "email": "", "role": "admin"}
@@ -2816,9 +2817,54 @@ def field_page(request: Request):
                 today=date.today(), start=start, end=end, rows=rows, days=field.by_day(rows), sums=field.summary(rows),
                 budgets=budgets, see_all=see_all, month_label=m_start.strftime("%B %Y"),
                 who=who, practice=prac, team=team, practices=db.keep_mine(db.practices()), ratings=field.RATING_LABELS,
-                follow=[f for f in field.followups(user_id=None if see_all else u["id"]) if f["user_id"] not in hide], offices=places.offices(), links=links,
+                follow=field.followups(user_id=u["id"]), offices=places.offices(), links=links,
+                manage_fu=_manage_followups(u, hide) if users.rank(u["role"]) >= users.rank("editor") else None,
+                fu_people=[t for t in users.all_users() if t["active"] and t["id"] not in hide],
+                reminder_days=field.REMINDER_DAYS,
                 agents=[t for t in team if t["active"] and t.get("field")], browser_key=places.browser_key(), map_id=places.map_id(),
                 my_id=(u or {}).get("id"), sf_on=salesforce.connected(), sf_base=salesforce.instance_url())
+
+
+def _manage_followups(u, hide):
+    only = users.practice_ids(u)
+    links = field.practice_links()
+    out = []
+    everyone = users.sees_all_field(u)
+    for f in field.open_followups():
+        if f["owner_id"] in hide or (not everyone and f["owner_id"] != u["id"] and f["user_id"] != u["id"]):
+            continue                                  # without "everyone's field visits": only their own
+        if only is not None:
+            v = field.visit(f["visit_id"]) or {}
+            if (v.get("practice_id") or links.get(v.get("our_office_id"))) not in only:
+                continue
+        out.append(f)
+    return out
+
+
+@app.post("/field/followups/{vid}/{action}")
+async def field_followup_manage(request: Request, vid: int, action: str):
+    """Editors and admins: change a follow-up's owner, remove it, or restart its 120-day reminder clock."""
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if users.rank(u["role"]) < users.rank("editor"):
+        flash(request, "Managing follow-ups needs editor access.", "error")
+        return RedirectResponse("/field#manage-fu", status_code=303)
+    v = field.visit(vid)
+    if not v:
+        flash(request, "That visit isn't there any more.", "error")
+        return RedirectResponse("/field#manage-fu", status_code=303)
+    form = await request.form()
+    if action == "owner" and str(form.get("owner") or "").isdigit() and users.get(int(form.get("owner"))):
+        field.set_followup_owner(vid, int(form.get("owner")))
+        flash(request, f"{v['office_name']}: the follow-up now belongs to {users.get(int(form.get('owner')))['name']}.")
+    elif action == "remove":
+        field.remove_followup(vid)
+        flash(request, f"{v['office_name']}: follow-up and reminder removed.")
+    elif action == "reset":
+        field.reset_reminder(vid)
+        flash(request, f"{v['office_name']}: the {field.REMINDER_DAYS}-day reminder starts again from today.")
+    return RedirectResponse("/field#manage-fu", status_code=303)
 
 
 @app.get("/field.xlsx")
@@ -2975,8 +3021,8 @@ async def field_log(request: Request):
         return r
     form = await request.form()
     data = {k: form.get(k) for k in ("office_id", "place_id", "npi_key", "name", "address", "office_lat", "office_lng", "visited_at",
-                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "notes", "minutes", "virtual",
-                                     "practice_id", "practice_required",
+                                     "met_name", "met_role", "rating", "dropped", "cost", "followup", "followup_days", "notes", "minutes",
+                                     "virtual", "practice_id", "practice_required",
                                      "phone_lat", "phone_lng", "phone_acc")}
     names = form.getlist("person_name")
     if names:
@@ -3039,7 +3085,7 @@ async def field_edit(request: Request, vid: int):
         flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
         return RedirectResponse("/field", status_code=303)
     form = await request.form()
-    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "notes", "minutes", "virtual", "practice_id",
+    data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "followup_days", "notes", "minutes", "virtual", "practice_id",
                                      "practice_required", "remove_receipt")}
     names = form.getlist("person_name")
     emails, roles = form.getlist("person_email"), form.getlist("person_role")

@@ -110,7 +110,7 @@
 </section>
 
 <section aria-labelledby="due-h">
-  <h2 id="due-h">Follow-ups due</h2>
+  <h2 id="due-h">Your follow-ups due</h2>
   {% if follow %}
   <ul class="due-list">
     {% for f in follow %}
@@ -127,6 +127,34 @@
   <p class="muted">Nothing due in the next week.</p>
   {% endif %}
 </section>
+
+{% if manage_fu is not none %}
+<section class="section-gap" aria-labelledby="mfu-h" id="manage-fu">
+  <details class="drawer" {% if request.url.fragment == 'manage-fu' %}open{% endif %}>
+    <summary><span class="drawer-title" id="mfu-h">Manage follow-ups ({{ manage_fu|length }})</span><span class="drawer-hint">Change who owns one, remove it, or restart its {{ reminder_days }}-day reminder</span></summary>
+    <div class="drawer-body">
+    {% if manage_fu %}
+    <div class="table-scroll"><table class="data">
+      <thead><tr><th>Office</th><th>Last visit</th><th>Follow up</th><th>Reminder</th><th>Owner</th><th></th></tr></thead>
+      <tbody>{% for f in manage_fu %}<tr>
+        <td><strong>{{ f.name }}</strong></td>
+        <td class="small">{{ f.visited_at[:10] }}<br><span class="muted">{{ f.user_name }}</span></td>
+        <td class="small">{{ f.followup or '—' }}</td>
+        <td class="small">{% if f.reminder_sent %}sent {{ f.reminder_sent[:10] }}{% elif f.reminder_at %}{{ f.reminder_at }}{% else %}—{% endif %}</td>
+        <td><form method="post" action="/field/followups/{{ f.visit_id }}/owner" class="inline-form">
+          <select name="owner" aria-label="Owner of the follow-up for {{ f.name }}" onchange="this.form.requestSubmit()">
+            {% for t in fu_people %}<option value="{{ t.id }}" {% if t.id == f.owner_id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+          </select><noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript></form></td>
+        <td class="team-actions">
+          <form method="post" action="/field/followups/{{ f.visit_id }}/reset"><button class="linklike small" type="submit">Restart {{ reminder_days }}-day clock</button></form>
+          <form method="post" action="/field/followups/{{ f.visit_id }}/remove" data-confirm="Remove the follow-up and reminder for {{ f.name }}?"><button class="linklike small danger" type="submit">Remove</button></form>
+        </td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="muted">No open follow-ups or reminders.</p>{% endif %}
+    </div>
+  </details>
+</section>
+{% endif %}
 
 <section aria-labelledby="budget-h" id="budgets">
   <h2 id="budget-h">{{ 'Spend against budget' if see_all else 'Your spend against budget' }} · {{ month_label }}</h2>

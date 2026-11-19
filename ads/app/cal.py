@@ -681,7 +681,8 @@ def followups_between(start, end, user, practice_id=None, mine=False):
     from . import field
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT v.id, v.office_id, v.user_id, v.user_name, v.followup, v.practice_id, o.our_office_id, o.name AS office_name "
+            "SELECT v.id, v.office_id, COALESCE(v.followup_owner, v.user_id) AS user_id, v.user_name, v.followup, "
+            "v.practice_id, o.our_office_id, o.name AS office_name "
             "FROM visits v JOIN field_offices o ON o.id=v.office_id WHERE v.followup != '' AND v.followup BETWEEN ? AND ?",
             (start.isoformat(), end.isoformat()))]
     links = field.practice_links() if rows else {}
@@ -696,8 +697,8 @@ def followups_between(start, end, user, practice_id=None, mine=False):
             continue
         if practice_id and pid != practice_id:
             continue
-        if (mine or not acc.get("team_field")) and r["user_id"] != (user or {}).get("id"):
-            continue                                   # other people's follow-ups: only with everyone's field visits
+        if user and r["user_id"] != user.get("id"):
+            continue                                   # a follow-up only shows on its owner's calendar
         if r["user_id"] in hide or (only is not None and pid not in only and r["user_id"] != (user or {}).get("id")):
             continue
         out.append({"day": date.fromisoformat(r["followup"][:10]), "time": "", "end_time": "",

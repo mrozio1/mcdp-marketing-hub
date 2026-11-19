@@ -96,6 +96,12 @@ def init():
             c.execute("ALTER TABLE visits ADD COLUMN minutes INTEGER")
         if "virtual" not in have:              # a phone, video or Teams meeting: no location, no miles
             c.execute("ALTER TABLE visits ADD COLUMN virtual INTEGER NOT NULL DEFAULT 0")
+        if "followup_owner" not in have:       # who the follow-up and its reminder belong to (default: who logged it)
+            c.execute("ALTER TABLE visits ADD COLUMN followup_owner INTEGER")
+            c.execute("UPDATE visits SET followup_owner=user_id")
+        if "reminder_at" not in have:          # the 120-day "time to go back" email
+            c.execute("ALTER TABLE visits ADD COLUMN reminder_at TEXT DEFAULT ''")
+            c.execute("ALTER TABLE visits ADD COLUMN reminder_sent TEXT DEFAULT ''")
     os.makedirs(receipt_dir(), exist_ok=True)
 
 
@@ -179,6 +185,24 @@ def money_in(text):
 
 def _clean(s, n=500):
     return re.sub(r"\s+", " ", str(s or "")).strip()[:n]
+
+
+FOLLOWUP_DAYS = (30, 60, 90)
+REMINDER_DAYS = 120
+
+
+def followup_in(form, visited_at):
+    """The follow-up date from the form: 'followup_days' (none, 30, 60, 90 days after the visit), else a date."""
+    choice = str(form.get("followup_days") or "").strip()
+    if choice == "none":
+        return ""
+    if choice.isdigit() and int(choice) in FOLLOWUP_DAYS:
+        return (date.fromisoformat(visited_at[:10]) + timedelta(days=int(choice))).isoformat()
+    return _date_or_blank(form.get("followup"))
+
+
+def reminder_for(visited_at):
+    return (date.fromisoformat(visited_at[:10]) + timedelta(days=REMINDER_DAYS)).isoformat()
 
 
 def _date_or_blank(s):
@@ -437,16 +461,17 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     met_name = _clean(", ".join(person_label(p) for p in people), 300)
     met_role = _clean(", ".join(dict.fromkeys(p["role"] for p in people if p["role"])), 200)
     receipt = save_receipt(receipt_bytes, receipt_type) if receipt_bytes else ""
+    when = _when(form.get("visited_at"))
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO visits(office_id, user_id, user_name, visited_at, met_name, met_role, rating, dropped, cost, "
             "receipt, followup, notes, phone_lat, phone_lng, phone_acc, distance_mi, on_site, created_at, practice_id, practice_location, "
-            "minutes, virtual) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (o["id"], user.get("id") or None, user.get("name", ""), _when(form.get("visited_at")),
+            "minutes, virtual, followup_owner, reminder_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (o["id"], user.get("id") or None, user.get("name", ""), when,
              met_name, met_role, rating,
-             _clean(form.get("dropped"), 300), cost, receipt, _date_or_blank(form.get("followup")),
+             _clean(form.get("dropped"), 300), cost, receipt, followup_in(form, when),
              str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id, practice_location,
-             minutes_in(form.get("minutes")), virtual))
+             minutes_in(form.get("minutes")), virtual, user.get("id") or None, reminder_for(when)))
         vid = cur.lastrowid
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
@@ -476,7 +501,7 @@ def update_visit(vid, form, receipt_bytes=None, receipt_type="", by=""):
         c.execute("UPDATE visits SET visited_at=?, met_name=?, met_role=?, rating=?, dropped=?, cost=?, receipt=?, followup=?, "
                   "notes=?, practice_id=?, practice_location=?, minutes=?, virtual=? WHERE id=?",
                   (when, met_name, met_role, rating, _clean(form.get("dropped"), 300), money_in(form.get("cost")), receipt,
-                   _date_or_blank(form.get("followup")), str(form.get("notes") or "").strip()[:4000],
+                   followup_in(form, when), str(form.get("notes") or "").strip()[:4000],
                    practice_id, practice_location, minutes_in(form.get("minutes")), is_virtual(form), vid))
         if is_virtual(form):   # a meeting from wherever they were: no check-in location, so no miles
             c.execute("UPDATE visits SET phone_lat=NULL, phone_lng=NULL, phone_acc=NULL, distance_mi=NULL, on_site=NULL "
@@ -725,7 +750,8 @@ def office_status(user_id=None, hide=()):
         cond = " AND {t}.user_id NOT IN (%s)" % ",".join(str(int(h)) for h in hide)
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
-            "SELECT v.office_id, v.visited_at, v.user_id, v.user_name, v.rating, v.followup, v.met_name, "
+            "SELECT v.id AS visit_id, v.office_id, v.visited_at, v.user_id, v.user_name, v.rating, v.followup, v.met_name, "
+            "COALESCE(v.followup_owner, v.user_id) AS owner_id, v.reminder_at, v.reminder_sent, "
             "(SELECT COUNT(*) FROM visits x WHERE x.office_id=v.office_id" + cond.format(t="x") + ") AS n, "
             "o.place_id, o.npi_key, o.name, o.address, o.lat, o.lng "
             "FROM visits v JOIN field_offices o ON o.id=v.office_id "
@@ -744,8 +770,88 @@ def followups(today=None, within_days=7, user_id=None):
             out.append({**s, "overdue": s["followup"] < today.isoformat(), "due_today": s["followup"] == today.isoformat(),
                         "here_lat": o["here_lat"], "here_lng": o["here_lng"]})
     if user_id:
-        out = [f for f in out if f["user_id"] == user_id]
+        out = [f for f in out if f["owner_id"] == user_id]       # follow-ups belong to their owner
     return sorted(out, key=lambda f: f["followup"])
+
+
+# ------------------------------------------------------------------ follow-ups: owner, remove, 120-day reminder
+def open_followups():
+    """The latest visit to each office that still has a follow-up or a reminder pending, with its owner."""
+    from . import users
+    names = {u["id"]: u["name"] for u in users.all_users()}
+    out = []
+    for s in office_status():
+        if not (s["followup"] or (s["reminder_at"] and not s["reminder_sent"])):
+            continue
+        out.append({**s, "owner_name": names.get(s["owner_id"], s["user_name"] or "Someone")})
+    return sorted(out, key=lambda f: (f["followup"] or f["reminder_at"] or "9"))
+
+
+def set_followup_owner(vid, uid):
+    with db.conn() as c:
+        c.execute("UPDATE visits SET followup_owner=? WHERE id=?", (uid, vid))
+
+
+def remove_followup(vid):
+    """No follow-up and no reminder for this visit any more."""
+    with db.conn() as c:
+        c.execute("UPDATE visits SET followup='', reminder_at='', reminder_sent='' WHERE id=?", (vid,))
+
+
+def reset_reminder(vid, today=None):
+    """Start the 120-day clock again from today."""
+    today = today or date.today()
+    with db.conn() as c:
+        c.execute("UPDATE visits SET reminder_at=?, reminder_sent='' WHERE id=?",
+                  ((today + timedelta(days=REMINDER_DAYS)).isoformat(), vid))
+
+
+def due_reminders(today=None):
+    """Reminders due: the office's latest visit is 120 days old (or its clock was reset and has run out)."""
+    today = (today or date.today()).isoformat()
+    return [s for s in office_status() if s["reminder_at"] and not s["reminder_sent"] and s["reminder_at"] <= today]
+
+
+def send_reminders(today=None, public_url=""):
+    """Email each reminder that's due to its owner (from the Microsoft 365 mailbox the calendar uses).
+    Returns how many were sent. Without Microsoft 365 connected they wait (and show on the Field page)."""
+    from . import microsoft, users
+    if not microsoft.connected():
+        return 0
+    sent = 0
+    for s in due_reminders(today):
+        u = users.get(s["owner_id"]) if s["owner_id"] else None
+        if not u or not u.get("active") or not u.get("email"):
+            continue
+        link = f"{public_url.rstrip('/')}/field/log?office={s['office_id']}&back=/field" if public_url else ""
+        days = (date.fromisoformat((today or date.today()).isoformat()) - date.fromisoformat(s["visited_at"][:10])).days
+        body = (f"<p>Hi {u['name'].split()[0]},</p><p>It's been {days} days since the last visit to "
+                f"<strong>{s['name']}</strong> ({s['visited_at'][:10]}). Time to plan the next one?</p>"
+                + (f'<p><a href="{link}">Log a visit</a></p>' if link else "")
+                + "<p style=\"color:#54636e;font-size:13px\">From the MCDP Hub. Only you get this reminder.</p>")
+        try:
+            microsoft.send_mail([u["email"]], f"Follow-up reminder: {s['name']}", body)
+        except Exception:
+            continue
+        with db.conn() as c:
+            c.execute("UPDATE visits SET reminder_sent=? WHERE id=?", (db.now(), s["visit_id"]))
+        sent += 1
+    return sent
+
+
+def start_reminders(public_url=""):
+    import threading
+    import time
+
+    def loop():
+        time.sleep(300)
+        while True:
+            try:
+                send_reminders(public_url=public_url)
+            except Exception:
+                pass
+            time.sleep(6 * 3600)
+    threading.Thread(target=loop, name="field-reminders", daemon=True).start()
 
 
 def map_overlay(user_id=None, hide=()):

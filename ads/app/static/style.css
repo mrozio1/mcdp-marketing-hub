@@ -2276,9 +2276,13 @@ h2 { font-weight: 500; letter-spacing: -0.3px; }
 
 /* the D behind the home dashboard */
 body.home-dash main { position: relative; isolation: isolate; }
-body.home-dash main::before {
-  content: ""; position: absolute; z-index: -1; pointer-events: none;
-  top: 1.5rem; left: 50%; transform: translateX(-50%); width: min(780px, 92vw); aspect-ratio: 866 / 900;
+body.home-dash main::before {          /* fixed to the window: stays put while the page scrolls, sized to the window */
+  content: ""; position: fixed; z-index: -1; pointer-events: none;
+  top: calc(50% + 2.5rem); left: 50%; transform: translate(-50%, -50%);
+  width: min(70vw, calc((100vh - 6rem) * 0.96)); aspect-ratio: 866 / 900;
   background: url("/static/mcdp-d-navy.png") center / contain no-repeat; opacity: .05;
 }
 @media print { body.home-dash main::before { display: none; } .topbar { background: none; } }
+
+.fu-pick { margin: .4rem 0 .2rem; }
+.fu-pick legend { font-weight: 600; font-size: .92rem; margin-bottom: .3rem; }

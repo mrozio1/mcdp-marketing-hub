@@ -111,8 +111,13 @@
   {% if ev and ev.receipt %}<p class="small">Receipt on file: <a href="/field/receipts/{{ ev.receipt }}" target="_blank" rel="noopener">view</a> · a new photo replaces it · <label class="inline-check"><input type="checkbox" name="remove_receipt" value="1"> remove it</label></p>{% endif %}
   <p class="small muted" id="receipt-status" aria-live="polite">{% if ai_on %}Snap the receipt and the amount fills in; check it before saving.{% else %}Snap the receipt to keep it with the visit, and type the amount.{% endif %}</p>
 
-  <label>Follow up on<input type="date" name="followup" id="followup"{% if ev %} value="{{ ev.followup or '' }}"{% endif %}></label>
-  <div class="chips">{% for d, l in [(7, 'In a week'), (14, 'In 2 weeks'), (30, 'In a month'), (90, 'In 3 months')] %}<button type="button" class="chip" data-days="{{ d }}">{{ l }}</button>{% endfor %}</div>
+  <fieldset class="calf-pills fu-pick"><legend>Follow up</legend>
+    {% if ev and ev.followup %}<label><input type="radio" name="followup_days" value="" checked><span>Keep {{ ev.followup }}</span></label>{% endif %}
+    <label><input type="radio" name="followup_days" value="none" {% if not (ev and ev.followup) %}checked{% endif %}><span>None</span></label>
+    {% for d in (30, 60, 90) %}<label><input type="radio" name="followup_days" value="{{ d }}"><span>{{ d }} days</span></label>{% endfor %}
+  </fieldset>
+  {% if ev %}<input type="hidden" name="followup" value="{{ ev.followup or '' }}">{% endif %}
+  <p class="small muted">Counted from the visit date, and shown only on your own calendar. Either way, if nobody's back to this office in 120 days, you get a reminder email.</p>
 
   <label>Notes<textarea name="notes" rows="4" maxlength="4000" placeholder="What they said, referral potential, next step…">{{ ev.notes if ev else '' }}</textarea></label>
 
@@ -207,10 +212,6 @@
   // Quick-add chips
   document.querySelectorAll("[data-chip]").forEach(b => b.onclick = () => {
     const f = $("dropped"); f.value = f.value ? `${f.value}, ${b.dataset.chip.toLowerCase()}` : b.dataset.chip; f.focus();
-  });
-  document.querySelectorAll("[data-days]").forEach(b => b.onclick = () => {
-    const d = new Date(); d.setDate(d.getDate() + Number(b.dataset.days));
-    $("followup").value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   });
 
   // Receipt: shrink the photo on the phone, show it, and let the AI read the total.
