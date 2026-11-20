@@ -169,3 +169,20 @@ def test_cancel_and_access(env):
     ed.post(f"/studio/email/{cid}/cancel")
     assert em.campaign(cid)["status"] == "draft"
     assert env["vi"].get("/studio/email", follow_redirects=False).status_code == 303       # viewers can't send
+
+
+def test_websites_sync_with_search_page(env):
+    from app import brand, visibility
+    db = env["db"]
+    pid = db.add_practice("Wheeler Orthodontics", 0, 0, "wheeler")
+    other = db.add_practice("Schulz Orthodontics", 0, 0, "schulz")
+    brand.save(other, {"website": "https://schulzortho.com", "voice": "warm"})
+    visibility.sites()
+    with db.conn() as c:
+        c.execute("INSERT INTO sc_sites(site, practice_id) VALUES ('sc-domain:wheelerorthodontics.com', ?)", (pid,))
+        c.execute("INSERT INTO sc_sites(site, practice_id) VALUES ('https://www.schulzortho.com/', NULL)")
+    brand.sync_websites()
+    assert brand.kit(pid)["website"] == "https://wheelerorthodontics.com"            # Search page → brand kit
+    assert env["emailer"].practice_domain(pid) == "wheelerorthodontics.com"
+    assert {s["site"]: s["practice_id"] for s in visibility.sites()}["https://www.schulzortho.com/"] == other   # kit → Search page
+    assert brand.kit(other)["voice"] == "warm"                                     # nothing else touched

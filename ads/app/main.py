@@ -239,6 +239,10 @@ def _startup():
     home_dash.init()
     intake.init()
     emailer.init()
+    try:
+        brand.sync_websites("Search page")
+    except Exception:
+        pass
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         studio.start_scheduler()
         studio_flow.start_scheduler()
@@ -1855,6 +1859,7 @@ async def brand_save(request: Request, pid: int):
         return RedirectResponse("/practices", status_code=303)
     form = await request.form()
     brand.save(pid, {k: form.get(k, "") for k in brand.KEYS + brand.OTHER}, actor(request))
+    brand.sync_websites(actor(request))
     flash(request, "Brand kit saved. New ads for this practice follow it.")
     return _brand_back(pid)
 
@@ -3689,6 +3694,8 @@ async def search_sites(request: Request):
         if k.startswith("site:") and k[5:] in known:
             visibility.set_site_practice(k[5:], int(v) if v in valid else None)
             n += 1
+    if n:
+        brand.sync_websites(actor(request))
     flash(request, "Saved which website belongs to which practice." if n else "Nothing to save.")
     return RedirectResponse("/search#setup", status_code=303)
 

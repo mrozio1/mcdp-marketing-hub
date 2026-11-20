@@ -292,6 +292,11 @@ def refresh(today=None):
             if cl:
                 try:
                     st["sites_found"] = refresh_sites(cl)
+                    try:
+                        from . import brand
+                        brand.sync_websites("Search page")
+                    except Exception:
+                        pass
                 except cx.ConnectorError as e:
                     st["errors"].append(f"Search Console: {e}")
                 n, errs = refresh_search_console(cl, today)

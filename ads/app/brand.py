@@ -491,3 +491,51 @@ def waiting_review(practices):
     with db.conn() as c:
         rows = {r["practice_id"] for r in c.execute("SELECT practice_id FROM brand_kits WHERE suggested != ''")}
     return [p for p in practices if p["id"] in rows]
+
+
+# ------------------------------------------------------------------ website <-> Search page (Search Console) sync
+def _host(url):
+    s = re.sub(r"^(sc-domain:|https?://)", "", (url or "").strip().lower()).split("/")[0].split(":")[0]
+    return s[4:] if s.startswith("www.") else s
+
+
+def set_website(pid, url, by=""):
+    """Set only the brand kit's website (creating an empty kit if needed)."""
+    url = (url or "").strip()
+    if url and not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    with db.conn() as c:
+        r = c.execute("SELECT data FROM brand_kits WHERE practice_id=?", (pid,)).fetchone()
+        data = json.loads(r["data"] or "{}") if r else {}
+        data["website"] = url[:300]
+        c.execute("INSERT INTO brand_kits(practice_id, data, suggested, updated_at, updated_by) VALUES (?,?,'',?,?) "
+                  "ON CONFLICT(practice_id) DO UPDATE SET data=excluded.data", (pid, json.dumps(data), db.now(), by))
+
+
+def sync_websites(by="Search page"):
+    """Brand kit website and the Search page's linked website stay in step: a practice with a linked Search Console
+    site but no kit website gets it; a kit website links the matching unlinked Search Console site."""
+    from . import visibility
+    try:
+        sites = visibility.sites()
+    except Exception:
+        return 0
+    changed = 0
+    by_pid = {}
+    for s in sorted(sites, key=lambda s: not s["site"].startswith("sc-domain:")):
+        if s["practice_id"]:
+            by_pid.setdefault(s["practice_id"], s)
+    for p in db.practices(include_hidden=True):
+        k = kit(p["id"])
+        site = by_pid.get(p["id"])
+        if not k.get("website") and site:
+            set_website(p["id"], "https://" + _host(site["site"]), by)
+            changed += 1
+        elif k.get("website") and not site:
+            want = _host(k["website"])
+            for s in sites:
+                if not s["practice_id"] and _host(s["site"]) == want:
+                    visibility.set_site_practice(s["site"], p["id"])
+                    changed += 1
+                    break
+    return changed
