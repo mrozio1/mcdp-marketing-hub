@@ -26,6 +26,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timedelta
 from email.utils import formatdate
 
@@ -156,7 +157,7 @@ def acs_send(sender, to_addr, to_name, subject, html_body, text_body, unsub_url=
         msg["headers"] = {"List-Unsubscribe": f"<{unsub_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}
     body = json.dumps(msg).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers=_sign("POST", url, body))
-    req.add_header("Operation-Id", secrets.token_hex(16))
+    req.add_header("Operation-Id", str(uuid.uuid4()))
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read() or b"{}")
