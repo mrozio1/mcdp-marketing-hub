@@ -35,7 +35,7 @@ from . import brand, db
 API = "2023-03-31"
 CANCEL_MINUTES = 10
 EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
-OK_LINK_DOMAINS = ("facebook.com", "instagram.com", "youtube.com", "youtu.be", "tiktok.com", "linkedin.com", "google.com",
+OK_LINK_DOMAINS = ("facebook.com", "instagram.com", "youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "linkedin.com", "google.com",
                    "g.page", "goo.gl", "maps.app.goo.gl", "yelp.com", "x.com", "twitter.com", "pinterest.com")
 GENERIC = {"orthodontics", "orthodontic", "ortho", "dental", "dentistry", "pediatric", "of", "the", "and", "family",
            "oral", "surgery", "surgeons", "maxillofacial", "smile", "smiles", "specialists", "dr", "by", "group", "care"}
@@ -93,6 +93,11 @@ class EmailError(ValueError):
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        cols = {r[1] for r in c.execute("PRAGMA table_info(em_campaigns)")}
+        if "rev" not in cols:
+            c.execute("ALTER TABLE em_campaigns ADD COLUMN rev INTEGER DEFAULT 0")
+        if "edited_by" not in cols:
+            c.execute("ALTER TABLE em_campaigns ADD COLUMN edited_by TEXT DEFAULT ''")
 
 
 # ------------------------------------------------------------------ ACS connection (admin, Connections page)
@@ -462,7 +467,9 @@ TEMPLATES = {
         {"type": "text", "text": "[The main story: a new service, a team welcome, a community event.]"},
         {"type": "button", "label": "Book a visit", "url": ""},
         {"type": "divider"},
-        {"type": "columns", "left": "**[Tip of the month]**\n[One practical tip.]", "right": "**[Office news]**\n[Hours, holidays, a new team member.]"}]),
+        {"type": "columns", "left": "**[Tip of the month]**\n[One practical tip.]", "right": "**[Office news]**\n[Hours, holidays, a new team member.]"},
+        {"type": "reviews", "title": "What families are saying", "ids": [], "summary": "on"},
+        {"type": "social", "align": "center"}]),
     "referral": ("Referring offices update", [
         {"type": "heading", "text": "[A quick update for our referring offices]"},
         {"type": "text", "text": "Hi {first_name},\n\n[Thank you for trusting us with your patients. Here's what's new.]"},
@@ -481,9 +488,40 @@ TEMPLATES = {
     "blank": ("Blank", [{"type": "text", "text": ""}]),
 }
 BLOCK_TYPES = [("heading", "Heading"), ("text", "Text"), ("image", "Image"), ("button", "Button"), ("columns", "Two columns"),
-               ("offer", "Offer box"), ("divider", "Divider"), ("spacer", "Space")]
-BLOCK_FIELDS = {"heading": ("text",), "text": ("text",), "image": ("item", "url", "alt", "link"), "button": ("label", "url"),
-                "columns": ("left", "right"), "offer": ("title", "text", "label", "url"), "divider": (), "spacer": ()}
+               ("divider", "Divider"), ("offer", "Offer box"), ("reviews", "Reviews"), ("social", "Social links"),
+               ("video", "Video"), ("spacer", "Space")]
+SOCIAL = (("facebook", "Facebook"), ("instagram", "Instagram"), ("youtube", "YouTube"), ("tiktok", "TikTok"), ("linkedin", "LinkedIn"))
+BLOCK_FIELDS = {"heading": ("text", "align", "size"), "text": ("text", "align"),
+                "image": ("item", "url", "alt", "link", "width"), "button": ("label", "url", "align", "color"),
+                "columns": ("left", "right"), "offer": ("title", "text", "label", "url"), "divider": (), "spacer": ("height",),
+                "reviews": ("title", "ids", "summary"), "social": tuple(k for k, _ in SOCIAL) + ("align",),
+                "video": ("url", "item", "alt", "label")}
+# style choices: the first is the default
+OPTS = {"align": ("left", "center"), "size": ("l", "m"), "color": ("primary", "accent", "dark"), "width": ("full", "padded"),
+        "height": ("m", "s", "l"), "summary": ("on", "off")}
+MAX_REVIEWS = 3
+
+
+def clean_blocks(raw):
+    """Only known block types and fields, style values from OPTS, picture ids as numbers."""
+    out = []
+    for b in (raw if isinstance(raw, list) else [])[:60]:
+        t = (b or {}).get("type") if isinstance(b, dict) else None
+        if t not in BLOCK_FIELDS:
+            continue
+        nb = {"type": t}
+        for f in BLOCK_FIELDS[t]:
+            v = b.get(f)
+            if f == "item":
+                nb[f] = int(v) if str(v or "").isdigit() else None
+            elif f == "ids":
+                nb[f] = [str(x)[:200] for x in (v if isinstance(v, list) else [])][:MAX_REVIEWS]
+            elif f in OPTS:
+                nb[f] = v if v in OPTS[f] else OPTS[f][0]
+            else:
+                nb[f] = str(v or "")[:5000]
+        out.append(nb)
+    return out
 
 
 def templates(pid):
@@ -508,7 +546,12 @@ def new_campaign(pid, name, list_ids, start, by):
             r = c.execute("SELECT blocks FROM em_templates WHERE id=? AND practice_id=?", (int(start[6:]), pid)).fetchone()
         blocks = json.loads(r["blocks"]) if r else TEMPLATES["blank"][1]
     else:
-        blocks = TEMPLATES.get(start, TEMPLATES["newsletter"])[1]
+        blocks = json.loads(json.dumps(TEMPLATES.get(start, TEMPLATES["newsletter"])[1]))
+        if any(b["type"] == "reviews" for b in blocks):
+            top = [r["id"] for r in practice_reviews(pid, 6)[0] if r["stars"] == 5][:2]
+            for b in blocks:
+                if b["type"] == "reviews":
+                    b["ids"] = top
     with db.conn() as c:
         return c.execute("INSERT INTO em_campaigns(practice_id, name, subject, blocks, list_ids, key, created_by, created_at, updated_at) "
                          "VALUES (?,?,?,?,?,?,?,?,?)", (pid, name, "", json.dumps(blocks), json.dumps(ids),
@@ -539,34 +582,51 @@ def campaigns(pids=None, status=""):
     return rows
 
 
-def update_campaign(cid, form):
-    """Saves subject, preview, lists and blocks from the editor (never the practice)."""
+class Conflict(EmailError):
+    pass
+
+
+def update_campaign(cid, form, by=""):
+    """Saves name, subject, preview, lists and blocks from the editor (never the practice). Returns the new revision.
+    form["rev"], when given, must match: someone else saving in between is refused instead of overwritten."""
     k = campaign(cid)
     if not k or k["status"] != "draft":
-        raise EmailError("Only drafts can be changed.")
+        raise EmailError("Only drafts can be changed. This one is already queued or sent.")
+    rev = str(form.get("rev") or "")
+    if rev.isdigit() and int(rev) != (k.get("rev") or 0):
+        who = k.get("edited_by") or "someone else"
+        raise Conflict(f"{who} changed this email since you opened it. Reload to see their version (your last change wasn't saved).")
     mine = {l["id"] for l in lists(k["practice_id"])}
     ids = [int(x) for x in form.getlist("list_id") if str(x).isdigit() and int(x) in mine] if hasattr(form, "getlist") else k["list_ids"]
     try:
-        raw = json.loads(form.get("blocks") or "[]")
+        blocks = clean_blocks(json.loads(form.get("blocks") or "[]"))
     except ValueError:
         raise EmailError("The email's blocks couldn't be read; reload the page.")
-    blocks = []
-    for b in raw[:60]:
-        t = b.get("type")
-        if t not in BLOCK_FIELDS:
-            continue
-        nb = {"type": t}
-        for f in BLOCK_FIELDS[t]:
-            v = b.get(f)
-            if f == "item":
-                nb[f] = int(v) if str(v or "").isdigit() else None
-            else:
-                nb[f] = str(v or "")[:5000]
-        blocks.append(nb)
+    new_rev = (k.get("rev") or 0) + 1
     with db.conn() as c:
-        c.execute("UPDATE em_campaigns SET name=?, subject=?, preview=?, blocks=?, list_ids=?, updated_at=? WHERE id=?",
-                  ((form.get("name") or k["name"]).strip()[:120], (form.get("subject") or "").strip()[:200],
-                   (form.get("preview") or "").strip()[:200], json.dumps(blocks), json.dumps(ids), db.now(), cid))
+        cur = c.execute("UPDATE em_campaigns SET name=?, subject=?, preview=?, blocks=?, list_ids=?, updated_at=?, rev=?, edited_by=? "
+                        "WHERE id=? AND status='draft' AND COALESCE(rev, 0)=?",
+                        ((form.get("name") or k["name"]).strip()[:120], (form.get("subject") or "").strip()[:200],
+                         (form.get("preview") or "").strip()[:200], json.dumps(blocks), json.dumps(ids), db.now(), new_rev,
+                         by or k.get("edited_by") or "", cid, k.get("rev") or 0))
+        if not cur.rowcount:
+            raise Conflict("This email changed while saving. Reload to see the latest version.")
+    return new_rev
+
+
+def draft_from(k, form):
+    """An unsaved copy of campaign k with the editor's current fields, for the live preview and checks."""
+    d = dict(k)
+    try:
+        d["blocks"] = clean_blocks(json.loads(form.get("blocks") or "[]"))
+    except ValueError:
+        pass
+    d["subject"] = (form.get("subject") or "").strip()[:200]
+    d["preview"] = (form.get("preview") or "").strip()[:200]
+    if hasattr(form, "getlist"):
+        mine = {l["id"] for l in lists(k["practice_id"])}
+        d["list_ids"] = [int(x) for x in form.getlist("list_id") if str(x).isdigit() and int(x) in mine]
+    return d
 
 
 def delete_campaign(cid):
@@ -628,12 +688,54 @@ def look(pid):
     return {"primary": p, "accent": a, "logo": bool(images.logo(pid))}
 
 
-def render(k, practice, s=None, person=None, urls=None):
-    """The email's HTML. urls: functions for image(iid), logo(), link(url) and unsub; plain previews use the hub's own urls."""
+def practice_reviews(pid, limit=40):
+    """Recent 4–5 star Google reviews with text for one practice (newest first), and its Google rating."""
+    from . import reviews
+    locs = [l["name"] for l in reviews.locations() if l["practice_id"] == pid]
+    if not locs:
+        return [], None
+    q = ",".join("?" * len(locs))
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute(f"SELECT id, author, stars, text, created FROM gbp_reviews WHERE location IN ({q}) "
+                                           "AND stars >= 4 AND TRIM(COALESCE(text, '')) != '' ORDER BY created DESC LIMIT ?",
+                                           (*locs, limit))]
+        rt = [dict(r) for r in c.execute(f"SELECT rating, total FROM gbp_locations WHERE name IN ({q}) AND rating IS NOT NULL", locs)]
+    n = sum(r["total"] or 0 for r in rt)
+    rating = {"rating": sum(r["rating"] * (r["total"] or 0) for r in rt) / n, "total": n} if n else None
+    for r in rows:
+        r["who"] = short_author(r["author"])
+    return rows, rating
+
+
+def short_author(name):
+    """First name and last initial: "Jamie R." """
+    parts = (name or "").split()
+    if not parts:
+        return "A Google reviewer"
+    return parts[0] + (f" {parts[-1][0]}." if len(parts) > 1 and parts[-1][:1].isalpha() else "")
+
+
+def social_defaults(pid):
+    p = db.practice(pid) or {}
+    fb = db.social_ids(p, "fb")
+    return {"facebook": f"https://www.facebook.com/{fb[0]}" if fb else ""}
+
+
+def youtube_id(url):
+    m = re.search(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/)([\w-]{11})", url or "")
+    return m.group(1) if m else None
+
+
+FONT = "Arial,Helvetica,sans-serif"
+
+
+def render(k, practice, s=None, person=None, urls=None, editor=False):
+    """The email's HTML. urls: functions for image(iid), logo(), link(url) and unsub; plain previews use the hub's own urls.
+    editor=True marks each block (data-b) and shows empty blocks as placeholders, for the Studio editor only."""
     s = s or sender(practice["id"]) or {"address": "[Mailing address: add it under Connections › Email sending]", "phone": "",
                                          "from_name": practice["name"]}
     lk = look(practice["id"])
-    pc = lk["primary"]
+    pc, ac = lk["primary"], lk["accent"]
     u = urls or {}
     img = u.get("image") or (lambda iid: f"/studio/f/{iid}")
     logo = u.get("logo") or (lambda: f"/e/logo/{practice['id']}")
@@ -641,72 +743,160 @@ def render(k, practice, s=None, person=None, urls=None):
     unsub = u.get("unsub") or "#unsubscribe"
     first = (person or {}).get("first_name") or ""
     fill = lambda t: (t or "").replace("{first_name}", first or "there")
+    esc = html.escape
+    revs = None
     rows = []
-    for b in k["blocks"]:
+
+    def hold(i, label):
+        return (f'<tr data-b="{i}"><td style="padding:16px 32px"><div style="border:2px dashed #cdd8e1;border-radius:10px;padding:22px;'
+                f'text-align:center;color:#54636e;font-size:14px;font-family:{FONT}">{esc(label)}</div></td></tr>') if editor else ""
+
+    def btn(label, url, color, size=16, pad="14px 28px"):
+        return (f'<a href="{esc(link(url or "#"))}" style="display:inline-block;background:{color};color:#ffffff;text-decoration:none;'
+                f'font-weight:bold;font-size:{size}px;padding:{pad};border-radius:30px;font-family:{FONT}">{esc(label)}</a>')
+
+    for i, b in enumerate(k["blocks"]):
         t = b["type"]
+        mark = f' data-b="{i}"' if editor else ""
+        al = "center" if b.get("align") == "center" else "left"
         if t == "heading":
-            rows.append(f'<tr><td style="padding:28px 32px 8px"><h1 style="margin:0;font-size:26px;line-height:1.25;color:#13232f;'
-                        f'font-family:Arial,Helvetica,sans-serif">{_inline(fill(b.get("text")), pc)}</h1></td></tr>')
+            size = 22 if b.get("size") == "m" else 28
+            if b.get("text") or not editor:
+                rows.append(f'<tr{mark}><td style="padding:28px 32px 8px;text-align:{al}"><h1 style="margin:0;font-size:{size}px;line-height:1.25;'
+                            f'color:#13232f;font-family:{FONT}">{_inline(fill(b.get("text")), pc)}</h1></td></tr>')
+            else:
+                rows.append(hold(i, "Heading: type it on the right"))
         elif t == "text":
-            rows.append(f'<tr><td style="padding:12px 32px 4px">{_paras(fill(b.get("text")), pc)}</td></tr>')
+            if (b.get("text") or "").strip() or not editor:
+                rows.append(f'<tr{mark}><td style="padding:12px 32px 4px;text-align:{al}">{_paras(fill(b.get("text")), pc)}</td></tr>')
+            else:
+                rows.append(hold(i, "Text: type it on the right"))
         elif t == "image":
             src = img(b["item"]) if b.get("item") else (b.get("url") or "")
             if src:
-                im = f'<img src="{html.escape(src)}" alt="{html.escape(b.get("alt") or "")}" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0">'
+                padded = b.get("width") == "padded"
+                w = 536 if padded else 600
+                im = (f'<img src="{esc(src)}" alt="{esc(b.get("alt") or "")}" width="{w}" style="display:block;width:100%;max-width:{w}px;'
+                      f'height:auto;border:0{";border-radius:10px" if padded else ""}">')
                 if b.get("link"):
-                    im = f'<a href="{html.escape(link(b["link"]))}">{im}</a>'
-                rows.append(f'<tr><td style="padding:16px 0 0">{im}</td></tr>')
+                    im = f'<a href="{esc(link(b["link"]))}">{im}</a>'
+                rows.append(f'<tr{mark}><td style="padding:{"16px 32px 0" if padded else "16px 0 0"}">{im}</td></tr>')
+            else:
+                rows.append(hold(i, "Image: pick a picture from Studio"))
         elif t == "button":
             if b.get("label"):
-                rows.append(f'<tr><td style="padding:16px 32px 20px"><a href="{html.escape(link(b.get("url") or "#"))}" style="display:inline-block;'
-                            f'background:{pc};color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;padding:14px 28px;'
-                            f'border-radius:30px;font-family:Arial,Helvetica,sans-serif">{html.escape(b["label"])}</a></td></tr>')
+                col = {"accent": ac, "dark": "#13232f"}.get(b.get("color"), pc)
+                rows.append(f'<tr{mark}><td style="padding:16px 32px 20px;text-align:{al}">{btn(b["label"], b.get("url"), col)}</td></tr>')
+            else:
+                rows.append(hold(i, "Button: add its text and link"))
         elif t == "columns":
-            rows.append('<tr><td style="padding:12px 24px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+            rows.append(f'<tr{mark}><td style="padding:12px 24px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
                         f'<td valign="top" width="50%" style="padding:0 8px">{_paras(fill(b.get("left")), pc)}</td>'
                         f'<td valign="top" width="50%" style="padding:0 8px">{_paras(fill(b.get("right")), pc)}</td></tr></table></td></tr>')
         elif t == "offer":
-            btn = (f'<a href="{html.escape(link(b.get("url") or "#"))}" style="display:inline-block;background:{pc};color:#ffffff;'
-                   f'text-decoration:none;font-weight:bold;font-size:15px;padding:12px 24px;border-radius:30px">{html.escape(b["label"])}</a>'
-                   if b.get("label") else "")
-            rows.append(f'<tr><td style="padding:16px 32px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-                        f'style="border:2px solid {pc};border-radius:12px"><tr><td style="padding:22px 24px;text-align:center">'
+            bt = btn(b["label"], b.get("url"), pc, 15, "12px 24px") if b.get("label") else ""
+            rows.append(f'<tr{mark}><td style="padding:16px 32px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+                        f'style="border:2px solid {pc};border-radius:12px"><tr><td style="padding:22px 24px;text-align:center;font-family:{FONT}">'
                         f'<div style="font-size:22px;font-weight:bold;color:#13232f;margin-bottom:8px">{_inline(b.get("title"), pc)}</div>'
-                        f'<div style="font-size:15px;line-height:1.5;color:#2f3b44;margin-bottom:14px">{_inline(fill(b.get("text")), pc)}</div>{btn}'
+                        f'<div style="font-size:15px;line-height:1.5;color:#2f3b44;margin-bottom:14px">{_inline(fill(b.get("text")), pc)}</div>{bt}'
                         '</td></tr></table></td></tr>')
         elif t == "divider":
-            rows.append('<tr><td style="padding:12px 32px"><hr style="border:0;border-top:1px solid #e4e7ea;margin:0"></td></tr>')
+            rows.append(f'<tr{mark}><td style="padding:12px 32px"><hr style="border:0;border-top:1px solid #e4e7ea;margin:0"></td></tr>')
         elif t == "spacer":
-            rows.append('<tr><td style="height:24px;line-height:24px">&nbsp;</td></tr>')
-    head = (f'<img src="{html.escape(logo())}" alt="{html.escape(practice["name"])}" height="48" style="display:block;height:48px;width:auto;border:0">'
-            if lk["logo"] else f'<span style="color:#ffffff;font-size:20px;font-weight:bold">{html.escape(practice["name"])}</span>')
-    pre = html.escape(k.get("preview") or "")
-    foot = (f'<strong style="color:#ffffff">{html.escape(practice["name"])}</strong><br>{html.escape(s.get("address") or "")}'
-            + (f' · {html.escape(s["phone"])}' if s.get("phone") else "")
-            + f'<br>You\'re getting this email from {html.escape(practice["name"])}. '
-              f'<a href="{html.escape(unsub)}" style="color:#c7d3dc">Unsubscribe</a>')
+            h = {"s": 12, "l": 48}.get(b.get("height"), 24)
+            rows.append(f'<tr{mark}><td style="height:{h}px;line-height:{h}px;font-size:1px">&nbsp;</td></tr>')
+        elif t == "reviews":
+            if revs is None:
+                revs = practice_reviews(practice["id"], 200)
+            by_id = {r["id"]: r for r in revs[0]}
+            picked = [by_id[x] for x in b.get("ids") or [] if x in by_id]
+            if not picked:
+                rows.append(hold(i, "Reviews: pick up to 3 Google reviews on the right"))
+                continue
+            cards = "".join(
+                f'<tr><td style="padding:0 0 12px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+                f'style="background:#f5f7f9;border-radius:12px"><tr><td style="padding:18px 20px;font-family:{FONT}">'
+                f'<div style="color:#e8a33d;font-size:16px;letter-spacing:2px">{"&#9733;" * (r["stars"] or 5)}</div>'
+                f'<div style="font-size:15px;line-height:1.55;color:#2f3b44;margin:6px 0 8px">&ldquo;{esc(_clip(r["text"], 320))}&rdquo;</div>'
+                f'<div style="font-size:13px;color:#54636e;font-weight:bold">{esc(r["who"])} · Google review</div></td></tr></table></td></tr>'
+                for r in picked)
+            head = (f'<div style="font-size:20px;font-weight:bold;color:#13232f;margin:0 0 6px;font-family:{FONT}">{esc(b.get("title") or "")}</div>'
+                    if b.get("title") else "")
+            rt = revs[1]
+            summ = (f'<div style="font-size:13px;color:#54636e;margin:0 0 14px;font-family:{FONT}">{rt["rating"]:.1f} stars from '
+                    f'{rt["total"]:,} Google reviews</div>' if rt and b.get("summary") != "off" else '<div style="height:10px"></div>')
+            rows.append(f'<tr{mark}><td style="padding:16px 32px 4px">{head}{summ}<table role="presentation" width="100%" cellpadding="0" '
+                        f'cellspacing="0">{cards}</table></td></tr>')
+        elif t == "social":
+            links_ = [(label, b.get(key)) for key, label in SOCIAL if (b.get(key) or "").strip()]
+            if not links_:
+                rows.append(hold(i, "Social links: add the practice's pages on the right"))
+                continue
+            pills = "&nbsp;".join(f'<a href="{esc(link(url))}" style="display:inline-block;border:1.5px solid {pc};color:{pc};text-decoration:none;'
+                                  f'font-size:13px;font-weight:bold;padding:7px 14px;border-radius:30px;margin:0 2px 6px;font-family:{FONT}">{label}</a>'
+                                  for label, url in links_)
+            rows.append(f'<tr{mark}><td style="padding:14px 32px;text-align:{al}">{pills}</td></tr>')
+        elif t == "video":
+            url = (b.get("url") or "").strip()
+            if not url:
+                rows.append(hold(i, "Video: paste a YouTube or Vimeo link on the right"))
+                continue
+            yt = youtube_id(url)
+            src = img(b["item"]) if b.get("item") else (f"https://img.youtube.com/vi/{yt}/hqdefault.jpg" if yt else "")
+            pic = (f'<a href="{esc(link(url))}"><img src="{esc(src)}" alt="{esc(b.get("alt") or "Play the video")}" width="536" '
+                   f'style="display:block;width:100%;max-width:536px;height:auto;border:0;border-radius:10px"></a>') if src else ""
+            rows.append(f'<tr{mark}><td style="padding:16px 32px 8px;text-align:center">{pic}<div style="padding-top:12px">'
+                        f'{btn("▶  " + (b.get("label") or "Watch the video"), url, pc, 15, "11px 22px")}</div></td></tr>')
+    if editor and not rows:
+        rows.append('<tr data-b="end"><td style="padding:40px 32px"><div style="border:2px dashed #cdd8e1;border-radius:10px;padding:40px;'
+                    f'text-align:center;color:#54636e;font-family:{FONT}">Drag a block here to start</div></td></tr>')
+    head = (f'<img src="{esc(logo())}" alt="{esc(practice["name"])}" height="48" style="display:block;height:48px;width:auto;border:0">'
+            if lk["logo"] else f'<span style="color:#ffffff;font-size:20px;font-weight:bold">{esc(practice["name"])}</span>')
+    pre = esc(k.get("preview") or "")
+    foot = (f'<strong style="color:#ffffff">{esc(practice["name"])}</strong><br>{esc(s.get("address") or "")}'
+            + (f' · {esc(s["phone"])}' if s.get("phone") else "")
+            + f'<br>You\'re getting this email from {esc(practice["name"])}. '
+              f'<a href="{esc(unsub)}" style="color:#c7d3dc">Unsubscribe</a>')
+    fixed = ' data-fixed="head"' if editor else ""
+    fixedf = ' data-fixed="foot"' if editor else ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(k.get("subject") or k["name"])}</title></head>
+<title>{esc(k.get("subject") or k["name"])}</title></head>
 <body style="margin:0;padding:0;background:#eef2f5">
 <div style="display:none;max-height:0;overflow:hidden;color:transparent">{pre}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f5"><tr><td align="center" style="padding:24px 8px">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;font-family:Arial,Helvetica,sans-serif">
-<tr><td style="background:{pc};padding:20px 32px">{head}</td></tr>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;font-family:{FONT}">
+<tr{fixed}><td style="background:{pc};padding:20px 32px">{head}</td></tr>
 {''.join(rows)}
 <tr><td style="height:16px"></td></tr>
-<tr><td style="background:#13232f;color:#c7d3dc;padding:22px 32px;font-size:12px;line-height:1.6">{foot}</td></tr>
+<tr{fixedf}><td style="background:#13232f;color:#c7d3dc;padding:22px 32px;font-size:12px;line-height:1.6">{foot}</td></tr>
 </table></td></tr></table></body></html>"""
+
+
+def _clip(t, n):
+    t = " ".join((t or "").split())
+    return t if len(t) <= n else t[:n].rsplit(" ", 1)[0] + "…"
 
 
 def plain_text(k, practice, s, person=None, unsub=""):
     first = (person or {}).get("first_name") or "there"
     out = []
+    revs = None
     for b in k["blocks"]:
         for f in ("title", "text", "left", "right"):
-            if b.get(f):
+            if b.get(f) and b["type"] != "reviews":
                 out.append(re.sub(r"\*\*(.+?)\*\*", r"\1", b[f].replace("{first_name}", first)))
         if b["type"] in ("button", "offer") and b.get("label"):
             out.append(f"{b['label']}: {b.get('url') or ''}")
+        elif b["type"] == "video" and b.get("url"):
+            out.append(f"{b.get('label') or 'Watch the video'}: {b['url']}")
+        elif b["type"] == "social":
+            out += [f"{label}: {b[key]}" for key, label in SOCIAL if b.get(key)]
+        elif b["type"] == "reviews":
+            if revs is None:
+                revs = {r["id"]: r for r in practice_reviews(practice["id"], 200)[0]}
+            if b.get("title"):
+                out.append(b["title"])
+            out += [f"\"{_clip(revs[x]['text'], 320)}\" ({revs[x]['who']}, Google review)" for x in b.get("ids") or [] if x in revs]
     out.append(f"--\n{practice['name']}\n{(s or {}).get('address', '')}\nUnsubscribe: {unsub}")
     return "\n\n".join(out)
 
@@ -715,8 +905,10 @@ def links_of(k):
     out = []
     for b in k["blocks"]:
         for f in ("url", "link"):
-            if b.get(f) and b["type"] in ("button", "offer", "image"):
-                out.append(b[f])
+            if b.get(f) and b["type"] in ("button", "offer", "image", "video"):
+                out.append(b[f].strip())
+        if b["type"] == "social":
+            out += [b[key].strip() for key, _ in SOCIAL if (b.get(key) or "").strip()]
         for f in ("text", "left", "right", "title"):
             out += re.findall(r"\]\((https?://[^\s)]+)\)", b.get(f) or "")
     return out
@@ -768,6 +960,8 @@ def checks(k, practice):
                                             "Send to fewer people, or raise the limit under Connections › Email sending."})
     text = " ".join(str(b.get(f) or "") for b in k["blocks"] for f in ("text", "title", "left", "right", "label", "alt", "url", "link"))
     text += " " + (k.get("subject") or "") + " " + (k.get("preview") or "")
+    revs = {r["id"]: r for r in practice_reviews(pid, 200)[0]} if any(b["type"] == "reviews" for b in k["blocks"]) else {}
+    text += " " + " ".join(revs[x]["text"] for b in k["blocks"] if b["type"] == "reviews" for x in b.get("ids") or [] if x in revs)
     nt, digits = _norm(text), re.sub(r"\D", "", text)
     hits = []
     for o in _others(pid):
@@ -796,6 +990,8 @@ def checks(k, practice):
     for b in k["blocks"]:
         if b["type"] in ("button", "offer") and b.get("label") and not (b.get("url") or "").strip():
             bad.append(f"the \"{b['label']}\" button has no link")
+        if b["type"] == "video" and (b.get("url") or "").strip() and not (youtube_id(b["url"]) or b.get("item")):
+            bad.append("the video needs a picture from Studio (only YouTube links get one automatically)")
     out.append({"ok": not bad, "text": f"Every link goes to {site or 'the practice'} or an approved site",
                 "detail": "" if not bad else "Fix: " + ", ".join(dict.fromkeys(bad)) + ". Approved extra sites are set per practice under Connections › Email sending."})
     from . import studio
@@ -810,7 +1006,15 @@ def checks(k, practice):
                 d = _domain(b["url"])
                 if not _on(d, own):
                     wrong.append(d)
-    out.append({"ok": not wrong, "text": f"Images are from {poss(practice['name'])} Studio",
+        elif b["type"] == "video" and b.get("item"):
+            it = studio.item(b["item"])
+            if not it or it.get("practice_id") != pid or it.get("trashed_at"):
+                wrong.append(it["title"] if it else f"file {b['item']}")
+        elif b["type"] == "reviews":
+            gone = [x for x in b.get("ids") or [] if x not in revs]
+            if gone:
+                wrong.append(f"{len(gone)} review{'' if len(gone) == 1 else 's'} that aren't {poss(practice['name'])} (or were removed)")
+    out.append({"ok": not wrong, "text": f"Images and reviews are {poss(practice['name'])} own",
                 "detail": "" if not wrong else "Not this practice's: " + ", ".join(wrong) + "."})
     kit = brand.kit(pid) or {}
     never = [w.strip() for w in (kit.get("never_say") or "").splitlines() if w.strip()]
@@ -875,10 +1079,10 @@ def _urls(k, practice, m):
     lks = k["links"]
 
     def link(url):
-        try:
-            return f"{base}/e/c/{m['token']}/{lks.index(url)}"
-        except ValueError:
-            return url
+        for u in (url, (url or "").strip()):
+            if u in lks:
+                return f"{base}/e/c/{m['token']}/{lks.index(u)}"
+        return url
     return {"image": lambda iid: f"{base}/e/i/{k['key']}/{iid}", "logo": lambda: f"{base}/e/logo/{practice['id']}",
             "link": link, "unsub": f"{base}/e/u/{m['token']}"}
 

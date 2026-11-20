@@ -6189,9 +6189,20 @@ def email_edit(request: Request, cid: int):
     if k["status"] != "draft":
         return page(request, "email_report.html", k=k, practice=p, st=emailer.stats(cid), clicks=emailer.link_clicks(cid),
                     s=emailer.sender(p["id"]))
+    lk = emailer.look(p["id"])
+    revs, rating = emailer.practice_reviews(p["id"])
+    picked = {x for b in k["blocks"] if b["type"] == "reviews" for x in b.get("ids") or []}
+    allrev = emailer.practice_reviews(p["id"], 200)[0]
+    revs += [r_ for r_ in allrev if r_["id"] in picked and r_ not in revs]
+    data = {"blocks": k["blocks"], "rev": k.get("rev") or 0, "types": emailer.BLOCK_TYPES, "fields": emailer.BLOCK_FIELDS,
+            "opts": emailer.OPTS, "social": emailer.SOCIAL, "socialDefaults": emailer.social_defaults(p["id"]),
+            "media": _email_media(p["id"]), "practice": p["name"], "site": emailer.practice_domain(p["id"]) or "",
+            "reviews": [{"id": r_["id"], "who": r_["who"], "stars": r_["stars"], "text": r_["text"], "date": (r_["created"] or "")[:10]}
+                        for r_ in revs],
+            "rating": rating, "colors": {"primary": lk["primary"], "accent": lk["accent"]},
+            "checks": emailer.checks(k, p), "myEmail": (me(request) or {}).get("email") or ""}
     return page(request, "email_edit.html", k=k, practice=p, s=emailer.sender(p["id"]), lists=emailer.lists(p["id"]),
-                media=_email_media(p["id"]), block_types=emailer.BLOCK_TYPES, color=emailer.look(p["id"])["primary"],
-                blocks_json=json.dumps(k["blocks"]))
+                color=lk["primary"], accent=lk["accent"], data=data, short=emailer.short_name(p))
 
 
 @app.post("/studio/email/{cid}")
@@ -6199,31 +6210,48 @@ async def email_save(request: Request, cid: int):
     if (r := _email_gate(request)):
         return r
     k, p = _email_campaign(request, cid)
+    fetch_ = request.headers.get("x-requested-with") == "fetch"
     if not k:
         return JSONResponse({"error": "Not found."}, status_code=404)
     form = await request.form()
     try:
-        emailer.update_campaign(cid, form)
+        rev = emailer.update_campaign(cid, form, (me(request) or {}).get("name") or actor(request))
     except emailer.EmailError as e:
-        if request.headers.get("x-requested-with") == "fetch":
-            return JSONResponse({"error": str(e)}, status_code=422)
+        if fetch_:
+            return JSONResponse({"error": str(e), "conflict": isinstance(e, emailer.Conflict)},
+                                status_code=409 if isinstance(e, emailer.Conflict) else 422)
         flash(request, str(e), "error")
         return RedirectResponse(f"/studio/email/{cid}", status_code=303)
-    if request.headers.get("x-requested-with") == "fetch":
-        return {"ok": True, "saved": db.now()}
+    if fetch_:
+        return {"ok": True, "saved": db.now(), "rev": rev, "checks": emailer.checks(emailer.campaign(cid), p)}
     nxt = form.get("next") or ""
     return RedirectResponse(f"/studio/email/{cid}/review" if nxt == "review" else f"/studio/email/{cid}", status_code=303)
 
 
+_PREVIEW_HEADERS = {"Content-Security-Policy": "script-src 'none'", "Cache-Control": "no-store"}
+
+
 @app.get("/studio/email/{cid}/preview", response_class=HTMLResponse)
-def email_preview(request: Request, cid: int):
+def email_preview(request: Request, cid: int, edit: int = 0):
     if (r := _email_gate(request)):
         return r
     k, p = _email_campaign(request, cid)
     if not k:
         return HTMLResponse("", status_code=404)
-    return HTMLResponse(emailer.render(k, p, person={"first_name": "Alex"}),
-                        headers={"Content-Security-Policy": "script-src 'none'", "Cache-Control": "no-store"})
+    return HTMLResponse(emailer.render(k, p, person={"first_name": "Alex"}, editor=bool(edit) and k["status"] == "draft"),
+                        headers=_PREVIEW_HEADERS)
+
+
+@app.post("/studio/email/{cid}/draw")
+async def email_draw(request: Request, cid: int):
+    """The editor's live canvas: renders the unsaved blocks (nothing is saved or sent)."""
+    if (r := _email_gate(request)):
+        return r
+    k, p = _email_campaign(request, cid)
+    if not k:
+        return HTMLResponse("", status_code=404)
+    d = emailer.draft_from(k, await request.form())
+    return HTMLResponse(emailer.render(d, p, person={"first_name": "Alex"}, editor=True), headers=_PREVIEW_HEADERS)
 
 
 @app.get("/studio/email/{cid}/review", response_class=HTMLResponse)
@@ -6252,9 +6280,12 @@ def email_test(request: Request, cid: int, to: str = Form("")):
         return RedirectResponse("/studio/email", status_code=303)
     try:
         emailer.test_send(k, p, to.strip(), _email_base(request))
-        flash(request, f"Test sent to {to.strip()}. Check it arrived in the inbox, not spam.")
+        msg, ok = f"Test sent to {to.strip()}. Check it arrived in the inbox, not spam.", True
     except emailer.EmailError as e:
-        flash(request, str(e), "error")
+        msg, ok = str(e), False
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": ok, "message": msg}, status_code=200 if ok else 422)
+    flash(request, msg, "ok" if ok else "error")
     return RedirectResponse(f"/studio/email/{cid}/review", status_code=303)
 
 

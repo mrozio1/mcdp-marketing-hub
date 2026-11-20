@@ -13,6 +13,7 @@
 <div class="st" id="studio" data-pid="{{ pid if view == 'brand' else '' }}" data-folder="{{ fid if fid and fid != 'none' else '' }}"
      data-chunk="{{ chunk }}" data-max="{{ max_file }}">
   <aside class="st-side" aria-label="Brands and folders">
+    {% if can_edit and acc.email %}<a href="/studio/email" class="st-email-top"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path></svg>Email campaigns</a>{% endif %}
     <label class="st-find"><span class="vh">Find a brand</span><input type="search" placeholder="Find a brand" data-brand-filter></label>
     <p class="st-eyebrow">Brands</p>
     <ul class="st-brands">
@@ -66,6 +67,7 @@
         {% if can_edit and view == 'brand' %}
           {% if canva_on %}<form method="post" action="/studio/canva/import" data-busy="Starting…"><button class="btn btn-quiet st-pill" type="submit" {% if canva_running %}disabled{% endif %}>Import from Canva</button></form>{% endif %}
           <label class="btn btn-quiet st-pill st-upload-btn">+ Add files<input type="file" multiple data-upload-input class="vh"></label>
+          {% if acc.email %}<a class="btn btn-quiet st-pill" href="/studio/email/new?b={{ pid }}">+ New email</a>{% endif %}
           <a class="btn st-pill" href="/studio/new?b={{ pid }}{% if folder %}&f={{ folder.id }}{% endif %}">+ New design or video</a>
         {% endif %}
       </div>

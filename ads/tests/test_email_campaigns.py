@@ -186,3 +186,45 @@ def test_websites_sync_with_search_page(env):
     assert env["emailer"].practice_domain(pid) == "wheelerorthodontics.com"
     assert {s["site"]: s["practice_id"] for s in visibility.sites()}["https://www.schulzortho.com/"] == other   # kit → Search page
     assert brand.kit(other)["voice"] == "warm"                                     # nothing else touched
+
+
+def test_editor_blocks_live_draw_and_save_guard(env):
+    em, ed, db = env["emailer"], env["ed"], env["db"]
+    pid = env["havens"]
+    with db.conn() as c:
+        c.execute("INSERT OR REPLACE INTO gbp_locations(name, title, practice_id, rating, total) VALUES ('locations/1', 'Havens', ?, 4.9, 210)", (pid,))
+        c.execute("INSERT OR REPLACE INTO gbp_locations(name, title, practice_id, rating, total) VALUES ('locations/2', 'Heights', ?, 4.2, 50)",
+                  (env["heights"],))
+        c.execute("INSERT OR REPLACE INTO gbp_reviews(id, location, author, stars, text, created) VALUES ('r1', 'locations/1', 'Jamie Rivera', 5, 'So kind to our son.', '2026-11-01')")
+        c.execute("INSERT OR REPLACE INTO gbp_reviews(id, location, author, stars, text, created) VALUES ('r2', 'locations/2', 'Pat Lee', 5, 'Great at Heights.', '2026-11-02')")
+    lid = em.new_list(pid, "Editor list", "x")
+    em.add_contacts(lid, [{"email": "a@b.com"}])
+    cid = em.new_campaign(pid, "Editor", [lid], "newsletter", "x")
+    page = ed.get(f"/studio/email/{cid}").text
+    assert "eb-data" in page and "Review and send" in page and "/send" not in page.split("eb-data")[0]   # no send from the editor
+    blocks = [{"type": "heading", "text": "Hi", "align": "center", "size": "m"},
+              {"type": "reviews", "title": "Families say", "ids": ["r1"], "summary": "on"},
+              {"type": "social", "facebook": "https://facebook.com/havens", "align": "weird"},
+              {"type": "video", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "label": "Watch"},
+              {"type": "bogus"}]
+    r = ed.post(f"/studio/email/{cid}/draw", data={"blocks": json.dumps(blocks), "subject": "S"})
+    assert 'data-b="1"' in r.text and "So kind to our son." in r.text and "Jamie R." in r.text and "4.9 stars" in r.text
+    assert "img.youtube.com/vi/dQw4w9WgXcQ" in r.text and "Facebook" in r.text
+    assert em.campaign(cid)["subject"] == ""                                        # drawing never saves
+    k = em.campaign(cid)
+    r = ed.post(f"/studio/email/{cid}", data={"blocks": json.dumps(blocks), "subject": "S", "list_id": str(lid), "rev": str(k["rev"] or 0)},
+                headers={"x-requested-with": "fetch"})
+    j = r.json()
+    assert j["ok"] and j["rev"] == (k["rev"] or 0) + 1 and any(c["text"].startswith("Images and reviews") for c in j["checks"])
+    saved = em.campaign(cid)["blocks"]
+    assert [b["type"] for b in saved] == ["heading", "reviews", "social", "video"] and saved[2]["align"] == "left"
+    r = ed.post(f"/studio/email/{cid}", data={"blocks": "[]", "rev": "0"}, headers={"x-requested-with": "fetch"})
+    assert r.status_code == 409 and r.json()["conflict"]                          # stale editor can't overwrite
+    assert len(em.campaign(cid)["blocks"]) == 4
+    # another practice's review is caught
+    blocks[1]["ids"] = ["r2"]
+    ed.post(f"/studio/email/{cid}", data={"blocks": json.dumps(blocks), "subject": "S", "list_id": str(lid)}, headers={"x-requested-with": "fetch"})
+    p = db.practice(pid)
+    bad = [c for c in em.checks(em.campaign(cid), p) if not c["ok"]]
+    assert any("review" in c["detail"] for c in bad)
+    assert "Families say" in em.plain_text(em.campaign(cid), p, None)
