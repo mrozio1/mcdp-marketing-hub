@@ -188,6 +188,21 @@ def practice_domain(pid):
     return _domain(kit.get("website") or "")
 
 
+def practice_domains(pid):
+    """The practice's own domains: its brand kit website plus the Search page's sites linked to it."""
+    out = {practice_domain(pid)}
+    try:
+        from . import visibility
+        out |= {_domain(x["site"].replace("sc-domain:", "")) for x in visibility.sites() if x["practice_id"] == pid}
+    except Exception:
+        pass
+    return {d for d in out if d}
+
+
+def _on(dom, domains):
+    return any(dom == d or dom.endswith("." + d) for d in domains)
+
+
 def sender(pid):
     with db.conn() as c:
         r = c.execute("SELECT * FROM em_senders WHERE practice_id=?", (pid,)).fetchone()
@@ -212,11 +227,11 @@ def save_sender(pid, form, by):
         raise EmailError("Type the sending address, e.g. news@havensorthodontics.com.")
     if reply and not EMAIL_RE.match(reply):
         raise EmailError("The reply-to address doesn't look like an email address.")
-    site = practice_domain(pid)
+    sites = practice_domains(pid)
     dom = _domain(addr)
-    if site and not (dom == site or dom.endswith("." + site)):
-        raise EmailError(f"The sending address has to be on the practice's own domain ({site}, from its brand kit's website). "
-                         f"{dom} isn't.")
+    if sites and not _on(dom, sites):
+        raise EmailError(f"The sending address has to be on one of the practice's own domains ({', '.join(sorted(sites))}: "
+                         f"its brand kit website and the sites linked on the Search page). {dom} isn't.")
     for other, s in senders().items():
         if other != pid and s and s["domain"] == dom:
             raise EmailError(f"{dom} is already the sending domain of another practice. Each practice sends from its own domain.")
@@ -719,9 +734,9 @@ def _others(pid):
         if p["id"] == pid:
             continue
         words = [w for w in _norm(p["name"]).split() if w not in GENERIC and len(w) > 2]
-        dom = practice_domain(p["id"])
         s = ss.get(p["id"])
-        out.append({"name": p["name"], "norm": _norm(p["name"]), "words": words, "domains": {d for d in (dom, s and s["domain"]) if d},
+        out.append({"name": p["name"], "norm": _norm(p["name"]), "words": words,
+                    "domains": practice_domains(p["id"]) | ({s["domain"]} if s else set()),
                     "phone": re.sub(r"\D", "", (s or {}).get("phone") or "")[-10:]})
     return out
 
@@ -732,10 +747,11 @@ def checks(k, practice):
     s = sender(pid)
     out = []
     site = practice_domain(pid)
+    own = practice_domains(pid)
     if not s:
         out.append({"ok": False, "text": "This practice has a sending address", "detail": "No sending address yet. An admin adds it under Connections › Email sending."})
     else:
-        ok = bool(s["ready"]) and (not site or s["domain"] == site or s["domain"].endswith("." + site))
+        ok = bool(s["ready"]) and (not own or _on(s["domain"], own))
         out.append({"ok": ok, "text": f"Sends from {s['from_addr']}, on {poss(practice['name'])} own verified domain",
                     "detail": "" if ok else "The sending address isn't ready yet (DNS checks and a test email under Connections › Email sending)."})
     mine = {l["id"] for l in lists(pid)}
@@ -762,13 +778,13 @@ def checks(k, practice):
                     hits.append(f"\"{w.title()} …\" ({o['name']})")
                     break
         for d in o["domains"]:
-            if d and d in text.lower() and not (site and d.endswith(site)):
+            if d and d in text.lower() and not _on(d, own):
                 hits.append(f"{d} ({o['name']})")
         if o["phone"] and len(o["phone"]) == 10 and o["phone"] in digits:
             hits.append(f"{o['name']}'s phone number")
     out.append({"ok": not hits, "text": "No other practice's name, website, email or phone",
                 "detail": "" if not hits else "Found " + ", ".join(dict.fromkeys(hits)) + ". Sending is blocked until it's changed."})
-    allowed = {d for d in (site, s and s["domain"]) if d} | set(((s or {}).get("extra_domains") or "").split()) | set(OK_LINK_DOMAINS)
+    allowed = own | ({s["domain"]} if s else set()) | set(((s or {}).get("extra_domains") or "").split()) | set(OK_LINK_DOMAINS)
     bad = []
     for url in links_of(k):
         d = _domain(url)
@@ -791,7 +807,7 @@ def checks(k, practice):
                     wrong.append(it["title"] if it else f"file {b['item']}")
             elif b.get("url"):
                 d = _domain(b["url"])
-                if not (site and (d == site or d.endswith("." + site))):
+                if not _on(d, own):
                     wrong.append(d)
     out.append({"ok": not wrong, "text": f"Images are from {poss(practice['name'])} Studio",
                 "detail": "" if not wrong else "Not this practice's: " + ", ".join(wrong) + "."})

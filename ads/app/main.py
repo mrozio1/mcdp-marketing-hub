@@ -6432,7 +6432,9 @@ def email_connections(request: Request):
     if not key:
         key = secrets.token_urlsafe(18)
         db.set_setting("em_events_key", key)
-    rows = [{"p": p, "s": ss.get(p["id"]), "site": emailer.practice_domain(p["id"])} for p in db.practices()]
+    rows = [{"p": p, "s": ss.get(p["id"]), "sites": sorted(emailer.practice_domains(p["id"]))} for p in db.practices()]
+    for r_ in rows:
+        r_["site"] = emailer.practice_domain(r_["p"]["id"]) or (r_["sites"][0] if r_["sites"] else "")
     rows.sort(key=lambda x: (x["s"] is None, x["p"]["name"].lower()))
     return page(request, "email_senders.html", rows=rows, configured=emailer.configured(), rates=emailer.rates(),
                 events_url=f"{_email_base(request)}/e/events?k={key}", my_email=(me(request) or {}).get("email") or "")

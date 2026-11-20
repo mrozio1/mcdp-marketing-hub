@@ -44,7 +44,7 @@
       <label>Phone for the footer<input name="phone" value="{{ r.s.phone if r.s else '' }}"></label>
       <label>Other sites its links may go to <span class="muted small">(space-separated, e.g. its booking site)</span><input name="extra_domains" value="{{ r.s.extra_domains if r.s else '' }}"></label>
       <label>Most emails a day<input name="daily_cap" inputmode="numeric" value="{{ r.s.daily_cap if r.s else 300 }}"></label>
-      <p class="muted small em-span">{% if r.site %}Must be on {{ r.site }} (from the practice's brand kit website).{% else %}Add the practice's website to its brand kit first; the sending address has to be on that domain.{% endif %}</p>
+      <p class="muted small em-span">{% if r.sites %}Must be on {{ r.sites|join(' or ') }} (the brand kit website and the sites linked on the Search page).{% else %}Add the practice's website to its brand kit or link its site on the Search page first; the sending address has to be on that domain.{% endif %}</p>
       <button class="btn btn-small" type="submit">Save</button>
     </form>
   </details>
