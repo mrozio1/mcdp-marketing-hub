@@ -57,7 +57,7 @@ def test_access_follows_team_settings(env):
     assert "Practice 360 departments" in ad.get("/team").text
     ad.post(f"/team/{ids['vi@example.com']}/access", data={"p360": "1", "d_operations": "1", "practice": str(env["havens"])})
     page = vi.get(f"/p360/{env['havens']}").text
-    assert "Operations" in page and "Finance" not in page
+    assert 'id="lane-operations"' in page and 'id="lane-finance"' not in page
     assert vi.get(f"/p360/{env['other']}", follow_redirects=False).status_code == 303   # not one of their practices
     # a viewer can't add, unless they own the department
     r = vi.post(f"/p360/{env['havens']}/ledger", data={"dept": "operations", "kind": "note", "title": "Hi"}, follow_redirects=True)
@@ -165,3 +165,17 @@ def test_changing_a_match_moves_the_numbers(env):
     mary = next(l for l in pod["locations"] if l["name"].startswith("Marysville"))
     ad.post("/p360/pods", data={f"loc_{mary['id']}": ""})                              # Marysville isn't Wesley's
     assert p.pin_for(wesley, "Starts")["shown"] == "15"                               # no new import needed
+
+
+def test_marketing_numbers_from_the_hub(env):
+    p, db = env["p360"], env["db"]
+    from datetime import date
+    wesley = next(x for x in db.practices(include_hidden=True) if x["name"] == "Wesley Orthodontics")["id"]
+    with db.conn() as c:
+        c.execute("INSERT INTO ls_counts(section, day, account, bookings, views) VALUES ('source', '2026-10-05', 'Wesley Orthodontics', 4, 40)")
+    n = p.hub_marketing(today=date(2026, 11, 21))
+    assert n > 0
+    assert p.pin_for(wesley, "Online bookings")["shown"] == "4" and p.pin_for(wesley, "Online bookings")["period"] == "2026-10"
+    assert p.pin_for(wesley, "Referring office visits")["period"] == "2026-10"
+    assert p.pin_for(wesley, "Starts")["shown"] == "15"                                # drapp's numbers untouched
+    assert "Refresh marketing now" in env["ed"].get(f"/p360/{wesley}").text

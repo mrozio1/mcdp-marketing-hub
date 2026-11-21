@@ -2704,3 +2704,4 @@ fieldset.em-lists, .em-side fieldset, .em-settings fieldset { border: 0; padding
 .p3-locs { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: .7rem 1rem; }
 .p3-locs label { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; font-weight: 500; }
 .p3-locs select { font: inherit; font-weight: 400; padding: .4rem .55rem; border-radius: 8px; border: 1px solid #cdd8e1; }
+.p3-inline { display: inline; margin: 0; }

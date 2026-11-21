@@ -6669,6 +6669,17 @@ def p360_home(request: Request, pod: int = 0):
     return page(request, "p360_pick.html", rows=rows, depts=p360.depts_for(u), pods=pods, cur=cur)
 
 
+@app.post("/p360/hub-refresh")
+def p360_hub_refresh(request: Request):
+    """Re-reads the Hub's own marketing numbers (ads, LeadSigma, reviews, field visits) for Practice 360 now."""
+    u = me(request)
+    if not u or u["role"] not in ("admin", "editor"):
+        return RedirectResponse("/p360", status_code=303)
+    n = p360.hub_marketing()
+    flash(request, f"Updated the Hub's marketing numbers ({n:,} figures).")
+    return RedirectResponse(request.headers.get("referer") or "/p360", status_code=303)
+
+
 @app.get("/p360/pods", response_class=HTMLResponse)
 def p360_pods(request: Request):
     u = me(request)
@@ -6713,6 +6724,8 @@ def p360_practice(request: Request, pid: int):
         return RedirectResponse("/p360", status_code=303)
     u = me(request)
     keys = [k for k, _ in p360.depts_for(u)]
+    if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
+        p360.hub_refresh_if_stale()
     return page(request, "p360_practice.html", p=p, lanes=p360.lanes(pid, u), open_n=p360.open_count(pid, keys),
                 plist=_p360_practices(request), p_pods=p360.pods_of_practice(pid))
 

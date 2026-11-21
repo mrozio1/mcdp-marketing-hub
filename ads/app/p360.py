@@ -33,7 +33,8 @@ METRICS = {
     "revenue": ["Collections", "Collections over 90 days", "Net production", "Production growth"],
     "procurement": ["Supplies %", "Supplies spend"],
     "operations": ["Starts", "Exams", "Success rate", "RPP rate", "RPP count"],
-    "marketing": ["Online bookings", "Cost per booking", "New Google reviews", "Referring office visits", "Exams"],
+    "marketing": ["Online bookings", "Cost per booking", "Ad spend", "Ad conversions", "New Google reviews", "Referring office visits",
+                  "Exams"],
 }
 
 SCHEMA = """
@@ -691,3 +692,96 @@ def _combine(series):
         if m:
             out[p] = m
     return out
+
+
+# ------------------------------------------------------------------ Marketing numbers from the Hub itself
+HUB_MONTHS = 13          # this month last year too, for comparisons
+_hub_lock = __import__("threading").Lock()
+
+
+def hub_marketing(today=None):
+    """Each Practice 360 practice's marketing numbers per complete month, from what the Hub already has: ad spend and
+    conversions (Google and Meta), LeadSigma online bookings, new Google reviews and field visits. Replaces the
+    previous Hub rows; drapp's numbers are left alone."""
+    from datetime import date
+    from . import dashboard, report, reviews
+    today = today or date.today()
+    plist = [p for p in db.practices(include_hidden=True) if p["id"] in drapp_practice_ids()]
+    gbp = {}
+    for l in reviews.locations():
+        if l.get("practice_id"):
+            gbp.setdefault(l["practice_id"], []).append(l)
+    months = []
+    m = today.replace(day=1)
+    for _ in range(HUB_MONTHS):
+        m = (m - timedelta(days=1)).replace(day=1)
+        months.append(m)
+    rows = []
+    allp = db.practices(include_hidden=True)
+    for start in months:
+        import calendar
+        end = start.replace(day=calendar.monthrange(start.year, start.month)[1])
+        per = start.strftime("%Y-%m")
+        with db.conn() as c:
+            dated = c.execute("SELECT 1 FROM ls_counts WHERE day != '' AND day BETWEEN ? AND ? LIMIT 1",
+                              (start.isoformat(), end.isoformat())).fetchone()
+        ls = dashboard.leadsigma(start, end, allp) if dated else None
+        for p in plist:
+            paid = report._paid(p, start, end)
+            rv = report._reviews(p, start, end, gbp.get(p["id"], []), None)
+            fv = report._field(p, start, end)
+            if paid["spend"] or paid["conversions"]:
+                rows.append((p["id"], "Ad spend", per, paid["spend"], _money(paid["spend"])))
+                rows.append((p["id"], "Ad conversions", per, paid["conversions"], f"{paid['conversions']:,.0f}"))
+            if rv["linked"]:
+                rows.append((p["id"], "New Google reviews", per, rv["new"], f"{rv['new']:,}"))
+            rows.append((p["id"], "Referring office visits", per, fv["visits"], f"{fv['visits']:,}"))
+            if ls is not None:
+                b = ls["by_practice"].get(p["id"], 0)
+                rows.append((p["id"], "Online bookings", per, b, f"{b:,}"))
+                if b and paid["spend"]:
+                    rows.append((p["id"], "Cost per booking", per, paid["spend"] / b, _money(paid["spend"] / b)))
+    # a LeadSigma summary export has no dates: its bookings count for the span it was exported for
+    with db.conn() as c:
+        up = c.execute("SELECT * FROM ls_uploads WHERE kind='summary' ORDER BY id DESC LIMIT 1").fetchone()
+    if up and up["period_start"] and up["period_end"]:
+        a, b_ = date.fromisoformat(up["period_start"]), date.fromisoformat(up["period_end"])
+        label = f"{a.isoformat()} to {b_.isoformat()}"
+        with db.conn() as c:
+            dated = c.execute("SELECT 1 FROM ls_counts WHERE day != '' AND day BETWEEN ? AND ? LIMIT 1", (a.isoformat(), b_.isoformat())).fetchone()
+        if not dated:
+            ls = dashboard.leadsigma(a, b_, allp)
+            for p in plist:
+                b = (ls or {}).get("by_practice", {}).get(p["id"], 0)
+                rows.append((p["id"], "Online bookings", label, b, f"{b:,}"))
+                spend = report._paid(p, a, b_)["spend"]
+                if b and spend:
+                    rows.append((p["id"], "Cost per booking", label, spend / b, _money(spend / b)))
+    with db.conn() as c:
+        rid = c.execute("INSERT INTO p360_refreshes(source, at, by, rows) VALUES (?,?,?,?)", ("Hub", now(), "Hub", len(rows))).lastrowid
+        c.execute("DELETE FROM p360_metrics WHERE source='Hub'")
+        c.executemany("INSERT OR REPLACE INTO p360_metrics(practice_id, metric, period, value, shown, source, refresh_id) "
+                      "VALUES (?,?,?,?,?,'Hub',?)", [(*r, rid) for r in rows])
+    db.set_setting("p360_hub_at", now())
+    return len(rows)
+
+
+def hub_refresh_if_stale(hours=6):
+    """Run hub_marketing in the background when it's older than a few hours (Practice 360 pages call this)."""
+    import threading
+    last = db.get_setting("p360_hub_at") or ""
+    if last and last > (datetime.now() - timedelta(hours=hours)).isoformat():
+        return False
+    if not _hub_lock.acquire(blocking=False):
+        return False
+
+    def run():
+        try:
+            db.set_setting("p360_hub_at", now())      # one run at a time, even if it fails
+            hub_marketing()
+        except Exception:
+            pass
+        finally:
+            _hub_lock.release()
+    threading.Thread(target=run, daemon=True).start()
+    return True

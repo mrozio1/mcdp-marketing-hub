@@ -2,7 +2,7 @@
 {% block title %}{{ p.name }} · Practice 360{% endblock %}
 {% block content %}
 {% include "_p360_head.html" %}
-<p class="p3-banner small">Numbers from MCDP Reports arrive once the Power BI connection is set up (a weekly export until then). Notes and action items work now.</p>
+<p class="p3-banner small">Finance, Revenue Management, Procurement and Operations numbers come from MCDP Reports (weekly). Marketing comes from the Hub itself (ads, LeadSigma, Google reviews, field visits) and refreshes every few hours.{% if can_edit %} <form method="post" action="/p360/hub-refresh" class="p3-inline"><button class="linklike" type="submit">Refresh marketing now</button></form>{% endif %}</p>
 <div class="p3-lanes">
   {% for l in lanes %}
   <section class="p3-lane" aria-labelledby="lane-{{ l.key }}">
