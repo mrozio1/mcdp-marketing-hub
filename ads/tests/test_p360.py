@@ -154,3 +154,14 @@ def test_import_from_mcdp_reports(env):
 def json_dumps(x):
     import json
     return json.dumps(x)
+
+
+def test_changing_a_match_moves_the_numbers(env):
+    p, db, ad = env["p360"], env["db"], env["admin"]
+    wesley = next(x for x in db.practices(include_hidden=True) if x["name"] == "Wesley Orthodontics")["id"]
+    assert p.pin_for(wesley, "Starts")["shown"] == "24"
+    pod = next(x for x in p.pods() if x["name"] == "Dr. Wesley")
+    assert {l["name"] for l in pod["locations"]} == {"Fort Gratiot (Wesley) - 126", "Marysville (Wesley) - 125"}   # only what drapp listed
+    mary = next(l for l in pod["locations"] if l["name"].startswith("Marysville"))
+    ad.post("/p360/pods", data={f"loc_{mary['id']}": ""})                              # Marysville isn't Wesley's
+    assert p.pin_for(wesley, "Starts")["shown"] == "15"                               # no new import needed

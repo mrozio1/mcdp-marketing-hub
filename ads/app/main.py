@@ -6687,7 +6687,8 @@ async def p360_pods_save(request: Request):
     for k, v in form.items():
         if k.startswith("loc_") and k[4:].isdigit():
             p360.set_location_practice(int(k[4:]), int(v) if str(v).isdigit() else None)
-    flash(request, "Saved which practice each MCDP Reports location belongs to.")
+    p360.recompute(u["name"])
+    flash(request, "Saved which practice each MCDP Reports location belongs to; the numbers follow the new matches.")
     return RedirectResponse("/p360/pods", status_code=303)
 
 

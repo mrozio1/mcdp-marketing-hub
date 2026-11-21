@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS p360_locations (
   id INTEGER PRIMARY KEY, pod_id INTEGER NOT NULL, name TEXT NOT NULL, code TEXT DEFAULT '', practice_id INTEGER,
   confirmed INTEGER DEFAULT 0, UNIQUE(pod_id, name)
 );
+CREATE TABLE IF NOT EXISTS p360_loc_data (name TEXT PRIMARY KEY, data TEXT NOT NULL, at TEXT);
 CREATE TABLE IF NOT EXISTS p360_pod_metrics (
   pod_id INTEGER NOT NULL, metric TEXT NOT NULL, period TEXT NOT NULL, value REAL, num REAL, den REAL,
   shown TEXT DEFAULT '', source TEXT DEFAULT '', refresh_id INTEGER, PRIMARY KEY (pod_id, metric, period)
@@ -77,6 +78,8 @@ class P360Error(ValueError):
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        if "seen_at" not in {r[1] for r in c.execute("PRAGMA table_info(p360_locations)")}:
+            c.execute("ALTER TABLE p360_locations ADD COLUMN seen_at TEXT")
         if not c.execute("SELECT 1 FROM p360_pods LIMIT 1").fetchone():
             seed_pods(c)
 
@@ -91,19 +94,19 @@ DRAPP_PODS = [
     ("Dr. Charcut", ["Charchut - Lansing (132)", "Charchut - St Johns (133)"]),
     ("Dr. Crouse", ["Brighton (Crouse) - 128", "Brighton (Peds Dent) - 301"]),
     ("Dr. D. Havens", ["Imlay City - 102", "Romeo - 109", "Washington - 100"]),
-    ("Dr. Dellinger", ["Orthodontic Specialty Services (1)", "Orthodontic Specialty Services (2)"]),
+    ("Dr. Dellinger", ["Orthodontic Specialty Services - FW(135)", "Orthodontic Specialty Services - WS(136)"]),
     ("Dr. Driscoll", ["Driscoll Orthodontics (134)"]),
     ("Dr. Fenn", ["Heights - 114", "St Clair Shores - 103"]),
-    ("Dr. Frenchi / Dr. Jezdimir", ["Lakepointe Orthodontics"]),
+    ("Dr. Frenchi / Dr. Jezdimir", ["Lakepointe Orthodontics (137)"]),
     ("Dr. Gregg", ["Gregg Orthodontics (138)"]),
     ("Dr. Lawrence", ["Ken Lawrence Ortho (403)"]),
     ("Dr. Mika", ["Chelsea (734) - 110", "Hartland (313) - 107", "Howell (313) - 108"]),
     ("Dr. Norwick", ["Dearborn (Norwick) - 127"]),
-    ("Dr. Paron", ["Farmington (Havens) - 113", "Grand Blanc (OS) - 115", "Lapeer (Havens) - 116"]),
+    ("Dr. Paron", ["Farmington (Havens) -113", "Grand Blanc (OS) - 115", "Lapeer (Havens) - 116"]),
     ("Dr. Robinson", ["Findlay Orthodontics (404)"]),
     ("Dr. Schulz", ["Charlevoix (Schulz) - 123", "Traverse City (Schulz) - 122"]),
     ("Dr. Wesley", ["Fort Gratiot (Wesley) - 126", "Marysville (Wesley) - 125", "Richmond (Wesley) - 124"]),
-    ("Dr. Wheeler", ["Wheeler Ortho - Archbold", "Wheeler Ortho - Toledo (401)"]),
+    ("Dr. Wheeler", ["Wheeler Ortho - Archbold (402)", "Wheeler Ortho - Toledo (401)"]),
     ("Drs. Bandeen", ["Battle Creek (Bandeen) - 118", "Marshall - 117", "Portage (Bandeen) - 119", "Three Rivers (Bandeen) - 120"]),
 ]
 _SKIP = {"ortho", "orthodontics", "orthodontic", "dental", "dentistry", "pediatric", "peds", "dent", "of", "the", "and", "family",
@@ -134,7 +137,8 @@ def _words(s):
 # Matches Mark confirmed (2026-11-21), used before guessing from names.
 KNOWN = {"Canton - 104": "Havens Orthodontics", "Romeo - 109": "Havens Orthodontics", "Clarkston - 106": "Havens Orthodontics",
          "Imlay City - 102": "Havens Orthodontics", "Washington - 100": "Havens Orthodontics",
-         "Brighton (Peds Dent) - 301": "Pediatric Dentistry of Brighton"}
+         "Brighton (Peds Dent) - 301": "Pediatric Dentistry of Brighton",
+         "Orthodontic Specialty Services - FW(135)": "OSSFW", "Orthodontic Specialty Services - WS(136)": "OSSFW"}
 
 
 def suggest_practice(loc_name, plist):
@@ -162,6 +166,9 @@ def pods():
     with db.conn() as c:
         ps = [dict(r) for r in c.execute("SELECT * FROM p360_pods ORDER BY sort, name")]
         ls = [dict(r) for r in c.execute("SELECT * FROM p360_locations ORDER BY name")]
+    if any(l.get("seen_at") for l in ls):          # after an import: only what MCDP Reports lists now
+        last = max(l["seen_at"] or "" for l in ls)
+        ls = [l for l in ls if l.get("seen_at") == last]
     for p in ps:
         p["locations"] = [l for l in ls if l["pod_id"] == p["id"]]
         for l in p["locations"]:
@@ -596,6 +603,23 @@ def import_reports(payload, by="weekly run"):
                 v = _num(s_.get(k))
                 if v is not None:
                     row[{"net": "production"}.get(k, k)] = v
+    t = now()
+    with db.conn() as c:
+        for name, d in data.items():
+            c.execute("INSERT OR REPLACE INTO p360_loc_data(name, data, at) VALUES (?,?,?)", (name, json.dumps(d), t))
+        for l in locs:
+            c.execute("UPDATE p360_locations SET seen_at=? WHERE name=?", (t, l["name"]))
+    res = recompute(by)
+    return {"locations": len(locs), "period": period, **res}
+
+
+def recompute(by="Hub"):
+    """Practice and pod numbers from each location's stored numbers and the current matches (after an import, and
+    whenever an admin changes a match)."""
+    with db.conn() as c:
+        data = {r["name"]: json.loads(r["data"]) for r in c.execute("SELECT name, data FROM p360_loc_data")}
+    if not data:
+        return {"practices": 0, "pods": 0, "rows": 0}
     groups_p, groups_pod = {}, {}
     for p in pods():
         for l in p["locations"]:
@@ -612,13 +636,15 @@ def import_reports(payload, by="weekly run"):
     with db.conn() as c:
         rid = c.execute("INSERT INTO p360_refreshes(source, at, by, rows) VALUES (?,?,?,?)",
                         ("MCDP Reports", now(), by, len(rows_p) + len(rows_pod))).lastrowid
+        c.execute("DELETE FROM p360_metrics WHERE source='MCDP Reports'")
+        c.execute("DELETE FROM p360_pod_metrics WHERE source='MCDP Reports'")
         for r in rows_p:
             c.execute("INSERT OR REPLACE INTO p360_metrics(practice_id, metric, period, value, shown, source, refresh_id) "
                       "VALUES (?,?,?,?,?,?,?)", (r["id"], r["metric"], r["period"], r["value"], r["shown"], "MCDP Reports", rid))
         for r in rows_pod:
             c.execute("INSERT OR REPLACE INTO p360_pod_metrics(pod_id, metric, period, value, shown, source, refresh_id) "
                       "VALUES (?,?,?,?,?,?,?)", (r["id"], r["metric"], r["period"], r["value"], r["shown"], "MCDP Reports", rid))
-    return {"locations": len(locs), "practices": len(groups_p), "pods": len(groups_pod), "period": period, "rows": len(rows_p) + len(rows_pod)}
+    return {"practices": len(groups_p), "pods": len(groups_pod), "rows": len(rows_p) + len(rows_pod)}
 
 
 def _combine(series):
