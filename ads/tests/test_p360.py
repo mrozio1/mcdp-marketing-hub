@@ -97,3 +97,24 @@ def test_ledger_pins_followups_and_screenshots(env):
     bad = ed.post(f"/p360/{pid}/ledger", data={"dept": "procurement", "kind": "note", "title": "x"},
                   files=[("shot", ("a.txt", b"hello", "text/plain"))], follow_redirects=True)
     assert "PNG, JPG" in html.unescape(bad.text)
+
+
+def test_pods_from_mcdp_reports(env):
+    p, db, ad, ed = env["p360"], env["db"], env["admin"], env["ed"]
+    flushing = db.add_practice("Flushing Orthodontics", 0, 0, "flushing")
+    wesley = db.add_practice("Wesley Orthodontics", 0, 0, "wesley")
+    pods = {x["name"]: x for x in p.pods()}
+    assert len(pods) == 21 and pods["Dr. Wesley"]["practice_ids"] == [wesley]          # guessed from "(Wesley)"
+    assert flushing in pods["Dr. A. Havens"]["practice_ids"]                              # "Flushing - 105"
+    assert env["havens"] in pods["Dr. Paron"]["practice_ids"]                              # "Farmington (Havens) - 113"
+    page = ad.get(f"/p360?pod={pods['Dr. Wesley']['id']}").text
+    assert "Wesley Orthodontics" in page and "Flushing Orthodontics" not in page.split("data-p3-list")[1]
+    # an admin corrects a guess; the pod page shows the pod's own numbers and its practices' items
+    loc = next(l for l in pods["Dr. Paron"]["locations"] if l["name"].startswith("Lapeer"))
+    ad.post("/p360/pods", data={f"loc_{loc['id']}": ""})
+    assert all(l["practice_id"] is None for l in p.pod(pods["Dr. Paron"]["id"])["locations"] if l["id"] == loc["id"])
+    p.save_pod_metrics([{"pod_id": pods["Dr. Wesley"]["id"], "metric": "Starts", "period": "2026-10", "value": 40, "shown": "40"}], "test")
+    eid = p.add_entry(wesley, "operations", "action", "Wesley follow-up calls", "", env["users"].get(env["ids"]["ed@example.com"]))
+    page = ed.get(f"/p360/pod/{pods['Dr. Wesley']['id']}").text
+    assert "Wesley follow-up calls" in page and ">40<" in page.replace(" ", "")
+    assert ed.get("/p360/pods", follow_redirects=False).status_code == 303               # admins only

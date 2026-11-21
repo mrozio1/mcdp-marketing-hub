@@ -6648,12 +6648,59 @@ async def p360_settings_save(request: Request):
 
 
 @app.get("/p360", response_class=HTMLResponse)
-def p360_home(request: Request):
+def p360_home(request: Request, pod: int = 0):
     u = me(request)
     plist = _p360_practices(request)
     keys = [k for k, _ in p360.depts_for(u)]
-    rows = [{"p": p, "open": p360.open_count(p["id"], keys)} for p in plist]
-    return page(request, "p360_pick.html", rows=rows, depts=p360.depts_for(u))
+    pods = p360.pods()
+    seen = {p["id"] for p in plist}
+    pods = [dict(x, n=len([i for i in x["practice_ids"] if i in seen])) for x in pods]
+    pods = [x for x in pods if x["n"]]
+    cur = next((x for x in pods if x["id"] == pod), None)
+    if cur:
+        plist = [p for p in plist if p["id"] in cur["practice_ids"]]
+    pod_of = {}
+    for x in pods:
+        for i in x["practice_ids"]:
+            pod_of.setdefault(i, []).append(x["name"])
+    rows = [{"p": p, "open": p360.open_count(p["id"], keys), "pods": pod_of.get(p["id"], [])} for p in plist]
+    return page(request, "p360_pick.html", rows=rows, depts=p360.depts_for(u), pods=pods, cur=cur)
+
+
+@app.get("/p360/pods", response_class=HTMLResponse)
+def p360_pods(request: Request):
+    u = me(request)
+    if not u or u["role"] != "admin":
+        flash(request, "Only admins match pods to practices.", "error")
+        return RedirectResponse("/p360", status_code=303)
+    return page(request, "p360_pods.html", pods=p360.pods(), plist=db.practices(include_hidden=True))
+
+
+@app.post("/p360/pods")
+async def p360_pods_save(request: Request):
+    u = me(request)
+    if not u or u["role"] != "admin":
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    for k, v in form.items():
+        if k.startswith("loc_") and k[4:].isdigit():
+            p360.set_location_practice(int(k[4:]), int(v) if str(v).isdigit() else None)
+    flash(request, "Saved which practice each MCDP Reports location belongs to.")
+    return RedirectResponse("/p360/pods", status_code=303)
+
+
+@app.get("/p360/pod/{pod_id}", response_class=HTMLResponse)
+def p360_pod(request: Request, pod_id: int):
+    u = me(request)
+    pd, lanes = p360.pod_lanes(pod_id, u, users.practice_ids(u))
+    if not pd:
+        return RedirectResponse("/p360", status_code=303)
+    pnames = {p["id"]: p for p in _p360_practices(request)}
+    members = [pnames[i] for i in pd["practice_ids"] if i in pnames]
+    if not members:
+        return RedirectResponse("/p360", status_code=303)
+    return page(request, "p360_pod.html", pd=pd, lanes=lanes, members=members,
+                pods=[x for x in p360.pods() if any(i in pnames for i in x["practice_ids"])])
 
 
 @app.get("/p360/{pid}", response_class=HTMLResponse)
@@ -6664,7 +6711,7 @@ def p360_practice(request: Request, pid: int):
     u = me(request)
     keys = [k for k, _ in p360.depts_for(u)]
     return page(request, "p360_practice.html", p=p, lanes=p360.lanes(pid, u), open_n=p360.open_count(pid, keys),
-                plist=_p360_practices(request))
+                plist=_p360_practices(request), p_pods=p360.pods_of_practice(pid))
 
 
 @app.get("/p360/{pid}/ledger", response_class=HTMLResponse)
@@ -6692,7 +6739,7 @@ def p360_ledger(request: Request, pid: int, kind: str = "", only: str = "", dept
     return page(request, "p360_ledger.html", p=p, rows=rows, sel=sel, d=detail, kind=kind, only=only, dept=dept, depts=depts,
                 writable=writable, metrics=p360.METRICS, people=people, names=names, new=bool(new) or not rows,
                 open_n=p360.open_count(pid, keys), statuses=[(s_, p360.STATUS_LABEL[s_]) for s_ in p360.STATUSES],
-                owners=p360.owners(), plist=_p360_practices(request), pick_dept=d)
+                owners=p360.owners(), plist=_p360_practices(request), pick_dept=d, p_pods=p360.pods_of_practice(pid))
 
 
 @app.post("/p360/{pid}/ledger")

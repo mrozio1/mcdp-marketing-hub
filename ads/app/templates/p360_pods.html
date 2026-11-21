@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Pods and locations · Practice 360{% endblock %}
+{% block content %}
+<p class="small"><a href="/p360">← Practice 360</a></p>
+<h1>Pods and locations</h1>
+<p class="muted">The pods and locations as MCDP Reports lists them. Pick the Hub practice each location belongs to; the Hub guessed where a practice's name appears in the location. Pods group practices on Practice 360 and their numbers come in by pod.</p>
+<form method="post" action="/p360/pods" class="p3-owners">
+  {% for x in pods %}
+  <fieldset class="panel"><legend>{{ x.name }}</legend>
+    <div class="p3-locs">
+      {% for l in x.locations %}
+      <label>{{ l.name }}{% if l.confirmed %} <span class="p3-st p3-progress">Confirmed</span>{% elif l.suggested %} <span class="p3-st p3-open">Guessed</span>{% else %} <span class="p3-st p3-overdue">Not matched</span>{% endif %}
+        <select name="loc_{{ l.id }}"><option value="">Not in the Hub</option>
+          {% for p in plist %}<option value="{{ p.id }}" {% if p.id == l.suggested %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+        </select></label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  {% endfor %}
+  <button class="btn" type="submit">Save (confirms every row)</button>
+</form>
+{% endblock %}

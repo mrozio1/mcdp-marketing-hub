@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS p360_events (
   pin TEXT DEFAULT '', by_id INTEGER, by_name TEXT DEFAULT '', at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS p360_events_e ON p360_events(entry_id, at);
+CREATE TABLE IF NOT EXISTS p360_pods (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, sort INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS p360_locations (
+  id INTEGER PRIMARY KEY, pod_id INTEGER NOT NULL, name TEXT NOT NULL, code TEXT DEFAULT '', practice_id INTEGER,
+  confirmed INTEGER DEFAULT 0, UNIQUE(pod_id, name)
+);
+CREATE TABLE IF NOT EXISTS p360_pod_metrics (
+  pod_id INTEGER NOT NULL, metric TEXT NOT NULL, period TEXT NOT NULL, value REAL, num REAL, den REAL,
+  shown TEXT DEFAULT '', source TEXT DEFAULT '', refresh_id INTEGER, PRIMARY KEY (pod_id, metric, period)
+);
 CREATE TABLE IF NOT EXISTS p360_shots (
   id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL, entry_id INTEGER NOT NULL, file TEXT NOT NULL, mime TEXT,
   caption TEXT DEFAULT '', at TEXT
@@ -68,6 +77,141 @@ class P360Error(ValueError):
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        if not c.execute("SELECT 1 FROM p360_pods LIMIT 1").fetchone():
+            seed_pods(c)
+
+
+# ------------------------------------------------------------------ pods (as MCDP Reports groups locations)
+# Read from MCDP Reports › Practice Scorecard › Pods on 2026-11-21. Location names as drapp shows them (number = its code).
+DRAPP_PODS = [
+    ("Dr. A. Havens", ["Canton - 104", "Clarkston - 106", "Flushing - 105"]),
+    ("Dr. Ancona", ["Clawson - 112", "Farmington Hills - 111"]),
+    ("Dr. Baker", ["Waterford (Lazarus) - 121"]),
+    ("Dr. Bowman", ["KO - Kalamazoo (129)", "KO - Paw Paw (131)", "KO - Portage (130)"]),
+    ("Dr. Charcut", ["Charchut - Lansing (132)", "Charchut - St Johns (133)"]),
+    ("Dr. Crouse", ["Brighton (Crouse) - 128", "Brighton (Peds Dent) - 301"]),
+    ("Dr. D. Havens", ["Imlay City - 102", "Romeo - 109", "Washington - 100"]),
+    ("Dr. Dellinger", ["Orthodontic Specialty Services (1)", "Orthodontic Specialty Services (2)"]),
+    ("Dr. Driscoll", ["Driscoll Orthodontics (134)"]),
+    ("Dr. Fenn", ["Heights - 114", "St Clair Shores - 103"]),
+    ("Dr. Frenchi / Dr. Jezdimir", ["Lakepointe Orthodontics"]),
+    ("Dr. Gregg", ["Gregg Orthodontics (138)"]),
+    ("Dr. Lawrence", ["Ken Lawrence Ortho (403)"]),
+    ("Dr. Mika", ["Chelsea (734) - 110", "Hartland (313) - 107", "Howell (313) - 108"]),
+    ("Dr. Norwick", ["Dearborn (Norwick) - 127"]),
+    ("Dr. Paron", ["Farmington (Havens) - 113", "Grand Blanc (OS) - 115", "Lapeer (Havens) - 116"]),
+    ("Dr. Robinson", ["Findlay Orthodontics (404)"]),
+    ("Dr. Schulz", ["Charlevoix (Schulz) - 123", "Traverse City (Schulz) - 122"]),
+    ("Dr. Wesley", ["Fort Gratiot (Wesley) - 126", "Marysville (Wesley) - 125", "Richmond (Wesley) - 124"]),
+    ("Dr. Wheeler", ["Wheeler Ortho - Archbold", "Wheeler Ortho - Toledo (401)"]),
+    ("Drs. Bandeen", ["Battle Creek (Bandeen) - 118", "Marshall - 117", "Portage (Bandeen) - 119", "Three Rivers (Bandeen) - 120"]),
+]
+_SKIP = {"ortho", "orthodontics", "orthodontic", "dental", "dentistry", "pediatric", "peds", "dent", "of", "the", "and", "family",
+         "dr", "drs", "ko", "specialty", "services", "smile", "smiles", "oral", "surgery", "st"}
+
+
+def seed_pods(c=None):
+    import re
+    def run(c):
+        for i, (pod, locs) in enumerate(DRAPP_PODS):
+            c.execute("INSERT OR IGNORE INTO p360_pods(name, sort) VALUES (?,?)", (pod, i))
+            pid = c.execute("SELECT id FROM p360_pods WHERE name=?", (pod,)).fetchone()[0]
+            for loc in locs:
+                code = (re.findall(r"\b(\d{3})\b", loc) or [""])[-1]
+                c.execute("INSERT OR IGNORE INTO p360_locations(pod_id, name, code) VALUES (?,?,?)", (pid, loc, code))
+    if c is None:
+        with db.conn() as c2:
+            run(c2)
+    else:
+        run(c)
+
+
+def _words(s):
+    import re
+    return [w for w in re.findall(r"[a-z]+", (s or "").lower()) if w not in _SKIP and len(w) > 2]
+
+
+def suggest_practice(loc_name, plist):
+    """The one practice whose distinctive name words appear in the location name (words in brackets first), or None."""
+    import re
+    inner = " ".join(re.findall(r"\(([^)]*)\)", loc_name))
+    for text in (inner, re.sub(r"\([^)]*\)", " ", loc_name), loc_name):
+        ws = set(_words(text))
+        if not ws:
+            continue
+        hits = [p for p in plist if set(_words(p["name"])) & ws]
+        if len(hits) == 1:
+            return hits[0]["id"]
+    return None
+
+
+def pods():
+    """[{id, name, locations: [{id, name, code, practice_id, confirmed, suggested}], practice_ids}]"""
+    plist = db.practices(include_hidden=True)
+    with db.conn() as c:
+        ps = [dict(r) for r in c.execute("SELECT * FROM p360_pods ORDER BY sort, name")]
+        ls = [dict(r) for r in c.execute("SELECT * FROM p360_locations ORDER BY name")]
+    for p in ps:
+        p["locations"] = [l for l in ls if l["pod_id"] == p["id"]]
+        for l in p["locations"]:
+            l["suggested"] = l["practice_id"] if l["confirmed"] else suggest_practice(l["name"], plist)
+        p["practice_ids"] = sorted({l["suggested"] for l in p["locations"] if l["suggested"]})
+    return ps
+
+
+def pod(pod_id):
+    return next((p for p in pods() if p["id"] == pod_id), None)
+
+
+def set_location_practice(loc_id, practice_id):
+    with db.conn() as c:
+        c.execute("UPDATE p360_locations SET practice_id=?, confirmed=1 WHERE id=?", (practice_id or None, loc_id))
+
+
+def pods_of_practice(pid):
+    return [p for p in pods() if pid in p["practice_ids"]]
+
+
+def pod_pin(pod_id, metric):
+    with db.conn() as c:
+        m = c.execute("SELECT m.*, r.at AS refreshed FROM p360_pod_metrics m LEFT JOIN p360_refreshes r ON r.id = m.refresh_id "
+                      "WHERE pod_id=? AND metric=? ORDER BY period DESC LIMIT 1", (pod_id, metric)).fetchone()
+    if not m:
+        return {"metric": metric, "period": "", "shown": ""}
+    return {"metric": metric, "period": m["period"], "shown": m["shown"] or _fmt(m["value"]), "refreshed": m["refreshed"] or ""}
+
+
+def save_pod_metrics(rows, source, by=""):
+    """rows: [{pod_id, metric, period, value, num, den, shown}]"""
+    with db.conn() as c:
+        rid = c.execute("INSERT INTO p360_refreshes(source, at, by, rows) VALUES (?,?,?,?)", (source, now(), by, len(rows))).lastrowid
+        for r in rows:
+            c.execute("INSERT OR REPLACE INTO p360_pod_metrics(pod_id, metric, period, value, num, den, shown, source, refresh_id) "
+                      "VALUES (?,?,?,?,?,?,?,?,?)", (r["pod_id"], r["metric"], r["period"], r.get("value"), r.get("num"),
+                                                      r.get("den"), r.get("shown") or "", source, rid))
+    return rid
+
+
+def pod_lanes(pod_id, u, visible_pids):
+    """Like lanes(), across every practice in the pod the viewer can open; numbers are the pod's own (from drapp)."""
+    from . import users
+    pd = pod(pod_id)
+    if not pd:
+        return None, []
+    pids = [x for x in pd["practice_ids"] if visible_pids is None or x in visible_pids]
+    names = {x["id"]: x["name"] for x in users.all_users()}
+    pnames = {p["id"]: p["name"] for p in db.practices(include_hidden=True)}
+    own = owners()
+    out = []
+    for k, label in depts_for(u):
+        rows = [dict(r, practice=pnames.get(r["practice_id"], "")) for x in pids for r in entries(x, [k])]
+        rows.sort(key=lambda r: r["updated_at"] or "", reverse=True)
+        out.append({"key": k, "label": label, "owners": [names[i] for i in own.get(k, []) if i in names],
+                    "open": [r for r in rows if r["state"] not in ("done", "note")][:6],
+                    "overdue": sum(1 for r in rows if r["state"] == "overdue"),
+                    "latest": next((r for r in rows if r["kind"] == "note"), None),
+                    "metrics": [pod_pin(pod_id, m) for m in METRICS[k]], "can_write": False})
+    return pd, out
 
 
 def now():

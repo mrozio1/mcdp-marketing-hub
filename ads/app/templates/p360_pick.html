@@ -2,16 +2,26 @@
 {% block title %}Practice 360{% endblock %}
 {% block content %}
 <div class="p3-head">
-  <div><p class="p3-kicker">Practice 360</p><h1>Pick a practice</h1>
+  <div><p class="p3-kicker">Practice 360</p><h1>{% if cur %}{{ cur.name }}'s pod{% else %}Pick a practice{% endif %}</h1>
     <p class="muted">Each practice's numbers, notes and action items{% if depts %}: {{ depts|map(attribute=1)|join(', ') }}{% endif %}.</p></div>
-  {% if is_admin %}<a class="btn btn-quiet" href="/p360/settings">Department owners</a>{% endif %}
+  {% if is_admin %}<span class="p3-admin"><a class="btn btn-quiet btn-small" href="/p360/pods">Pods and locations</a> <a class="btn btn-quiet btn-small" href="/p360/settings">Department owners</a></span>{% endif %}
 </div>
 {% if not depts %}<p class="panel em-note">No Practice 360 departments are switched on for you. Ask an admin (Team › What you can open › Practice 360 departments).</p>{% endif %}
+
+{% if pods %}
+<nav class="p3-pods" aria-label="Pods, as in MCDP Reports">
+  <span class="small muted">Pod</span>
+  <a class="em-chip {{ 'on' if not cur }}" href="/p360">All</a>
+  {% for x in pods %}<a class="em-chip {{ 'on' if cur and cur.id == x.id }}" href="/p360?pod={{ x.id }}">{{ x.name }}</a>{% endfor %}
+</nav>
+{% if cur %}<p><a class="btn btn-small" href="/p360/pod/{{ cur.id }}">Open {{ cur.name }}'s pod overview →</a> <span class="small muted">Every department, across its {{ rows|length }} practice{{ '' if rows|length == 1 else 's' }}.</span></p>{% endif %}
+{% endif %}
+
 <label class="p3-find"><span class="vh">Find a practice</span><input type="search" placeholder="Find a practice" data-p3-find></label>
 <ul class="p3-grid" data-p3-list>
   {% for r in rows %}
   <li data-name="{{ r.p.name|lower }}"><a class="p3-card" href="/p360/{{ r.p.id }}"><span class="p3-av" aria-hidden="true">{{ r.p.name[:1] }}</span>
-    <span><strong>{{ r.p.name }}</strong><br><span class="small muted">{% if r.open %}{{ r.open }} open item{{ '' if r.open == 1 else 's' }}{% else %}Nothing open{% endif %}</span></span></a></li>
+    <span><strong>{{ r.p.name }}</strong><br><span class="small muted">{% if r.open %}{{ r.open }} open item{{ '' if r.open == 1 else 's' }}{% else %}Nothing open{% endif %}{% if r.pods and not cur %} · {{ r.pods|join(', ') }}{% endif %}</span></span></a></li>
   {% endfor %}
 </ul>
 <script>

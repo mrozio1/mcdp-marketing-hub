@@ -1,5 +1,5 @@
 <div class="p3-head">
-  <div><p class="p3-kicker"><a href="/p360">Practice 360</a></p><h1>{{ p.name }}</h1></div>
+  <div><p class="p3-kicker"><a href="/p360">Practice 360</a>{% for x in p_pods or [] %} · <a href="/p360/pod/{{ x.id }}">{{ x.name }}'s pod</a>{% endfor %}</p><h1>{{ p.name }}</h1></div>
   <label class="p3-switch"><span class="small muted">Practice</span>
     <select onchange="location.href='/p360/' + this.value + (location.pathname.endsWith('/ledger') ? '/ledger' : '')">
       {% for x in plist %}<option value="{{ x.id }}" {% if x.id == p.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}

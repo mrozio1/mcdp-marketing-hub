@@ -2699,3 +2699,8 @@ fieldset.em-lists, .em-side fieldset, .em-settings fieldset { border: 0; padding
 .p3-row label.check, .p3-form label.check { display: flex; flex-direction: row; align-items: center; gap: .45rem; }
 .p3-row label.check input, .p3-form label.check input { width: auto; margin: 0; }
 .p3-form > .btn { align-self: flex-start; }
+.p3-pods { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 0 0 1rem; }
+.p3-admin { display: flex; gap: .4rem; flex-wrap: wrap; }
+.p3-locs { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: .7rem 1rem; }
+.p3-locs label { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; font-weight: 500; }
+.p3-locs select { font: inherit; font-weight: 400; padding: .4rem .55rem; border-radius: 8px; border: 1px solid #cdd8e1; }
