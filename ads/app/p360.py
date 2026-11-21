@@ -656,8 +656,7 @@ def _combine(series):
         for k, name in (("wages", "Wages %"), ("supplies", "Supplies %"), ("labs", "Labs %")):
             if k in t:
                 m[name] = (t[k], _pct(t[k], 0))
-        if "ytd" in t:
-            m["YTD provider discretionary"] = (t["ytd"], _money(t["ytd"]))
+        # YTD provider discretionary is left out: drapp works it out per provider, so locations don't add up to its total.
         if m:
             out[p] = m
     return out
