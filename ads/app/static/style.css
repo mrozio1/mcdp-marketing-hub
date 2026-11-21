@@ -2761,3 +2761,7 @@ fieldset.em-lists, .em-side fieldset, .em-settings fieldset { border: 0; padding
 .p3-lane .p3-kicker { margin-top: .6rem; }
 .p3-lane .p3-cols { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
 @media (max-width: 900px) { .p3-lane .p3-cols { grid-template-columns: 1fr; } }
+
+/* Practice 360: months after MCDP Reports' latest (Hub numbers, this month so far) */
+.p3-table .p3-after { border-left: 1px dashed #c9d3de; color: #4a5a6b; font-style: italic; }
+.p3-table th.p3-after { font-style: normal; }

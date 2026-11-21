@@ -33,7 +33,7 @@ METRICS = {
     "revenue": ["Collections", "Collections over 90 days", "Net production", "Production growth"],
     "procurement": ["Supplies %", "Supplies spend"],
     "operations": ["Starts", "Exams", "Success rate", "RPP rate", "RPP count"],
-    "marketing": ["Online bookings", "Cost per booking", "Ad spend", "Ad conversions", "New Google reviews", "Referring office visits",
+    "marketing": ["Online bookings", "Cost per booking", "Ad spend", "Ad conversions", "New Google reviews", "Field visits",
                   "Exams"],
 }
 
@@ -711,7 +711,7 @@ _hub_lock = __import__("threading").Lock()
 
 
 def hub_marketing(today=None):
-    """Each Practice 360 practice's marketing numbers per complete month, from what the Hub already has: ad spend and
+    """Each Practice 360 practice's marketing numbers per month (complete months, plus this month so far), from what the Hub already has: ad spend and
     conversions (Google and Meta), LeadSigma online bookings, new Google reviews and field visits. Replaces the
     previous Hub rows; drapp's numbers are left alone."""
     from datetime import date
@@ -722,7 +722,7 @@ def hub_marketing(today=None):
     for l in reviews.locations():
         if l.get("practice_id"):
             gbp.setdefault(l["practice_id"], []).append(l)
-    months = []
+    months = [today.replace(day=1)]          # this month so far first (shown apart, never in totals), then complete months
     m = today.replace(day=1)
     for _ in range(HUB_MONTHS):
         m = (m - timedelta(days=1)).replace(day=1)
@@ -731,7 +731,7 @@ def hub_marketing(today=None):
     allp = db.practices(include_hidden=True)
     for start in months:
         import calendar
-        end = start.replace(day=calendar.monthrange(start.year, start.month)[1])
+        end = min(today, start.replace(day=calendar.monthrange(start.year, start.month)[1]))
         per = start.strftime("%Y-%m")
         with db.conn() as c:
             dated = c.execute("SELECT 1 FROM ls_counts WHERE day != '' AND day BETWEEN ? AND ? LIMIT 1",
@@ -746,7 +746,7 @@ def hub_marketing(today=None):
                 rows.append((p["id"], "Ad conversions", per, paid["conversions"], f"{paid['conversions']:,.0f}"))
             if rv["linked"]:
                 rows.append((p["id"], "New Google reviews", per, rv["new"], f"{rv['new']:,}"))
-            rows.append((p["id"], "Referring office visits", per, fv["visits"], f"{fv['visits']:,}"))
+            rows.append((p["id"], "Field visits", per, fv["visits"], f"{fv['visits']:,}"))
             if ls is not None:
                 b = ls["by_practice"].get(p["id"], 0)
                 rows.append((p["id"], "Online bookings", per, b, f"{b:,}"))
@@ -831,7 +831,7 @@ def practice_month(pid, metric, month):
 
 # ------------------------------------------------------------------ time frames: month, trailing 3 months, year to date
 SUM = {"Net production", "Starts", "Exams", "RPP count", "Online bookings", "Ad spend", "Ad conversions", "New Google reviews",
-       "Referring office visits"}
+       "Field visits"}
 RATIO = {"Success rate": ("Starts", "Exams", 100), "RPP rate": ("RPP count", "Starts", 100), "Cost per booking": ("Ad spend", "Online bookings", 1)}
 WEIGHTED = {"Wages %", "Supplies %", "Labs %"}                      # by net production
 LOWER_IS_BETTER = {"Wages %", "Supplies %", "Labs %", "Cost per booking"}
@@ -967,6 +967,10 @@ def view(tf, pid=None, pod_id=None):
                           "tone": (_delta(metric, b, bars[i - 1][1]) or {}).get("tone") if i else None} for i, (m, b) in enumerate(bars)]}
     tiles = [tile(m) for m in TILES if _agg(data, m, cur) is not None]
     cols = [datetime.strptime(m + "-01", "%Y-%m-%d").strftime("%b") for m in bar_months]
+    # months after MCDP Reports' latest (the Hub's own numbers, e.g. this month so far): shown after the totals, never in them
+    this_month = datetime.now().strftime("%Y-%m")
+    after = sorted({m for v in data.values() for m in v if last < m <= this_month})
+    after_cols = [datetime.strptime(m + "-01", "%Y-%m-%d").strftime("%b") + (" so far" if m == this_month else "") for m in after]
     tables = {}
     for dept, metrics in METRICS.items():
         rows = []
@@ -974,14 +978,16 @@ def view(tf, pid=None, pod_id=None):
             if metric not in SUM and metric not in RATIO and metric not in WEIGHTED:
                 continue                                    # e.g. production growth: shown as "vs last year" instead
             v = _agg(data, metric, cur)
-            if v is None and not any(data.get(metric, {}).get(m) is not None for m in bar_months):
+            if v is None and not any(data.get(metric, {}).get(m) is not None for m in bar_months + after):
                 continue
+            one = lambda m: fmt(metric, data.get(metric, {}).get(m) if metric not in RATIO else _agg(data, metric, [m]))
             rows.append({"metric": "New-patient exams" if metric == "Exams" else metric,
-                         "months": [fmt(metric, data.get(metric, {}).get(m) if metric not in RATIO else _agg(data, metric, [m])) for m in bar_months],
+                         "after": [one(m) for m in after],
+                         "months": [one(m) for m in bar_months],
                          "total": fmt(metric, v), "prior": _delta(metric, v, _agg(data, metric, prev)) if prev else None,
                          "ly": _delta(metric, v, _agg(data, metric, ly))})
         tables[dept] = rows
-    return {"tf": tf, "last": last, "label": label, "tiles": tiles, "cols": cols, "tables": tables,
+    return {"tf": tf, "last": last, "label": label, "tiles": tiles, "cols": cols, "after_cols": after_cols, "tables": tables,
             "total_label": {"month": datetime.strptime(last + "-01", "%Y-%m-%d").strftime("%b"), "t3m": "3 months", "ytd": "Year to date"}[tf],
             "prior_label": {"month": "vs month before", "t3m": "vs prior 3 mo", "ytd": ""}[tf]}
 

@@ -176,7 +176,11 @@ def test_marketing_numbers_from_the_hub(env):
     n = p.hub_marketing(today=date(2026, 11, 21))
     assert n > 0
     assert p.pin_for(wesley, "Online bookings")["shown"] == "4" and p.pin_for(wesley, "Online bookings")["period"] == "2026-10"
-    assert p.pin_for(wesley, "Referring office visits")["period"] == "2026-10"
+    assert p.pin_for(wesley, "Field visits")["period"] == "2026-11"                   # this month so far is kept too
+    v = p.view("t3m", pid=wesley)
+    if v.get("last") == "2026-10" and v["after_cols"]:                                  # shown after the totals, not in them
+        row = next(r for r in v["tables"]["marketing"] if r["metric"] == "Field visits")
+        assert len(row["after"]) == len(v["after_cols"])
     assert p.pin_for(wesley, "Starts")["shown"] == "15"                                # drapp's numbers untouched
     assert "Refresh marketing now" in env["ed"].get(f"/p360/{wesley}").text
 
