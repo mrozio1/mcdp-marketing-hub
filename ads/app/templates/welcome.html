@@ -10,7 +10,7 @@
     <div class="dash-hero-text">
       <p class="dash-label">{{ per.label }} · {{ d.practices }} practice{{ '' if d.practices == 1 else 's' }}</p>
       <h1>From ad to start</h1>
-      <p class="dash-muted">Spend and ad results from the hub, online bookings from LeadSigma, and exams and starts from Dolphin through Power BI, in one view.</p>
+      <p class="dash-muted">Spend and ad results from the hub, online bookings from LeadSigma, and exams and starts from MCDP Reports, in one view.</p>
     </div>
     <form method="get" action="/" class="dash-pick">
       <label>Period
@@ -46,8 +46,13 @@
         <span class="dash-north-label">The number that matters</span>
         <span class="dash-north-title">Cost per new patient start, week over week and 4-week average</span>
       </div>
+      {% if d.north %}
+      <span class="dash-north-value">{{ d.north.value }}</span>
+      <span class="dash-north-note">Ad spend per start, {{ d.north.month }}: {{ d.north.spend }} ÷ {{ d.north.starts }} starts (all starts, from MCDP Reports). Ad-sourced starts need booking sources joined to starts, which comes with the Power BI connection.</span>
+      {% else %}
       <span class="dash-north-value">$—</span>
-      <span class="dash-north-note">Appears once starts come in from Power BI: ad spend ÷ starts from ad-sourced bookings.</span>
+      <span class="dash-north-note">Appears once starts come in from MCDP Reports: ad spend ÷ starts.</span>
+      {% endif %}
     </div>
   </section>
 
@@ -266,7 +271,7 @@
             <td class="dash-num">{{ num(r.conv) }}</td>
             <td class="dash-num{% if r.high %} warn{% endif %}">{{ money(r.cpa) if r.cpa else ('none' if r.spend else '—') }}</td>
             <td class="dash-num">{% if r.bookings is not none %}{{ r.bookings }}{% elif ls %}0{% else %}<span class="dash-pend">LeadSigma</span>{% endif %}</td>
-            <td class="dash-num"><span class="dash-pend">Power BI</span></td>
+            <td class="dash-num">{% if r.starts is not none %}{{ '{:,.0f}'.format(r.starts) }}{% elif d.drapp_month %}—{% else %}<span class="dash-pend">Power BI</span>{% endif %}</td>
             <td class="dash-num">{{ r.reviews if r.reviews is not none else '—' }}</td>
             <td class="dash-num">{{ r.posts if r.posts is not none else '—' }}</td>
           </tr>
@@ -276,7 +281,7 @@
         </tbody>
       </table>
     </div>
-    <span class="dash-muted small">Ad columns: the hub (Google Ads and Meta). Online bookings: LeadSigma bookings through each practice's booking and referral links. Starts: Dolphin through Power BI.</span>
+    <span class="dash-muted small">Ad columns: the hub (Google Ads and Meta). Online bookings: LeadSigma bookings through each practice's booking and referral links. Starts: MCDP Reports{% if d.drapp_month and not d.drapp_same %} ({{ d.drapp_month }}, its latest complete month){% endif %}.</span>
   </section>
 
   <section aria-labelledby="goto-h" class="dash-section">
@@ -291,6 +296,7 @@
       <a class="dash-tile" href="/reports?kind=month"><strong>Monthly report</strong><span>Master Reports · with suggestions for next month</span></a>{% endif %}
       <a class="dash-tile" href="https://onlinebooking.leadsigma.com/admin/marketing_attribution" target="_blank" rel="noopener"><strong>LeadSigma attribution ↗</strong><span>Bookings by source and link</span></a>
       <a class="dash-tile" href="https://drapp.mcdentalpartners.com/reports" target="_blank" rel="noopener"><strong>Power BI reports ↗</strong><span>Starts, exams, production</span></a>
+      {% if acc.p360 %}<a class="dash-tile" href="/p360"><strong>Practice 360</strong><span>Every department, by practice and pod</span></a>{% endif %}
     </div>
   </section>
 

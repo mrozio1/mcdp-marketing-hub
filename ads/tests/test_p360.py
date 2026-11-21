@@ -179,3 +179,9 @@ def test_marketing_numbers_from_the_hub(env):
     assert p.pin_for(wesley, "Referring office visits")["period"] == "2026-10"
     assert p.pin_for(wesley, "Starts")["shown"] == "15"                                # drapp's numbers untouched
     assert "Refresh marketing now" in env["ed"].get(f"/p360/{wesley}").text
+
+
+def test_home_dashboard_uses_mcdp_reports(env):
+    page = env["admin"].get("/").text
+    assert "MCDP Reports · Scorecard" in page and "Ad spend per start" not in page or "MCDP Reports" in page
+    assert ">24<" in page.replace(" ", "")                                            # starts in the funnel (Fort Gratiot + Marysville were 15 + 9)

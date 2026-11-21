@@ -785,3 +785,34 @@ def hub_refresh_if_stale(hours=6):
             _hub_lock.release()
     threading.Thread(target=run, daemon=True).start()
     return True
+
+
+# ------------------------------------------------------------------ group totals for the home dashboard
+def drapp_months():
+    """Complete months that have MCDP Reports numbers, newest first."""
+    with db.conn() as c:
+        rows = [json.loads(r["data"]) for r in c.execute("SELECT data FROM p360_loc_data")]
+    return sorted({p for d in rows for p, v in d.items() if "starts" in v or "exams" in v}, reverse=True)
+
+
+def group_totals(month, practice_ids=None):
+    """Exams, starts and success rate for a month: every location (practice_ids None) or only those practices'."""
+    if practice_ids is None:
+        with db.conn() as c:
+            rows = [json.loads(r["data"]) for r in c.execute("SELECT data FROM p360_loc_data")]
+        t = _combine(rows).get(month, {})
+        get = lambda k: t[k][0] if k in t else None
+        return {"month": month, "exams": get("Exams"), "starts": get("Starts"), "success": get("Success rate")}
+    with db.conn() as c:
+        q = ",".join("?" * len(practice_ids)) or "NULL"
+        rows = c.execute(f"SELECT metric, SUM(value) v FROM p360_metrics WHERE source='MCDP Reports' AND period=? "
+                         f"AND metric IN ('Exams', 'Starts') AND practice_id IN ({q}) GROUP BY metric", (month, *practice_ids)).fetchall()
+    d = {r["metric"]: r["v"] for r in rows}
+    ex, st = d.get("Exams"), d.get("Starts")
+    return {"month": month, "exams": ex, "starts": st, "success": st / ex * 100 if ex and st is not None else None}
+
+
+def practice_month(pid, metric, month):
+    with db.conn() as c:
+        r = c.execute("SELECT value FROM p360_metrics WHERE practice_id=? AND metric=? AND period=?", (pid, metric, month)).fetchone()
+    return r["value"] if r else None

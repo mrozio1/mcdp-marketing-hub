@@ -4,7 +4,8 @@
 - Online booking numbers come from LeadSigma's Marketing Attribution CSV export, uploaded here. Only counts are kept:
   rows are rolled up by day, practice account, office, channel, source, medium, campaign, status, the "how did you
   hear about us" answer and the referring link. Names, emails and phone numbers in the file are never stored.
-- Exams and starts come from Dolphin through Power BI; until that's connected they show as "Connect".
+- Exams and starts come from MCDP Reports (Power BI Practice Scorecard) through Practice 360's weekly import;
+  before the first import they show as "Connect".
 - The marketing budget (year to date) is typed in from Power BI's Marketing page by an admin.
 """
 import csv
@@ -459,19 +460,51 @@ def build(kind="week", key=None, today=None):
     else:
         funnel += [{"step": s, "value": "Upload", "sub": "LeadSigma export", "src": "LeadSigma", "todo": True}
                    for s in ("Booking page visits", "Consults booked", "Confirmed")]
-    funnel += [{"step": "Exams", "value": "Connect", "sub": "kept consults, from Dolphin", "src": "Power BI · Ortho KPIs", "todo": True},
-               {"step": "Starts", "value": "Connect", "sub": "and exam-to-start rate", "src": "Power BI · Ortho KPIs", "todo": True}]
+    # Exams and starts: MCDP Reports (Practice Scorecard) through Practice 360's import. It's monthly, so a month view
+    # uses that month when it's complete and in, otherwise the latest complete month, labelled.
+    from . import p360
+    months = p360.drapp_months()
+    dm = None
+    if months:
+        want = per["start"].strftime("%Y-%m")
+        dm = want if (kind == "month" and want in months) else months[0]
+    only = db.only_ids()
+    gt = p360.group_totals(dm, sorted(only) if only is not None else None) if dm else None
+    mlabel = date.fromisoformat(dm + "-01").strftime("%B %Y") if dm else ""
+    same = bool(dm) and kind == "month" and dm == per["start"].strftime("%Y-%m")
+    if gt and gt["starts"] is not None:
+        funnel += [{"step": "Exams", "value": f"{gt['exams']:,.0f}" if gt["exams"] is not None else "—",
+                    "sub": "new-patient exams" + ("" if same else f" in {mlabel}"), "src": "MCDP Reports · Scorecard"},
+                   {"step": "Starts", "value": f"{gt['starts']:,.0f}",
+                    "sub": (f"{gt['success']:.1f}% of exams" if gt["success"] is not None else "") + ("" if same else f" · {mlabel}"),
+                    "src": "MCDP Reports · Scorecard"}]
+    else:
+        funnel += [{"step": "Exams", "value": "Connect", "sub": "kept consults, from Dolphin", "src": "Power BI · Ortho KPIs", "todo": True},
+                   {"step": "Starts", "value": "Connect", "sub": "and exam-to-start rate", "src": "Power BI · Ortho KPIs", "todo": True}]
+    # ad spend per start, for the same month as the starts
+    north = None
+    if gt and gt["starts"]:
+        spend = t["spend"] if same else None
+        if spend is None:
+            with db.conn() as c:
+                q = "" if only is None else f" AND practice_id IN ({','.join(str(int(i)) for i in only) or 'NULL'})"
+                r_ = c.execute(f"SELECT SUM(value) v FROM p360_metrics WHERE source='Hub' AND metric='Ad spend' AND period=?{q}", (dm,)).fetchone()
+            spend = r_["v"] if r_ and r_["v"] else None
+        if spend:
+            north = {"value": _money(spend / gt["starts"]), "month": mlabel, "spend": _money(spend), "starts": f"{gt['starts']:,.0f}"}
     active = [r for r in rep["rows"] if r["active"]]
     table = sorted(active, key=lambda r: -r["paid"]["spend"])[:10]
     rows = [{"id": r["p"]["id"], "name": r["p"]["name"], "spend": r["paid"]["spend"], "conv": r["paid"]["conversions"],
              "cpa": r["paid"]["cpa"], "bookings": (ls or {}).get("by_practice", {}).get(r["p"]["id"]) if ls else None,
+             "starts": p360.practice_month(r["p"]["id"], "Starts", dm) if dm else None,
              "reviews": r["reviews"]["new"] if r["reviews"]["linked"] else None,
              "posts": r["organic"]["posts"] if r["organic"]["linked"] else None,
              "high": bool(r["paid"]["cpa"] and t["cpa"] and r["paid"]["cpa"] > 2.5 * t["cpa"])
              or (r["paid"]["spend"] >= 50 and not r["paid"]["conversions"])} for r in table]
     return {"period": per, "rep": rep, "totals": t, "ls": ls, "ls_note": note, "funnel": funnel,
             "attention": attention(rep, ls, per), "rows": rows, "practices": len(active), "budget": budget(),
-            "upload": last_upload(), "limited": db.only_ids() is not None}
+            "upload": last_upload(), "limited": db.only_ids() is not None, "north": north, "drapp_month": mlabel,
+            "drapp_same": same}
 
 
 def _arrow(c, per):
