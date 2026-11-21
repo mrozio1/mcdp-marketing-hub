@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Department owners · Practice 360{% endblock %}
+{% block content %}
+<p class="small"><a href="/p360">← Practice 360</a></p>
+<h1>Department owners</h1>
+<p class="muted">Owners lead their department on every practice's page: they're listed on it, can add notes and action items even as viewers, and can change any of their department's action items (status, owner, due date). Who can see each department is set per person on the <a href="/team">Team page</a>.</p>
+<form method="post" action="/p360/settings" class="p3-owners">
+  {% for k, label in depts %}
+  <fieldset class="panel"><legend>{{ label }}</legend>
+    <div class="p3-people">
+      {% for x in people %}<label class="check"><input type="checkbox" name="owner_{{ k }}" value="{{ x.id }}" {% if x.id in owners.get(k, []) %}checked{% endif %}> {{ x.name }} <span class="muted small">{{ x.role|capitalize }}</span></label>{% endfor %}
+    </div>
+  </fieldset>
+  {% endfor %}
+  <button class="btn" type="submit">Save owners</button>
+</form>
+{% endblock %}

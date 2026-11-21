@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Ledger · {{ p.name }} · Practice 360{% endblock %}
+{% macro when(t) %}{{ t[:10] }}, {{ t[11:16] }}{% endmacro %}
+{% macro pinchip(pin) %}{% if pin %}<span class="p3-pin"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5M9 3h6l-1 7 4 3H6l4-3z"></path></svg>{{ pin.metric }}{% if pin.period %} · {{ pin.period }}{% endif %}{% if pin.shown %} · {{ pin.shown }}{% endif %}</span>{% endif %}{% endmacro %}
+{% macro shotbox(name) %}
+<div class="p3-drop" data-drop>
+  <input type="file" name="{{ name }}" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="vh" data-files>
+  <span><strong>Paste a screenshot</strong> (Ctrl+V), drag one here, or <button type="button" class="linklike" data-browse>browse</button></span>
+  <span class="small muted">Windows+Shift+S snips any part of the screen. Counts and dollars only: no patient names.</span>
+  <div class="p3-thumbs" data-thumbs></div>
+</div>
+{% endmacro %}
+{% block content %}
+{% include "_p360_head.html" %}
+
+<form method="get" class="p3-filters" action="/p360/{{ p.id }}/ledger">
+  <span role="group" aria-label="Type" class="em-seg">
+    {% for k, label in (('', 'All'), ('action', 'Action items'), ('note', 'Notes')) %}<button type="submit" name="kind" value="{{ k }}" class="{{ 'on' if kind == k }}">{{ label }}</button>{% endfor %}
+  </span>
+  <input type="hidden" name="only" value="{{ only }}"><input type="hidden" name="dept" value="{{ dept }}">
+  {% for k, label in (('open', 'Open'), ('overdue', 'Overdue'), ('mine', 'Mine')) %}
+  <a class="em-chip {{ 'on' if only == k }}" href="?kind={{ kind }}&amp;dept={{ dept }}&amp;only={{ '' if only == k else k }}">{{ label }}</a>
+  {% endfor %}
+  <label class="small">Department <select name="dept" onchange="this.form.submit()"><option value="">All</option>{% for k, l in depts %}<option value="{{ k }}" {% if dept == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <span class="em-pick"></span>
+  {% if writable %}<a class="btn btn-small" href="?new=1">+ New note or action item</a>{% endif %}
+</form>
+
+<div class="p3-ledger">
+  <section class="p3-list" aria-label="Entries">
+    {% for r in rows %}
+    <a class="p3-entry {{ 'on' if sel and sel.id == r.id and not new }}" href="?kind={{ kind }}&amp;only={{ only }}&amp;dept={{ dept }}&amp;e={{ r.id }}" {% if sel and sel.id == r.id and not new %}aria-current="true"{% endif %}>
+      <span class="p3-entry-top"><span class="p3-kind p3-kind-{{ r.kind }}">{{ r.kind_label }}</span><span class="p3-dept">{{ r.dept_label }}</span><span class="p3-st p3-{{ r.state }}">{{ r.state_label }}</span></span>
+      <strong>{{ r.title }}</strong>
+      {{ pinchip(r.pin) }}
+      <span class="small muted">Opened {{ when(r.created_at) }} by {{ r.created_name }} · {{ r.follow_ups }} follow-up{{ '' if r.follow_ups == 1 else 's' }}{% if r.due and r.kind == 'action' %} · due {{ r.due }}{% endif %}</span>
+    </a>
+    {% else %}
+    <p class="muted small">Nothing here yet{% if kind or only or dept %} with these filters{% endif %}.</p>
+    {% endfor %}
+  </section>
+
+  <article class="p3-detail panel">
+    {% if new or not d %}
+      {% if writable %}
+      <h2>New note or action item</h2>
+      <form method="post" action="/p360/{{ p.id }}/ledger" enctype="multipart/form-data" class="p3-form" data-shot-form data-new-form>
+        <fieldset class="p3-seg"><legend>Type</legend>
+          <label><input type="radio" name="kind" value="note" checked data-kind><span>Note</span></label>
+          <label><input type="radio" name="kind" value="action" data-kind><span>Action item</span></label>
+        </fieldset>
+        <label>Department<select name="dept" data-dept>{% for k, l in writable %}<option value="{{ k }}" {% if pick_dept == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+        <label>Which number is it about? <span class="muted small">(pins today's value to the note)</span>
+          <select name="metric" data-metric><option value="">None</option>
+            {% for k, l in writable %}{% for m in metrics[k] %}<option value="{{ m }}" data-for="{{ k }}">{{ m }}</option>{% endfor %}{% endfor %}
+          </select></label>
+        <label>Headline<input name="title" maxlength="200" required></label>
+        <label>Note<textarea name="text" rows="5"></textarea></label>
+        <div class="p3-action" data-action hidden>
+          <label>Owner<select name="owner_id"><option value="">Pick someone</option>{% for x in people %}<option value="{{ x.id }}">{{ x.name }}</option>{% endfor %}</select></label>
+          <label>Due<input type="date" name="due"></label>
+        </div>
+        <label class="check"><input type="checkbox" name="review" value="1"> Bring it up at the next monthly review</label>
+        {{ shotbox('shot') }}
+        <button class="btn" type="submit">Add to the ledger</button>
+      </form>
+      {% else %}
+      <p class="muted">Pick an entry on the left. You can read this practice's ledger but can't add to it.</p>
+      {% endif %}
+    {% else %}
+      {% set e = d.e %}
+      <div class="p3-entry-top"><span class="p3-kind p3-kind-{{ e.kind }}">{{ e.kind_label }}</span><span class="p3-dept">{{ e.dept_label }}</span><span class="small muted">#{{ e.id }}</span></div>
+      <h2 class="p3-title">{{ e.title }}</h2>
+      {% if e.kind == 'action' %}
+        {% if d.can_manage %}
+        <form method="post" action="/p360/entry/{{ e.id }}/plan" class="p3-plan">
+          <span class="p3-st p3-{{ e.state }}">{{ e.state_label }}</span>
+          <label class="small">Owner <select name="owner_id"><option value="">Nobody</option>{% for x in people %}<option value="{{ x.id }}" {% if x.id == e.owner_id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select></label>
+          <label class="small">Due <input type="date" name="due" value="{{ e.due or '' }}"></label>
+          <button class="btn btn-quiet btn-small" type="submit">Save</button>
+        </form>
+        {% else %}
+        <p class="small"><span class="p3-st p3-{{ e.state }}">{{ e.state_label }}</span> Owner: <strong>{{ d.owner or 'nobody yet' }}</strong>{% if e.due %} · due {{ e.due }}{% endif %}</p>
+        {% endif %}
+      {% endif %}
+
+      {% if d.pin %}
+      <section class="p3-pinbox">
+        <div><span class="p3-kicker p3-kicker-light">Pinned to the dashboard</span>
+          <strong>{{ d.pin.metric }}{% if d.pin.period %} · {{ d.pin.period }}{% endif %}</strong>
+          <span class="small">As shown {{ when(e.created_at) }}{% if d.pin.refreshed %} · data from {{ when(d.pin.refreshed) }}{% endif %}</span></div>
+        <div class="p3-thennow">
+          <span><small>Then</small><b>{{ d.pin.shown or '—' }}</b><small>{{ d.pin.period or d.pin.note }}</small></span>
+          <span><small>Now</small><b>{{ (d.now or {}).shown or '—' }}</b><small>{{ (d.now or {}).period or (d.now or {}).note }}</small></span>
+        </div>
+      </section>
+      {% endif %}
+
+      <section id="history" aria-label="History" class="p3-history">
+        <h3 class="p3-kicker">History</h3>
+        {% for v in d.events %}
+        <div class="p3-ev p3-ev-{{ v.type }}">
+          <span class="p3-dot" aria-hidden="true"></span>
+          <div>
+            <p class="small muted"><strong>{{ v.by_name }}</strong> · {% if v.type == 'created' %}{{ 'opened the action item' if e.kind == 'action' else 'wrote the note' }}{% elif v.type == 'status' %}changed the status to {{ v.status_label }}{% elif v.type == 'plan' %}updated the plan{% else %}follow-up{% if v.status %}, status now {{ v.status_label }}{% endif %}{% endif %} · <time datetime="{{ v.at }}">{{ when(v.at) }}</time></p>
+            {% if v.text %}<p class="p3-text">{{ v.text }}</p>{% endif %}
+            {% if v.shots %}<div class="p3-shots">{% for s in v.shots %}<a href="/p360/shot/{{ s.id }}" target="_blank" rel="noopener"><img src="/p360/shot/{{ s.id }}" alt="Screenshot {{ loop.index }}{% if s.caption %}: {{ s.caption }}{% endif %}" loading="lazy"></a>{% endfor %}</div>{% endif %}
+            {% if v.pin %}<span class="p3-snap">Dashboard then: {{ v.pin.metric }} {{ v.pin.shown or '(no value yet)' }}{% if v.pin.period %} ({{ v.pin.period }}){% endif %}</span>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </section>
+
+      {% if d.can_follow %}
+      <form method="post" action="/p360/entry/{{ e.id }}/follow" enctype="multipart/form-data" class="p3-form p3-follow" data-shot-form>
+        <label>Add a follow-up<textarea name="text" rows="3" placeholder="What happened since? Paste a screenshot to show it."></textarea></label>
+        <div class="p3-row">
+          {% if e.kind == 'action' and d.can_manage %}<label class="small">Change status to <select name="status"><option value="">No change</option>{% for k, l in statuses %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></label>{% endif %}
+          {% if d.pin %}<label class="check small"><input type="checkbox" name="pin_now" value="1" checked> Pin today's {{ d.pin.metric }} to this follow-up</label>{% endif %}
+        </div>
+        {{ shotbox('shot') }}
+        <button class="btn" type="submit">Add follow-up</button>
+        <p class="small muted">Entries can't be changed after they're added; corrections go in as a new follow-up, so the record stays as it was.</p>
+      </form>
+      {% endif %}
+    {% endif %}
+  </article>
+</div>
+
+<script>
+(() => {
+  // Screenshots: paste, drop or browse into the form's file input, with previews.
+  document.querySelectorAll("[data-shot-form]").forEach(form => {
+    const input = form.querySelector("[data-files]"), thumbs = form.querySelector("[data-thumbs]"), drop = form.querySelector("[data-drop]");
+    let files = [];
+    const sync = () => {
+      const dt = new DataTransfer(); files.forEach(f => dt.items.add(f)); input.files = dt.files;
+      thumbs.innerHTML = "";
+      files.forEach((f, i) => {
+        const fig = document.createElement("figure"), img = document.createElement("img"), b = document.createElement("button");
+        img.src = URL.createObjectURL(f); img.alt = "Screenshot " + (i + 1);
+        b.type = "button"; b.textContent = "Remove"; b.className = "linklike danger small";
+        b.addEventListener("click", () => { files.splice(i, 1); sync(); });
+        fig.append(img, b); thumbs.append(fig);
+      });
+    };
+    const add = list => { [...list].filter(f => f.type.startsWith("image/")).forEach(f => files.length < 6 && files.push(f)); sync(); };
+    form.querySelector("[data-browse]").addEventListener("click", () => input.click());
+    input.addEventListener("change", () => { add(input.files); });
+    form.addEventListener("paste", e => { const imgs = [...(e.clipboardData || {}).files || []]; if (imgs.length) { e.preventDefault(); add(imgs); } });
+    drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("on"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("on"));
+    drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("on"); add(e.dataTransfer.files); });
+  });
+  // New entry: action-item fields and the numbers for the chosen department.
+  const f = document.querySelector("[data-new-form]");
+  if (f) {
+    const dept = f.querySelector("[data-dept]"), metric = f.querySelector("[data-metric]"), act = f.querySelector("[data-action]");
+    const show = () => {
+      act.hidden = f.querySelector("[data-kind]:checked").value !== "action";
+      metric.querySelectorAll("option[data-for]").forEach(o => { o.hidden = o.dataset.for !== dept.value; o.disabled = o.hidden; });
+      if (metric.selectedOptions[0] && metric.selectedOptions[0].hidden) metric.value = "";
+    };
+    f.addEventListener("change", show); show();
+  }
+})();
+</script>
+{% endblock %}

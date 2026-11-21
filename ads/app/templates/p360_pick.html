@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Practice 360{% endblock %}
+{% block content %}
+<div class="p3-head">
+  <div><p class="p3-kicker">Practice 360</p><h1>Pick a practice</h1>
+    <p class="muted">Each practice's numbers, notes and action items{% if depts %}: {{ depts|map(attribute=1)|join(', ') }}{% endif %}.</p></div>
+  {% if is_admin %}<a class="btn btn-quiet" href="/p360/settings">Department owners</a>{% endif %}
+</div>
+{% if not depts %}<p class="panel em-note">No Practice 360 departments are switched on for you. Ask an admin (Team › What you can open › Practice 360 departments).</p>{% endif %}
+<label class="p3-find"><span class="vh">Find a practice</span><input type="search" placeholder="Find a practice" data-p3-find></label>
+<ul class="p3-grid" data-p3-list>
+  {% for r in rows %}
+  <li data-name="{{ r.p.name|lower }}"><a class="p3-card" href="/p360/{{ r.p.id }}"><span class="p3-av" aria-hidden="true">{{ r.p.name[:1] }}</span>
+    <span><strong>{{ r.p.name }}</strong><br><span class="small muted">{% if r.open %}{{ r.open }} open item{{ '' if r.open == 1 else 's' }}{% else %}Nothing open{% endif %}</span></span></a></li>
+  {% endfor %}
+</ul>
+<script>
+document.querySelector("[data-p3-find]").addEventListener("input", e => {
+  const q = e.target.value.toLowerCase().trim();
+  document.querySelectorAll("[data-p3-list] li").forEach(li => li.hidden = q && !li.dataset.name.includes(q));
+});
+</script>
+{% endblock %}

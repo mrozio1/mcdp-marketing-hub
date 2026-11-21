@@ -80,6 +80,10 @@
           <fieldset><legend>Also</legend>
             {% for k, label, hint in extras %}<label class="check"><input type="checkbox" name="{{ k }}" value="1" {% if u.acc[k] %}checked{% endif %}> {{ label }} <span class="muted small">{{ hint }}</span></label>{% endfor %}
           </fieldset>
+          <fieldset><legend>Practice 360 departments</legend>
+            {% for k, label in depts %}<label class="check"><input type="checkbox" name="{{ k }}" value="1" {% if u.acc[k] %}checked{% endif %}> {{ label }}{% if u.id in dept_owner_ids.get(k[2:], []) %} <span class="muted small">(owner)</span>{% endif %}</label>{% endfor %}
+            <p class="small muted">Which departments' numbers, notes and action items they see on Practice 360. Editors and admins can add to the ones they see; owners can add even as viewers. Owners are set on <a href="/p360/settings">Practice 360 › Owners</a>.</p>
+          </fieldset>
           <fieldset class="acc-practices"><legend>Practices</legend>
             <label class="check"><input type="checkbox" name="all_practices" value="1" {% if u.acc.all_practices %}checked{% endif %} data-all-practices> Every practice <span class="muted small">(and any added later)</span></label>
             <div class="acc-plist" data-plist>

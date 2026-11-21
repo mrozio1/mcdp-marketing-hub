@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import p360
 from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, wins, emailer, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
@@ -42,7 +43,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
 PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/", "/e/")
-ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs")
+ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs", "/p360/")   # /p360: checked per department in the route
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
@@ -75,7 +76,7 @@ def needed_role(method, path):
 # What each person can open is set per person on the Team page (users.access): a tab, reports and
 # exports, refreshing and syncing, and which practices.
 TAB_PATHS = [("dashboard", re.compile(r"^/(dashboard/.*)?$")), ("practices", re.compile(r"^/(practices|p/\d+|tracking|brand-images|brand-kits|intake)(/|$)")),
-             ("reviews", re.compile(r"^/reviews")), ("search", re.compile(r"^/search")),
+             ("p360", re.compile(r"^/p360(/|$)")), ("reviews", re.compile(r"^/reviews")), ("search", re.compile(r"^/search")),
              ("studio", re.compile(r"^/studio(/|$)")), ("map", re.compile(r"^/map(/|$)")),
              ("field", re.compile(r"^/field(/|\.xlsx|$)")), ("calendar", re.compile(r"^/calendar(/|$)"))]
 REPORT_PATHS = re.compile(r"^/(reports(/|$)|field/report|field\.xlsx|reviews\.xlsx|reviews/report|search\.xlsx"
@@ -239,6 +240,7 @@ def _startup():
     home_dash.init()
     intake.init()
     emailer.init()
+    p360.init()
     try:
         brand.sync_websites("Search page")
     except Exception:
@@ -567,6 +569,7 @@ def team(request: Request):
         t["color"] = users.cal_color(t)
         t["on_tabs"] = [label for k, label, _ in users.TABS if t["acc"][k]]
     return page(request, "team.html", people=people, tabs=users.TABS, extras=users.EXTRAS, all_practices=db.practices(),
+                depts=users.DEPT_FLAGS, dept_owner_ids=p360.owners(),
                 cal_colors=users.CAL_COLORS, open_access=request.query_params.get("open", ""), roles=users.ROLES, labels=users.ROLE_LABELS,
                 help=users.ROLE_HELP, link=link, link_days=users.LINK_DAYS, shared=me(request)["id"] == 0,
                 now=db.now(), season_rows=season_rows, season_cfg=season_cfg, season_now=season_now, season_until=season_until,
@@ -6598,3 +6601,165 @@ async def email_events(request: Request, k: str = ""):
         if t == "Microsoft.Communication.EmailDeliveryReportReceived":
             emailer.delivery_report(data)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ Practice 360 (p360.py)
+def _p360_practices(request):
+    u = me(request)
+    return [p for p in db.practices() if users.sees_practice(u, p["id"])]
+
+
+def _p360_practice(request, pid):
+    p = db.practice(pid)
+    return p if p and users.sees_practice(me(request), pid) else None
+
+
+async def _p360_shots(form):
+    out = []
+    for f in form.getlist("shot"):
+        if getattr(f, "filename", None) is None or not hasattr(f, "read"):
+            continue
+        data = await f.read(p360.MAX_SHOT + 1)
+        if data:
+            out.append((data, (f.content_type or "").split(";")[0], ""))
+    return out[:6]
+
+
+@app.get("/p360/settings", response_class=HTMLResponse)
+def p360_settings(request: Request):
+    u = me(request)
+    if not u or u["role"] != "admin":
+        flash(request, "Only admins set department owners.", "error")
+        return RedirectResponse("/p360", status_code=303)
+    people = [x for x in users.all_users() if x.get("active", 1)]
+    return page(request, "p360_settings.html", depts=p360.DEPTS, owners=p360.owners(), people=people)
+
+
+@app.post("/p360/settings")
+async def p360_settings_save(request: Request):
+    u = me(request)
+    if not u or u["role"] != "admin":
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    for k, label in p360.DEPTS:
+        p360.set_owners(k, [int(x) for x in form.getlist("owner_" + k) if str(x).isdigit()])
+    flash(request, "Saved the department owners.")
+    return RedirectResponse("/p360/settings", status_code=303)
+
+
+@app.get("/p360", response_class=HTMLResponse)
+def p360_home(request: Request):
+    u = me(request)
+    plist = _p360_practices(request)
+    keys = [k for k, _ in p360.depts_for(u)]
+    rows = [{"p": p, "open": p360.open_count(p["id"], keys)} for p in plist]
+    return page(request, "p360_pick.html", rows=rows, depts=p360.depts_for(u))
+
+
+@app.get("/p360/{pid}", response_class=HTMLResponse)
+def p360_practice(request: Request, pid: int):
+    p = _p360_practice(request, pid)
+    if not p:
+        return RedirectResponse("/p360", status_code=303)
+    u = me(request)
+    keys = [k for k, _ in p360.depts_for(u)]
+    return page(request, "p360_practice.html", p=p, lanes=p360.lanes(pid, u), open_n=p360.open_count(pid, keys),
+                plist=_p360_practices(request))
+
+
+@app.get("/p360/{pid}/ledger", response_class=HTMLResponse)
+def p360_ledger(request: Request, pid: int, kind: str = "", only: str = "", dept: str = "", e: int = 0, new: str = "", d: str = ""):
+    p = _p360_practice(request, pid)
+    if not p:
+        return RedirectResponse("/p360", status_code=303)
+    u = me(request)
+    depts = p360.depts_for(u)
+    keys = [k for k, _ in depts]
+    rows = p360.entries(pid, keys, kind, only, u["id"], dept if dept in keys else "")
+    sel = next((r for r in rows if r["id"] == e), None) or (rows[0] if rows and not new else None)
+    if e and not sel:
+        x = p360.entry(e)
+        sel = x if x and x["practice_id"] == pid and x["dept"] in keys else None
+    names = {x["id"]: x["name"] for x in users.all_users()}
+    detail = None
+    if sel:
+        detail = {"e": sel, "events": p360.events(sel["id"]), "pin": p360.first_pin(sel["id"]),
+                  "now": p360.pin_for(pid, (p360.first_pin(sel["id"]) or {}).get("metric", "")),
+                  "owner": names.get(sel.get("owner_id"), ""), "can_manage": p360.can_manage(u, sel),
+                  "can_follow": p360.can_write(u, sel["dept"]) or u["id"] == sel.get("owner_id")}
+    people = [x for x in users.all_users() if x.get("active", 1)]
+    writable = [(k, l) for k, l in depts if p360.can_write(u, k)]
+    return page(request, "p360_ledger.html", p=p, rows=rows, sel=sel, d=detail, kind=kind, only=only, dept=dept, depts=depts,
+                writable=writable, metrics=p360.METRICS, people=people, names=names, new=bool(new) or not rows,
+                open_n=p360.open_count(pid, keys), statuses=[(s_, p360.STATUS_LABEL[s_]) for s_ in p360.STATUSES],
+                owners=p360.owners(), plist=_p360_practices(request), pick_dept=d)
+
+
+@app.post("/p360/{pid}/ledger")
+async def p360_add(request: Request, pid: int):
+    p = _p360_practice(request, pid)
+    if not p:
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    u = me(request)
+    try:
+        owner = int(form.get("owner_id")) if str(form.get("owner_id") or "").isdigit() else None
+        eid = p360.add_entry(pid, form.get("dept") or "", form.get("kind") or "note", form.get("title"), form.get("text"), u,
+                             metric=form.get("metric") or "", owner_id=owner, due=form.get("due") or "",
+                             review=bool(form.get("review")), shots=await _p360_shots(form))
+    except (p360.P360Error, ValueError) as ex:
+        flash(request, str(ex), "error")
+        return RedirectResponse(f"/p360/{pid}/ledger?new=1", status_code=303)
+    flash(request, "Added to the ledger.")
+    return RedirectResponse(f"/p360/{pid}/ledger?e={eid}", status_code=303)
+
+
+def _p360_entry_for(request, eid):
+    e = p360.entry(eid)
+    u = me(request)
+    if not e or not users.sees_practice(u, e["practice_id"]) or not p360.sees_dept(u, e["dept"]):
+        return None
+    return e
+
+
+@app.post("/p360/entry/{eid}/follow")
+async def p360_follow(request: Request, eid: int):
+    e = _p360_entry_for(request, eid)
+    if not e:
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    try:
+        p360.follow_up(eid, form.get("text"), me(request), form.get("status") or "", bool(form.get("pin_now")),
+                       shots=await _p360_shots(form))
+        flash(request, "Follow-up added.")
+    except p360.P360Error as ex:
+        flash(request, str(ex), "error")
+    return RedirectResponse(f"/p360/{e['practice_id']}/ledger?e={eid}#history", status_code=303)
+
+
+@app.post("/p360/entry/{eid}/plan")
+async def p360_plan(request: Request, eid: int):
+    e = _p360_entry_for(request, eid)
+    if not e:
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    try:
+        owner = int(form.get("owner_id")) if str(form.get("owner_id") or "").isdigit() else 0
+        p360.set_plan(eid, me(request), owner_id=owner, due=(form.get("due") or "").strip())
+        flash(request, "Saved.")
+    except (p360.P360Error, ValueError) as ex:
+        flash(request, str(ex) if isinstance(ex, p360.P360Error) else "The due date isn't a date.", "error")
+    return RedirectResponse(f"/p360/{e['practice_id']}/ledger?e={eid}", status_code=303)
+
+
+@app.get("/p360/shot/{sid}")
+def p360_shot(request: Request, sid: int):
+    from fastapi.responses import FileResponse
+    with db.conn() as c:
+        s = c.execute("SELECT * FROM p360_shots WHERE id=?", (sid,)).fetchone()
+    if not s or not _p360_entry_for(request, s["entry_id"]):
+        return Response(status_code=404)
+    path = os.path.join(p360.shot_dir(), os.path.basename(s["file"]))
+    if not os.path.exists(path):
+        return Response(status_code=404)
+    return FileResponse(path, media_type=s["mime"], headers={"Cache-Control": "private, max-age=3600"})

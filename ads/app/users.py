@@ -89,7 +89,7 @@ SWITCHES = {"field": "Field visits", "social": "Social", "seasonal": "Seasonal d
 
 # ---- what each person can open ----
 # Tabs, in the order the hub falls back to when the dashboard is off (no tab at all: their Account page).
-TABS = [("dashboard", "Dashboard", "/"), ("practices", "Practices", "/practices"), ("reviews", "Reviews", "/reviews"),
+TABS = [("dashboard", "Dashboard", "/"), ("practices", "Practices", "/practices"), ("p360", "Practice 360", "/p360"), ("reviews", "Reviews", "/reviews"),
         ("search", "Search", "/search"), ("studio", "Studio", "/studio"), ("map", "Map", "/map"),
         ("field", "Field", "/field"), ("calendar", "Calendar", "/calendar")]
 EXTRAS = [("reports", "Reports & exports", "Master reports, practice and field reports, PDFs, emails and spreadsheet downloads"),
@@ -98,7 +98,10 @@ EXTRAS = [("reports", "Reports & exports", "Master reports, practice and field r
           ("team_calendar", "Everyone's calendar", "Other people's events and time off (off: only what they made or are invited to)"),
           ("see_admins", "Admins' activity", "Admins' field visits and calendar events (off: hidden from this person)"),
           ("email", "Send email", "Email campaigns in Studio, sent as the practices they can open (editors and admins)")]
-FLAGS = [k for k, *_ in TABS] + [k for k, *_ in EXTRAS] + ["all_practices"]
+# Practice 360: which departments' numbers, notes and action items they see (and, as editors, add to).
+DEPT_FLAGS = [("d_finance", "Finance"), ("d_revenue", "Revenue Management"), ("d_procurement", "Procurement"),
+              ("d_operations", "Operations"), ("d_marketing", "Marketing")]
+FLAGS = [k for k, *_ in TABS] + [k for k, *_ in EXTRAS] + [k for k, _ in DEPT_FLAGS] + ["all_practices"]
 CAL_COLORS = ["#2995D2", "#E0703A", "#3E9E6E", "#8E5BC9", "#D24C7A", "#C9A227", "#1E4A73", "#4AA3A2", "#A0522D", "#6B7A8F"]
 
 

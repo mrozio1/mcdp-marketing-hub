@@ -20,6 +20,7 @@
   <a class="brand" href="{{ home_url or '/' }}" aria-label="MCDP Hub home"><img src="/static/mcdp-seal-white.png?v={{ static_v }}" alt="Motor City Dental Partners" width="48" height="48"></a>
   <nav aria-label="Main">
     {% if acc.practices %}<a href="/practices" {% if here == '/practices' or here.startswith('/p/') %}aria-current="page"{% endif %}>Practices</a>{% endif %}
+    {% if acc.p360 %}<a href="/p360" {% if here.startswith('/p360') %}aria-current="page"{% endif %}>Practice 360</a>{% endif %}
     {% if acc.reviews %}<a href="/reviews" {% if here.startswith('/reviews') %}aria-current="page"{% endif %}>Reviews{% if inbox_open %} <span class="nav-count" aria-label="{{ inbox_open }} waiting for a reply">{{ inbox_open }}</span>{% endif %}</a>{% endif %}
     {% if acc.search %}<a href="/search" {% if here.startswith('/search') %}aria-current="page"{% endif %}>Search</a>{% endif %}
     {% if acc.studio %}<a href="/studio" {% if here.startswith('/studio') %}aria-current="page"{% endif %}>Studio{% if studio_waiting %} <span class="nav-count" aria-label="{{ studio_waiting }} waiting for your approval">{{ studio_waiting }}</span>{% endif %}</a>{% endif %}

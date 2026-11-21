@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · Practice 360{% endblock %}
+{% block content %}
+{% include "_p360_head.html" %}
+<p class="p3-banner small">Numbers from MCDP Reports arrive once the Power BI connection is set up (a weekly export until then). Notes and action items work now.</p>
+<div class="p3-lanes">
+  {% for l in lanes %}
+  <section class="p3-lane" aria-labelledby="lane-{{ l.key }}">
+    <header class="p3-lane-head">
+      <div><h2 id="lane-{{ l.key }}">{{ l.label }}</h2>
+        <span class="small muted">{% if l.owners %}Owner{{ 's' if l.owners|length > 1 }}: {{ l.owners|join(', ') }}{% else %}No owner yet{% if is_admin %} · <a href="/p360/settings">set one</a>{% endif %}{% endif %}</span></div>
+      {% if l.overdue %}<span class="p3-st p3-overdue">{{ l.overdue }} overdue</span>{% elif l.open %}<span class="p3-st p3-open">{{ l.open|length }} open</span>{% endif %}
+      {% if l.can_write %}<a class="btn btn-small" href="/p360/{{ p.id }}/ledger?new=1&amp;d={{ l.key }}">+ Add note</a>{% endif %}
+    </header>
+    <div class="p3-metrics">
+      {% for m in l.metrics %}<div class="p3-metric"><span class="small muted">{{ m.metric }}</span><strong>{{ m.shown or '—' }}</strong><span class="small muted">{{ m.period or 'not connected yet' }}</span></div>{% endfor %}
+    </div>
+    <div class="p3-cols">
+      <div>
+        <h3 class="p3-kicker">Action items</h3>
+        {% for e in l.open %}
+        <a class="p3-item" href="/p360/{{ p.id }}/ledger?e={{ e.id }}"><span>{{ e.title }}<br><span class="small muted">{% if e.due %}due {{ e.due }} · {% endif %}{{ e.follow_ups }} follow-up{{ '' if e.follow_ups == 1 else 's' }}</span></span><span class="p3-st p3-{{ e.state }}">{{ e.state_label }}</span></a>
+        {% else %}<p class="small muted">Nothing open.</p>{% endfor %}
+      </div>
+      <div>
+        <h3 class="p3-kicker">Latest note</h3>
+        {% if l.latest %}<a class="p3-item" href="/p360/{{ p.id }}/ledger?e={{ l.latest.id }}"><span><strong>{{ l.latest.title }}</strong><br><span class="small muted">{{ l.latest.created_name }} · {{ (l.latest.created_at|replace('T', ' '))[:16] }}</span></span></a>
+        {% else %}<p class="small muted">No notes yet.</p>{% endif %}
+      </div>
+    </div>
+  </section>
+  {% else %}
+  <p class="panel em-note">No Practice 360 departments are switched on for you. Ask an admin.</p>
+  {% endfor %}
+</div>
+{% endblock %}

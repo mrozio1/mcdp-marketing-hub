@@ -1,0 +1,11 @@
+<div class="p3-head">
+  <div><p class="p3-kicker"><a href="/p360">Practice 360</a></p><h1>{{ p.name }}</h1></div>
+  <label class="p3-switch"><span class="small muted">Practice</span>
+    <select onchange="location.href='/p360/' + this.value + (location.pathname.endsWith('/ledger') ? '/ledger' : '')">
+      {% for x in plist %}<option value="{{ x.id }}" {% if x.id == p.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}
+    </select></label>
+</div>
+<nav class="p3-tabs" aria-label="{{ p.name }}">
+  <a href="/p360/{{ p.id }}" {% if not request.url.path.endswith('/ledger') %}aria-current="page"{% endif %}>Overview</a>
+  <a href="/p360/{{ p.id }}/ledger" {% if request.url.path.endswith('/ledger') %}aria-current="page"{% endif %}>Ledger{% if open_n %} <span class="p3-count">{{ open_n }} open</span>{% endif %}</a>
+</nav>
