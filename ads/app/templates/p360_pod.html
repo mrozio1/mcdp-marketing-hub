@@ -7,6 +7,8 @@
   <label class="p3-switch"><span class="small muted">Pod</span>
     <select onchange="location.href='/p360/pod/' + this.value">{% for x in pods %}<option value="{{ x.id }}" {% if x.id == pd.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select></label>
 </div>
+{% set base = '/p360/pod/' ~ pd.id %}
+{% include "_p360_view.html" %}
 <p class="p3-banner small">Numbers here are the pod's totals from MCDP Reports, as its Pods filter shows them. Action items and notes are each practice's; open a practice to add one.</p>
 <div class="p3-lanes">
   {% for l in lanes %}
@@ -16,9 +18,7 @@
         <span class="small muted">{% if l.owners %}Owner{{ 's' if l.owners|length > 1 }}: {{ l.owners|join(', ') }}{% else %}No owner yet{% endif %}</span></div>
       {% if l.overdue %}<span class="p3-st p3-overdue">{{ l.overdue }} overdue</span>{% elif l.open %}<span class="p3-st p3-open">{{ l.open|length }} open</span>{% endif %}
     </header>
-    <div class="p3-metrics">
-      {% for m in l.metrics %}<div class="p3-metric"><span class="small muted">{{ m.metric }}</span><strong>{{ m.shown or '—' }}</strong><span class="small muted">{{ m.period or 'not connected yet' }}</span></div>{% endfor %}
-    </div>
+    {% set rows = v.tables[l.key] if v.last else [] %}{% include "_p360_table.html" %}
     <div class="p3-cols">
       <div>
         <h3 class="p3-kicker">Action items</h3>

@@ -6704,7 +6704,7 @@ async def p360_pods_save(request: Request):
 
 
 @app.get("/p360/pod/{pod_id}", response_class=HTMLResponse)
-def p360_pod(request: Request, pod_id: int):
+def p360_pod(request: Request, pod_id: int, tf: str = "t3m"):
     u = me(request)
     pd, lanes = p360.pod_lanes(pod_id, u, users.practice_ids(u))
     if not pd:
@@ -6713,12 +6713,38 @@ def p360_pod(request: Request, pod_id: int):
     members = [pnames[i] for i in pd["practice_ids"] if i in pnames]
     if not members:
         return RedirectResponse("/p360", status_code=303)
-    return page(request, "p360_pod.html", pd=pd, lanes=lanes, members=members,
+    return page(request, "p360_pod.html", pd=pd, lanes=lanes, members=members, v=p360.view(tf, pod_id=pod_id),
+                timeframes=p360.TIMEFRAMES,
                 pods=[x for x in p360.pods() if any(i in pnames for i in x["practice_ids"])])
 
 
+@app.post("/p360/{pid}/ai")
+def p360_ai(request: Request, pid: int):
+    p = _p360_practice(request, pid)
+    u = me(request)
+    if not p or u["role"] not in ("admin", "editor"):
+        return RedirectResponse("/p360", status_code=303)
+    try:
+        p360.ai_summary(pid, u["name"])
+        flash(request, "The AI summary is up to date.")
+    except (p360.P360Error, ai.AIError) as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/p360/{pid}#ai", status_code=303)
+
+
+@app.post("/p360/{pid}/ai/feedback")
+async def p360_ai_feedback(request: Request, pid: int):
+    p = _p360_practice(request, pid)
+    if not p:
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    p360.ai_feedback(pid, form.get("point"), form.get("reason"), me(request)["name"])
+    flash(request, "Thanks. That goes to the department's owner, and the next summary will be written fresh.")
+    return RedirectResponse(f"/p360/{pid}#ai", status_code=303)
+
+
 @app.get("/p360/{pid}", response_class=HTMLResponse)
-def p360_practice(request: Request, pid: int):
+def p360_practice(request: Request, pid: int, tf: str = "t3m"):
     p = _p360_practice(request, pid)
     if not p:
         return RedirectResponse("/p360", status_code=303)
@@ -6727,7 +6753,8 @@ def p360_practice(request: Request, pid: int):
     if os.environ.get("ADS_DISABLE_SCHEDULER") != "1":
         p360.hub_refresh_if_stale()
     return page(request, "p360_practice.html", p=p, lanes=p360.lanes(pid, u), open_n=p360.open_count(pid, keys),
-                plist=_p360_practices(request), p_pods=p360.pods_of_practice(pid))
+                plist=_p360_practices(request), p_pods=p360.pods_of_practice(pid), v=p360.view(tf, pid=pid),
+                timeframes=p360.TIMEFRAMES, aisum=p360.ai_saved(pid), ai_on=ai.available())
 
 
 @app.get("/p360/{pid}/ledger", response_class=HTMLResponse)

@@ -1,0 +1,15 @@
+{# One department's numbers for the time frame. Needs v and rows. #}
+{% if rows %}
+<div class="p3-tablebox">
+  <table class="p3-table">
+    <thead><tr><th scope="col">Number</th>{% for c in v.cols %}<th scope="col">{{ c }}</th>{% endfor %}<th scope="col" class="p3-tot">{{ v.total_label }}</th>{% if v.prior_label %}<th scope="col">{{ v.prior_label }}</th>{% endif %}<th scope="col">vs last year</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr><th scope="row">{{ r.metric }}</th>{% for x in r.months %}<td>{{ x }}</td>{% endfor %}<td class="p3-tot">{{ r.total }}</td>
+        {% if v.prior_label %}<td class="p3-{{ r.prior.tone if r.prior else '' }}">{{ r.prior.text if r.prior else '—' }}</td>{% endif %}
+        <td class="p3-{{ r.ly.tone if r.ly else '' }}">{{ r.ly.text if r.ly else '—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}<p class="small muted">No numbers for this department yet.</p>{% endif %}

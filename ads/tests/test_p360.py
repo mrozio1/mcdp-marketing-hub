@@ -185,3 +185,28 @@ def test_home_dashboard_uses_mcdp_reports(env):
     page = env["admin"].get("/").text
     assert "MCDP Reports · Scorecard" in page and "Ad spend per start" not in page or "MCDP Reports" in page
     assert ">24<" in page.replace(" ", "")                                            # starts in the funnel (Fort Gratiot + Marysville were 15 + 9)
+
+
+def test_time_frames_and_ai_summary(env):
+    p, db, ed = env["p360"], env["db"], env["ed"]
+    wesley = next(x for x in db.practices(include_hidden=True) if x["name"] == "Wesley Orthodontics")["id"]
+    v = p.view("t3m", pid=wesley)
+    assert v["last"] == "2026-10" and v["cols"] == ["Aug", "Sep", "Oct"]
+    starts = next(t for t in v["tiles"] if t["metric"] == "Starts")
+    assert starts["value"] == "15"
+    page = ed.get(f"/p360/{wesley}?tf=month").text
+    assert "Trailing 3 months" in page and "vs month before" in page
+    # the AI may only cite facts and notes it was given
+    from app import ai
+    old_avail, old_chat = ai.available, ai.json_chat
+    ai.available = lambda: True
+    ai.json_chat = lambda *a, **k: {"summary": "Starts held.", "points": [
+        {"kind": "growth", "title": "Starts are steady.", "causes": ["Same-day starts"], "evidence": ["F1"], "confidence": "strong"},
+        {"kind": "spend", "title": "Made up.", "causes": [], "evidence": ["F999"], "confidence": "strong"}]}
+    try:
+        r = ed.post(f"/p360/{wesley}/ai", follow_redirects=True)
+    finally:
+        ai.available, ai.json_chat = old_avail, old_chat
+    s = p.ai_saved(wesley)
+    assert [x["title"] for x in s["points"]] == ["Starts are steady."]                # the made-up point is dropped
+    assert "Starts are steady." in r.text

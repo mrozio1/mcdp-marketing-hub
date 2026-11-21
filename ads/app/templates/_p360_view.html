@@ -1,0 +1,24 @@
+{# Time-frame switch and number tiles (practice and pod pages). Needs v, timeframes, base (the page's url). #}
+{% if v.last %}
+<div class="p3-tfbar">
+  <div role="group" aria-label="Time frame" class="p3-tf">
+    {% for k, label in timeframes %}<a href="{{ base }}?tf={{ k }}" {% if v.tf == k %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
+  </div>
+  <span class="small muted">{{ v.label }}</span>
+</div>
+<section class="p3-tiles" aria-label="Numbers">
+  {% for t in v.tiles %}
+  <div class="p3-tile">
+    <span class="small muted">{{ t.metric }}</span>
+    <strong>{{ t.value }}</strong>
+    {% if t.prior %}<span class="p3-d p3-{{ t.prior.tone }}">{{ t.prior.text }} {{ v.prior_label }}</span>{% endif %}
+    {% if t.ly %}<span class="p3-d p3-{{ t.ly.tone }} p3-soft">{{ t.ly.text }} vs last year</span>{% endif %}
+    <div class="p3-bars" role="img" aria-label="{% for b in t.bars %}{{ b.m }} {{ b.v }}{{ ', ' if not loop.last }}{% endfor %}">
+      {% for b in t.bars %}<span class="p3-bar"><i style="height: {{ b.h }}px" class="{{ 'now' if b.last }} {{ 'worse' if b.last and b.tone == 'bad' }}"></i><small>{{ b.m }} {{ b.v }}</small></span>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% else %}
+<p class="p3-banner small">No numbers yet. They arrive with the weekly MCDP Reports import (Finance, Revenue Management, Procurement, Operations) and from the Hub itself (Marketing).</p>
+{% endif %}

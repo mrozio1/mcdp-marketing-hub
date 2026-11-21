@@ -2,29 +2,62 @@
 {% block title %}{{ p.name }} · Practice 360{% endblock %}
 {% block content %}
 {% include "_p360_head.html" %}
+{% set base = '/p360/' ~ p.id %}
+{% include "_p360_view.html" %}
+
+<section class="p3-ai" id="ai" aria-labelledby="ai-h">
+  <div class="p3-ai-head">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6fb0e0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"></path><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"></path></svg>
+    <h2 id="ai-h">What's changing, and likely why</h2>
+    <span class="small">{% if aisum %}AI summary · written {{ aisum.at[:10] }} {{ aisum.at[11:16] }}{% if aisum.by %} for {{ aisum.by }}{% endif %} from {{ aisum.facts }} numbers and {{ aisum.notes }} team notes · check before acting{% else %}AI summary of the last 3 months and the team's notes{% endif %}</span>
+    <span class="p3-grow"></span>
+    {% if can_edit and ai_on %}<form method="post" action="/p360/{{ p.id }}/ai" class="p3-inline" data-busy="Writing…"><button class="btn btn-small p3-ai-btn" type="submit">{{ 'Write it again' if aisum else 'Write the summary' }}</button></form>{% endif %}
+  </div>
+  {% if aisum %}
+    {% if aisum.summary %}<p class="p3-ai-lead">{{ aisum.summary }}</p>{% endif %}
+    <div class="p3-ai-points">
+      {% for x in aisum.points %}
+      <article class="p3-ai-point">
+        <div class="p3-ai-tags"><span class="p3-ai-kind p3-ai-{{ x.kind }}">{{ x.kind_label }}</span><span class="small">{{ x.confidence }}</span></div>
+        <h3>{{ x.title }}</h3>
+        {% if x.causes %}<span class="p3-ai-sub">{{ 'What drove it' if x.kind == 'growth' else 'Likely causes' }}</span>
+        <ol>{% for c in x.causes %}<li>{{ c }}</li>{% endfor %}</ol>{% endif %}
+        <div class="p3-ai-ev"><span class="small">Based on</span>{% for e in x.evidence %}{% if e.note %}<a href="/p360/{{ p.id }}/ledger?e={{ e.note }}">{{ e.label }}</a>{% else %}<span>{{ e.label }}</span>{% endif %}{% endfor %}</div>
+        <details class="p3-ai-no"><summary>Not right</summary>
+          <form method="post" action="/p360/{{ p.id }}/ai/feedback"><input type="hidden" name="point" value="{{ x.title }}">
+            <label class="small">What's wrong with it?<textarea name="reason" rows="2" required></textarea></label>
+            <button class="btn btn-small" type="submit">Send</button></form>
+        </details>
+      </article>
+      {% else %}<p class="small">Nothing stood out that the numbers and notes support.</p>{% endfor %}
+    </div>
+  {% elif not ai_on %}
+    <p class="small">AI isn't switched on for the Hub (run sh enable-ads.sh with an AI key).</p>
+  {% else %}
+    <p class="small">No summary yet.{% if can_edit %} Write one: it reads only this page's numbers and the team's notes (counts and dollars, never patient details), and each point lists what it used.{% endif %}</p>
+  {% endif %}
+</section>
+
 <p class="p3-banner small">Finance, Revenue Management, Procurement and Operations numbers come from MCDP Reports (weekly). Marketing comes from the Hub itself (ads, LeadSigma, Google reviews, field visits) and refreshes every few hours.{% if can_edit %} <form method="post" action="/p360/hub-refresh" class="p3-inline"><button class="linklike" type="submit">Refresh marketing now</button></form>{% endif %}</p>
+
 <div class="p3-lanes">
   {% for l in lanes %}
-  <section class="p3-lane" aria-labelledby="lane-{{ l.key }}">
+  <section class="p3-lane" id="{{ l.key }}" aria-labelledby="lane-{{ l.key }}">
     <header class="p3-lane-head">
       <div><h2 id="lane-{{ l.key }}">{{ l.label }}</h2>
-        <span class="small muted">{% if l.owners %}Owner{{ 's' if l.owners|length > 1 }}: {{ l.owners|join(', ') }}{% else %}No owner yet{% if is_admin %} · <a href="/p360/settings">set one</a>{% endif %}{% endif %}</span></div>
+        <span class="small muted">{% if l.owners %}Owner{{ 's' if l.owners|length > 1 }}: {{ l.owners|join(', ') }}{% else %}No owner yet{% if is_admin %} · <a href="/p360/settings">set one</a>{% endif %}{% endif %}{% if l.latest %} · last note {{ l.latest.created_at[5:10]|replace('-', '/') }}{% endif %}</span></div>
       {% if l.overdue %}<span class="p3-st p3-overdue">{{ l.overdue }} overdue</span>{% elif l.open %}<span class="p3-st p3-open">{{ l.open|length }} open</span>{% endif %}
       {% if l.can_write %}<a class="btn btn-small" href="/p360/{{ p.id }}/ledger?new=1&amp;d={{ l.key }}">+ Add note</a>{% endif %}
     </header>
-    <div class="p3-metrics">
-      {% for m in l.metrics %}<div class="p3-metric"><span class="small muted">{{ m.metric }}</span><strong>{{ m.shown or '—' }}</strong><span class="small muted">{{ m.period or 'not connected yet' }}</span></div>{% endfor %}
-    </div>
     <div class="p3-cols">
+      <div>{% set rows = v.tables[l.key] if v.last else [] %}{% include "_p360_table.html" %}</div>
       <div>
-        <h3 class="p3-kicker">Action items</h3>
+        <h3 class="p3-kicker">Efforts</h3>
         {% for e in l.open %}
-        <a class="p3-item" href="/p360/{{ p.id }}/ledger?e={{ e.id }}"><span>{{ e.title }}<br><span class="small muted">{% if e.due %}due {{ e.due }} · {% endif %}{{ e.follow_ups }} follow-up{{ '' if e.follow_ups == 1 else 's' }}</span></span><span class="p3-st p3-{{ e.state }}">{{ e.state_label }}</span></a>
+        <a class="p3-item" href="/p360/{{ p.id }}/ledger?e={{ e.id }}"><span>{{ e.title }}<br><span class="small muted">{% if e.pin %}Aims to move {{ e.pin.metric }} · {% endif %}{% if e.due %}due {{ e.due }} · {% endif %}{{ e.follow_ups }} follow-up{{ '' if e.follow_ups == 1 else 's' }}</span></span><span class="p3-st p3-{{ e.state }}">{{ e.state_label }}</span></a>
         {% else %}<p class="small muted">Nothing open.</p>{% endfor %}
-      </div>
-      <div>
         <h3 class="p3-kicker">Latest note</h3>
-        {% if l.latest %}<a class="p3-item" href="/p360/{{ p.id }}/ledger?e={{ l.latest.id }}"><span><strong>{{ l.latest.title }}</strong><br><span class="small muted">{{ l.latest.created_name }} · {{ (l.latest.created_at|replace('T', ' '))[:16] }}</span></span></a>
+        {% if l.latest %}<a class="p3-note" href="/p360/{{ p.id }}/ledger?e={{ l.latest.id }}">{% if l.latest.shot %}<img src="/p360/shot/{{ l.latest.shot }}" alt="" loading="lazy">{% endif %}<span><strong>{{ l.latest.title }}</strong>{% if l.latest.text %}<br><span>{{ l.latest.text|truncate(140) }}</span>{% endif %}<br><span class="small muted">{{ l.latest.created_name }} · {{ (l.latest.created_at|replace('T', ' '))[:16] }}{% if l.latest.shot %} · screenshot{% endif %}{% if l.latest.follow_ups %} · {{ l.latest.follow_ups }} follow-up{{ '' if l.latest.follow_ups == 1 else 's' }}{% endif %}</span></span></a>
         {% else %}<p class="small muted">No notes yet.</p>{% endif %}
       </div>
     </div>
