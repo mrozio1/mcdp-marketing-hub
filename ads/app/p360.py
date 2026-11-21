@@ -131,9 +131,19 @@ def _words(s):
     return [w for w in re.findall(r"[a-z]+", (s or "").lower()) if w not in _SKIP and len(w) > 2]
 
 
+# Matches Mark confirmed (2026-11-21), used before guessing from names.
+KNOWN = {"Canton - 104": "Havens Orthodontics", "Romeo - 109": "Havens Orthodontics",
+         "Brighton (Peds Dent) - 301": "Pediatric Dentistry of Brighton"}
+
+
 def suggest_practice(loc_name, plist):
     """The one practice whose distinctive name words appear in the location name (words in brackets first), or None."""
     import re
+    want = KNOWN.get(loc_name)
+    if want:
+        hit = next((p["id"] for p in plist if p["name"].strip().lower() == want.lower()), None)
+        if hit:
+            return hit
     inner = " ".join(re.findall(r"\(([^)]*)\)", loc_name))
     for text in (inner, re.sub(r"\([^)]*\)", " ", loc_name), loc_name):
         ws = set(_words(text))
@@ -166,6 +176,11 @@ def pod(pod_id):
 def set_location_practice(loc_id, practice_id):
     with db.conn() as c:
         c.execute("UPDATE p360_locations SET practice_id=?, confirmed=1 WHERE id=?", (practice_id or None, loc_id))
+
+
+def drapp_practice_ids():
+    """Practices that have at least one MCDP Reports location (matched or guessed)."""
+    return {i for p in pods() for i in p["practice_ids"]}
 
 
 def pods_of_practice(pid):
@@ -493,3 +508,156 @@ def lanes(pid, u):
 
 def open_count(pid, depts):
     return sum(1 for r in entries(pid, depts) if r["state"] not in ("done", "note"))
+
+
+# ------------------------------------------------------------------ import from MCDP Reports (the weekly run)
+IMPORT_MINUTES = 30
+MON = {m: i for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
+
+
+def import_key():
+    """A one-use key for the next import, good for 30 minutes."""
+    k = secrets.token_urlsafe(24)
+    db.set_setting("p360_import_key", json.dumps({"k": k, "until": (datetime.now() + timedelta(minutes=IMPORT_MINUTES)).isoformat()}))
+    return k
+
+
+def take_key(k):
+    try:
+        d = json.loads(db.get_setting("p360_import_key") or "{}")
+    except ValueError:
+        return False
+    ok = bool(k) and secrets.compare_digest(str(k), d.get("k", "")) and d.get("until", "") > datetime.now().isoformat()
+    if ok:
+        db.set_setting("p360_import_key", "{}")
+    return ok
+
+
+def _num(v):
+    try:
+        return float(str(v).replace("$", "").replace(",", "").replace("%", "").strip())
+    except ValueError:
+        return None
+
+
+def _money(v):
+    if v is None:
+        return ""
+    a = abs(v)
+    s = f"${a / 1e6:.2f}M" if a >= 1e6 else (f"${a / 1e3:.1f}K" if a >= 1e3 else f"${a:,.0f}")
+    return ("-" if v < 0 else "") + s
+
+
+def _pct(v, places=1, sign=False):
+    if v is None:
+        return ""
+    return (f"{v:+.{places}f}%" if sign else f"{v:.{places}f}%")
+
+
+def _period(date_range):
+    """'10/01/2026 - 10/31/2026' -> '2026-10' (a whole month), else ''."""
+    import calendar
+    import re
+    m = re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", date_range or "")
+    if len(m) == 2 and m[0][1] == "01" and m[0][0] == m[1][0] and m[0][2] == m[1][2]:
+        y, mo = int(m[0][2]), int(m[0][0])
+        if int(m[1][1]) == calendar.monthrange(y, mo)[1]:
+            return f"{y}-{mo:02d}"
+    return ""
+
+
+def import_reports(payload, by="weekly run"):
+    """payload from the collector: {date_range, locations: [{pod, name, summary: {...}, months: {production|starts|exams: [[Mon, Year, value]]}}]}.
+    Adds new locations to their pods, then works out each practice's and pod's numbers from its locations."""
+    locs = payload.get("locations") or []
+    if not locs:
+        raise P360Error("Nothing came in.")
+    period = _period(payload.get("date_range"))
+    with db.conn() as c:
+        for i, l in enumerate(locs):
+            c.execute("INSERT OR IGNORE INTO p360_pods(name, sort) VALUES (?, ?)", (l["pod"], 100 + i))
+            pid = c.execute("SELECT id FROM p360_pods WHERE name=?", (l["pod"],)).fetchone()[0]
+            c.execute("INSERT OR IGNORE INTO p360_locations(pod_id, name) VALUES (?,?)", (pid, l["name"]))
+    # each location's numbers: monthly series plus the month the summary tiles cover
+    data = {}
+    for l in locs:
+        d = data.setdefault(l["name"], {})
+        for key, rows in (l.get("months") or {}).items():
+            for mon, year, val in rows:
+                v = _num(val)
+                if v is None or mon not in MON:
+                    continue
+                d.setdefault(f"{int(year)}-{MON[mon]:02d}", {})[key] = v
+        s_ = l.get("summary") or {}
+        if period:
+            row = d.setdefault(period, {})
+            for k in ("labs", "wages", "supplies", "rpp", "ytd", "net", "starts", "exams"):
+                v = _num(s_.get(k))
+                if v is not None:
+                    row[{"net": "production"}.get(k, k)] = v
+    groups_p, groups_pod = {}, {}
+    for p in pods():
+        for l in p["locations"]:
+            if l["name"] in data:
+                groups_pod.setdefault(p["id"], []).append(l["name"])
+                if l["suggested"]:
+                    groups_p.setdefault(l["suggested"], []).append(l["name"])
+    rows_p, rows_pod = [], []
+    for target, groups in ((rows_p, groups_p), (rows_pod, groups_pod)):
+        for gid, names in groups.items():
+            for per, ms in _combine([data[n] for n in names]).items():
+                for metric, (val, shown) in ms.items():
+                    target.append({"id": gid, "metric": metric, "period": per, "value": val, "shown": shown})
+    with db.conn() as c:
+        rid = c.execute("INSERT INTO p360_refreshes(source, at, by, rows) VALUES (?,?,?,?)",
+                        ("MCDP Reports", now(), by, len(rows_p) + len(rows_pod))).lastrowid
+        for r in rows_p:
+            c.execute("INSERT OR REPLACE INTO p360_metrics(practice_id, metric, period, value, shown, source, refresh_id) "
+                      "VALUES (?,?,?,?,?,?,?)", (r["id"], r["metric"], r["period"], r["value"], r["shown"], "MCDP Reports", rid))
+        for r in rows_pod:
+            c.execute("INSERT OR REPLACE INTO p360_pod_metrics(pod_id, metric, period, value, shown, source, refresh_id) "
+                      "VALUES (?,?,?,?,?,?,?)", (r["id"], r["metric"], r["period"], r["value"], r["shown"], "MCDP Reports", rid))
+    return {"locations": len(locs), "practices": len(groups_p), "pods": len(groups_pod), "period": period, "rows": len(rows_p) + len(rows_pod)}
+
+
+def _combine(series):
+    """Add up locations: counts and dollars summed, rates worked out from the totals (never averaged)."""
+    periods = sorted({p for s in series for p in s})
+    out = {}
+    tot = {p: {} for p in periods}
+    for p in periods:
+        for k in ("production", "starts", "exams", "rpp", "ytd"):
+            vals = [s[p][k] for s in series if p in s and k in s[p]]
+            if vals:
+                tot[p][k] = sum(vals)
+        for k in ("wages", "supplies", "labs"):
+            pairs = [(s[p][k], s[p].get("production") or 0) for s in series if p in s and k in s[p]]
+            w = sum(b for _, b in pairs)
+            if pairs:
+                tot[p][k] = sum(a * b for a, b in pairs) / w if w else sum(a for a, _ in pairs) / len(pairs)
+    for p in periods:
+        t, m = tot[p], {}
+        y, mo = p.split("-")
+        ly = tot.get(f"{int(y) - 1}-{mo}", {})
+        if "production" in t:
+            m["Net production"] = (t["production"], _money(t["production"]))
+            if ly.get("production"):
+                g = (t["production"] / ly["production"] - 1) * 100
+                m["Production growth"] = (g, _pct(g, 1, True))
+        for k, name in (("starts", "Starts"), ("exams", "Exams"), ("rpp", "RPP count")):
+            if k in t:
+                m[name] = (t[k], f"{t[k]:,.0f}")
+        if t.get("exams") and "starts" in t:
+            v = t["starts"] / t["exams"] * 100
+            m["Success rate"] = (v, _pct(v))
+        if t.get("starts") and "rpp" in t:
+            v = t["rpp"] / t["starts"] * 100
+            m["RPP rate"] = (v, _pct(v))
+        for k, name in (("wages", "Wages %"), ("supplies", "Supplies %"), ("labs", "Labs %")):
+            if k in t:
+                m[name] = (t[k], _pct(t[k], 0))
+        if "ytd" in t:
+            m["YTD provider discretionary"] = (t["ytd"], _money(t["ytd"]))
+        if m:
+            out[p] = m
+    return out

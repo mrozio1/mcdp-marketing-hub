@@ -42,7 +42,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # ---------- who may do what ----------
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
-PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/", "/e/")
+PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/", "/e/", "/p360-in/")
 ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs", "/p360/")   # /p360: checked per department in the route
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
@@ -6605,13 +6605,15 @@ async def email_events(request: Request, k: str = ""):
 
 # ------------------------------------------------------------------ Practice 360 (p360.py)
 def _p360_practices(request):
+    """Practices in MCDP Reports (matched to a location) that this person can open."""
     u = me(request)
-    return [p for p in db.practices() if users.sees_practice(u, p["id"])]
+    keep = p360.drapp_practice_ids()
+    return [p for p in db.practices() if p["id"] in keep and users.sees_practice(u, p["id"])]
 
 
 def _p360_practice(request, pid):
     p = db.practice(pid)
-    return p if p and users.sees_practice(me(request), pid) else None
+    return p if p and pid in p360.drapp_practice_ids() and users.sees_practice(me(request), pid) else None
 
 
 async def _p360_shots(form):
@@ -6810,3 +6812,46 @@ def p360_shot(request: Request, sid: int):
     if not os.path.exists(path):
         return Response(status_code=404)
     return FileResponse(path, media_type=s["mime"], headers={"Cache-Control": "private, max-age=3600"})
+
+
+
+# ---- MCDP Reports import: the weekly run gets a one-use key here (signed in as an admin), then the collector
+# running on the MCDP Reports page sends the numbers to /p360-in/import with it.
+DRAPP_ORIGIN = "https://drapp.mcdentalpartners.com"
+
+
+@app.post("/p360/import-key")
+def p360_import_key(request: Request):
+    u = me(request)
+    if not u or u["role"] != "admin":
+        return JSONResponse({"error": "Admins only."}, status_code=403)
+    return {"key": p360.import_key(), "minutes": p360.IMPORT_MINUTES}
+
+
+@app.get("/p360-in/collect.js")
+def p360_collect_js():
+    path = os.path.join(os.path.dirname(__file__), "static", "p360-collect.js")
+    with open(path, encoding="utf-8") as f:
+        return Response(f.read(), media_type="application/javascript",
+                        headers={"Access-Control-Allow-Origin": DRAPP_ORIGIN, "Cache-Control": "no-store"})
+
+
+@app.options("/p360-in/import")
+def p360_import_options():
+    return Response(status_code=204, headers={"Access-Control-Allow-Origin": DRAPP_ORIGIN, "Access-Control-Allow-Methods": "POST",
+                                              "Access-Control-Allow-Headers": "Content-Type"})
+
+
+@app.post("/p360-in/import")
+async def p360_import(request: Request, k: str = ""):
+    h = {"Access-Control-Allow-Origin": DRAPP_ORIGIN}
+    if not p360.take_key(k):
+        return JSONResponse({"error": "The import key is missing, used or expired."}, status_code=403, headers=h)
+    body = await request.body()
+    if len(body) > 8 * 1024 * 1024:
+        return JSONResponse({"error": "Too big."}, status_code=413, headers=h)
+    try:
+        res = p360.import_reports(json.loads(body))
+    except (ValueError, KeyError, TypeError, p360.P360Error) as e:
+        return JSONResponse({"error": f"Couldn't read it: {e}"}, status_code=422, headers=h)
+    return JSONResponse({"ok": True, **res}, headers=h)

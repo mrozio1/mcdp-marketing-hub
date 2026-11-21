@@ -118,3 +118,39 @@ def test_pods_from_mcdp_reports(env):
     page = ed.get(f"/p360/pod/{pods['Dr. Wesley']['id']}").text
     assert "Wesley follow-up calls" in page and ">40<" in page.replace(" ", "")
     assert ed.get("/p360/pods", follow_redirects=False).status_code == 303               # admins only
+
+
+def test_import_from_mcdp_reports(env):
+    p, db, ad = env["p360"], env["db"], env["admin"]
+    from fastapi.testclient import TestClient
+    anon = TestClient(env["main"].app)
+    key = ad.post("/p360/import-key").json()["key"]
+    assert env["ed"].post("/p360/import-key").status_code == 403                       # admins only
+    wesley = next(x for x in db.practices(include_hidden=True) if x["name"] == "Wesley Orthodontics")["id"]
+    locs = [{"pod": "Dr. Wesley", "name": n, "summary": {"labs": "5%", "wages": w, "supplies": "7%", "exams": e, "starts": s,
+                                                          "net": net, "rpp": "3", "ytd": "$100"},
+             "months": {"production": [["Oct", "2025", ly], ["Oct", "2026", net]], "starts": [["Oct", "2026", s]],
+                        "exams": [["Oct", "2026", e]]}}
+            for n, w, e, s, net, ly in (("Fort Gratiot (Wesley) - 126", "30%", "20", "15", "$60000", "$54000"),
+                                        ("Marysville (Wesley) - 125", "40%", "10", "9", "$40000", "$36000"))]
+    body = {"date_range": "10/01/2026 - 10/31/2026", "locations": locs}
+    assert anon.post("/p360-in/import?k=wrong", content=json_dumps(body)).status_code == 403
+    r = anon.post(f"/p360-in/import?k={key}", content=json_dumps(body))
+    assert r.json()["ok"] and r.json()["period"] == "2026-10" and r.headers["access-control-allow-origin"] == "https://drapp.mcdentalpartners.com"
+    assert anon.post(f"/p360-in/import?k={key}", content=json_dumps(body)).status_code == 403     # one use
+    pin = lambda m: p.pin_for(wesley, m)
+    assert pin("Net production")["shown"] == "$100.0K" and pin("Starts")["shown"] == "24"
+    assert pin("Success rate")["shown"] == "80.0%"                                    # 24 starts / 30 exams, not an average
+    assert pin("Wages %")["shown"] == "34%"                                           # weighted by production: (30*60 + 40*40) / 100
+    assert pin("Production growth")["shown"] == "+11.1%"                             # 100K vs 90K last October
+    assert pin("RPP rate")["shown"] == "25.0%"                                        # 6 / 24
+    pod = next(x for x in p.pods() if x["name"] == "Dr. Wesley")
+    assert p.pod_pin(pod["id"], "Net production")["shown"] == "$100.0K"
+    # only practices in MCDP Reports are listed
+    db.add_practice("MCDP Ads", 0, 0, "")
+    assert "MCDP Ads" not in ad.get("/p360").text
+
+
+def json_dumps(x):
+    import json
+    return json.dumps(x)
