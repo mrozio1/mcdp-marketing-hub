@@ -588,6 +588,8 @@ def import_reports(payload, by="weekly run"):
             c.execute("INSERT OR IGNORE INTO p360_locations(pod_id, name) VALUES (?,?)", (pid, l["name"]))
     # each location's numbers: monthly series plus the month the summary tiles cover
     data = {}
+    # months after the one the summary covers are still in progress (drapp's charts include this month so far): left out
+    last_full = period or (datetime.now().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     for l in locs:
         d = data.setdefault(l["name"], {})
         for key, rows in (l.get("months") or {}).items():
@@ -595,7 +597,9 @@ def import_reports(payload, by="weekly run"):
                 v = _num(val)
                 if v is None or mon not in MON:
                     continue
-                d.setdefault(f"{int(year)}-{MON[mon]:02d}", {})[key] = v
+                per = f"{int(year)}-{MON[mon]:02d}"
+                if per <= last_full:
+                    d.setdefault(per, {})[key] = v
         s_ = l.get("summary") or {}
         if period:
             row = d.setdefault(period, {})

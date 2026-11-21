@@ -129,7 +129,7 @@ def test_import_from_mcdp_reports(env):
     wesley = next(x for x in db.practices(include_hidden=True) if x["name"] == "Wesley Orthodontics")["id"]
     locs = [{"pod": "Dr. Wesley", "name": n, "summary": {"labs": "5%", "wages": w, "supplies": "7%", "exams": e, "starts": s,
                                                           "net": net, "rpp": "3", "ytd": "$100"},
-             "months": {"production": [["Oct", "2025", ly], ["Oct", "2026", net]], "starts": [["Oct", "2026", s]],
+             "months": {"production": [["Oct", "2025", ly], ["Oct", "2026", net], ["Nov", "2026", "$5"]], "starts": [["Oct", "2026", s]],
                         "exams": [["Oct", "2026", e]]}}
             for n, w, e, s, net, ly in (("Fort Gratiot (Wesley) - 126", "30%", "20", "15", "$60000", "$54000"),
                                         ("Marysville (Wesley) - 125", "40%", "10", "9", "$40000", "$36000"))]
@@ -139,7 +139,7 @@ def test_import_from_mcdp_reports(env):
     assert r.json()["ok"] and r.json()["period"] == "2026-10" and r.headers["access-control-allow-origin"] == "https://drapp.mcdentalpartners.com"
     assert anon.post(f"/p360-in/import?k={key}", content=json_dumps(body)).status_code == 403     # one use
     pin = lambda m: p.pin_for(wesley, m)
-    assert pin("Net production")["shown"] == "$100.0K" and pin("Starts")["shown"] == "24"
+    assert pin("Net production")["shown"] == "$100.0K" and pin("Starts")["shown"] == "24"     # November (in progress) left out
     assert pin("Success rate")["shown"] == "80.0%"                                    # 24 starts / 30 exams, not an average
     assert pin("Wages %")["shown"] == "34%"                                           # weighted by production: (30*60 + 40*40) / 100
     assert pin("Production growth")["shown"] == "+11.1%"                             # 100K vs 90K last October
