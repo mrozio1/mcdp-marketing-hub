@@ -132,7 +132,8 @@ def _words(s):
 
 
 # Matches Mark confirmed (2026-11-21), used before guessing from names.
-KNOWN = {"Canton - 104": "Havens Orthodontics", "Romeo - 109": "Havens Orthodontics",
+KNOWN = {"Canton - 104": "Havens Orthodontics", "Romeo - 109": "Havens Orthodontics", "Clarkston - 106": "Havens Orthodontics",
+         "Imlay City - 102": "Havens Orthodontics", "Washington - 100": "Havens Orthodontics",
          "Brighton (Peds Dent) - 301": "Pediatric Dentistry of Brighton"}
 
 
