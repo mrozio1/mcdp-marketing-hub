@@ -216,6 +216,61 @@ def import_csv(data, filename, by, period_start=None, period_end=None):
     return f"Imported {total:,} booking{'' if total == 1 else 's'} from LeadSigma ({span})."
 
 
+HEARD_MIN = 2   # a "How did you hear" answer used fewer times than this in an import is free text: kept only as "Other"
+
+
+def import_days(days, by):
+    """The scheduled LeadSigma run: {"YYYY-MM-DD": that day's Marketing Attribution CSV}. Each day's counts replace what
+    was stored for that day. Free-text "How did you hear" answers (rare ones, which can hold names) become "Other"."""
+    if not isinstance(days, dict) or not days:
+        raise DashError("No days were sent.")
+    rows = []
+    for day, text in days.items():
+        d = date.fromisoformat(str(day)[:10]).isoformat()
+        if not isinstance(text, str) or len(text) > 2 * 1024 * 1024:
+            raise DashError(f"The file for {d} isn't readable.")
+        lines = list(csv.reader(io.StringIO(text)))
+        lines = [r for r in lines if any((x or "").strip() for x in r)]
+        if len(lines) < 2:
+            continue            # nothing happened that day
+        head = [(h or "").strip().lower() for h in lines[0]]
+        if "report" not in head or "label" not in head:
+            raise DashError(f"The file for {d} isn't LeadSigma's Marketing Attribution export.")
+        try:
+            got = _parse_sections(lines, head)
+        except DashError:
+            continue
+        for r in got:
+            r["day"] = d
+        rows += got
+    used = {}
+    for r in rows:
+        if r["section"] == "heard":
+            k = _norm(r["heard"])
+            used[k] = used.get(k, 0) + r["bookings"]
+    for r in rows:
+        if r["section"] == "heard" and used.get(_norm(r["heard"]), 0) < HEARD_MIN:
+            r["heard"] = "Other"
+    agg = {}
+    for r in rows:
+        k = tuple(r[c] for c in ROLLUP)
+        cur = agg.setdefault(k, {**r, "views": 0, "bookings": 0, "confirmed": 0, "cancelled": 0})
+        for f in ("views", "bookings", "confirmed", "cancelled"):
+            cur[f] += r[f]
+    rows = list(agg.values())
+    first, last = min(days)[:10], max(days)[:10]
+    with db.conn() as c:
+        c.execute("DELETE FROM ls_counts WHERE day BETWEEN ? AND ?", (first, last))
+        uid = c.execute("INSERT INTO ls_uploads(filename, kind, rows, first_day, last_day, period_start, period_end, by, at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        ("Scheduled LeadSigma run", "daily", len(rows), first, last, "", "", by, db.now())).lastrowid
+        c.executemany(f"INSERT INTO ls_counts({', '.join(ROLLUP)}, views, bookings, confirmed, cancelled, upload_id) "
+                      f"VALUES ({', '.join('?' * len(ROLLUP))}, ?, ?, ?, ?, ?)",
+                      [[r[k] for k in ROLLUP] + [r["views"], r["bookings"], r["confirmed"], r["cancelled"], uid] for r in rows])
+    total = sum(r["bookings"] for r in rows if r["section"] == "source")
+    return {"bookings": total, "first": first, "last": last, "days": len(days), "rows": len(rows)}
+
+
 def last_upload():
     with db.conn() as c:
         r = c.execute("SELECT * FROM ls_uploads ORDER BY id DESC LIMIT 1").fetchone()

@@ -210,3 +210,35 @@ def test_time_frames_and_ai_summary(env):
     s = p.ai_saved(wesley)
     assert [x["title"] for x in s["points"]] == ["Starts are steady."]                # the made-up point is dropped
     assert "Starts are steady." in r.text
+
+
+LS_DAY = """Report,Label,Account,Started views,Bookings,Confirmed,Cancelled,Share or rate
+How did you hear,Google Search,,,{g},,,50.0
+How did you hear,{note},,,1,,,50.0
+Referring dentist,HavensWebsite (HavensWebsite),Havens Orthodontics,30,{g},{g},0,5.0
+Source / campaign,Direct / Unattributed / (none) / (none) / (none),,100,{b},{b},0,2.0
+"""
+
+
+def test_leadsigma_scheduled_run(env):
+    from fastapi.testclient import TestClient
+    from app import dashboard
+    from datetime import date
+    db, ad = env["db"], env["admin"]
+    anon = TestClient(env["main"].app)
+    assert env["ed"].post("/dashboard/leadsigma-key").status_code == 403                 # admins only
+    key = ad.post("/dashboard/leadsigma-key").json()["key"]
+    assert ad.post("/p360/import-key").json()["key"] != key                             # its own key, apart from drapp's
+    days = {"2026-10-30": LS_DAY.format(g=2, b=3, note="My Aunt Jane Doe Told Me"),
+            "2026-10-31": LS_DAY.format(g=1, b=4, note="Saw Smith family braces"), "2026-11-01": "Report,Label\n"}
+    assert anon.post("/ls-in/import?k=wrong", content=json_dumps({"days": days})).status_code == 403
+    r = anon.post(f"/ls-in/import?k={key}", content=json_dumps({"days": days}))
+    assert r.status_code == 200 and r.json()["bookings"] == 7 and r.headers["access-control-allow-origin"] == "https://onlinebooking.leadsigma.com"
+    assert anon.post(f"/ls-in/import?k={key}", content=json_dumps({"days": days})).status_code == 403      # one use
+    ls = dashboard.leadsigma(date(2026, 10, 31), date(2026, 10, 31), db.practices())
+    assert ls["bookings"] == 4 and ls["by_practice"] == {env["havens"]: 1}               # dated: just that day
+    heard = dict(dashboard.leadsigma(date(2026, 10, 1), date(2026, 10, 31), db.practices())["heard"])
+    assert heard["Google search"] == 3 and heard["Other"] == 2 and not any("Jane" in h for h in heard)   # free text dropped
+    # a rerun over the same days replaces them
+    dashboard.import_days({"2026-10-31": LS_DAY.format(g=1, b=6, note="x")}, "Scheduled run")
+    assert dashboard.leadsigma(date(2026, 10, 30), date(2026, 10, 31), db.practices())["bookings"] == 9

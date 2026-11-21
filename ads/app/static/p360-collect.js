@@ -27,10 +27,20 @@ window.p360Collect = function (key, hub, opts) {
     const sum = pages.find(p => p.displayName === "Summary"), det = pages.find(p => p.displayName === "Details");
     if (!sum || !det) throw new Error("Open MCDP Reports › Ortho › Practice Scorecard first.");
     await sum.setActive(); await wait(4000);
-    const sv = await sum.getVisuals();
+    let sv = await sum.getVisuals();
     const byHead = async (want) => { for (const v of sv) { try { const r = await rows(v); if (r[0] && r[0].join(",").includes(want)) return v; } catch (e) {} } return null; };
-    const podsV = await byHead("PODS"), labsV = await byHead("Labs"), wagesV = await byHead("Wages"), supV = await byHead("Supplies");
-    const totV = await byHead("RPP Count"), ytdV = await byHead("YTD Provider Discretionary"), dateV = await byHead("Date Range");
+    // the summary tiles can take a while to render after the page opens: look again until all are found
+    let podsV, labsV, wagesV, supV, totV, ytdV, dateV;
+    for (let i = 0; i < 6; i++) {
+      if (i) sv = await sum.getVisuals();
+      [podsV, labsV, wagesV, supV, totV, ytdV, dateV] = [await byHead("PODS"), await byHead("Labs"), await byHead("Wages"),
+        await byHead("Supplies"), await byHead("RPP Count"), await byHead("YTD Provider Discretionary"), await byHead("Date Range")];
+      if (podsV && labsV && wagesV && supV && totV && ytdV && dateV) break;
+      S.step = "waiting for the summary tiles"; await wait(5000);
+    }
+    const missing = Object.entries({Pods: podsV, Labs: labsV, Wages: wagesV, Supplies: supV, Totals: totV, YTD: ytdV, "Date range": dateV})
+      .filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) throw new Error("Couldn't find these Summary tiles: " + missing.join(", "));
     const list = (await rows(podsV)).slice(1).map(r => ({pod: r[0], name: r[1]})).filter(x => x.name).slice(0, opts.limit || 1000);
     const dateRange = (await rows(dateV))[1][0];
     S.total = list.length * 2;

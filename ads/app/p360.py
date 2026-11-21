@@ -535,21 +535,21 @@ IMPORT_MINUTES = 30
 MON = {m: i for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
 
 
-def import_key():
-    """A one-use key for the next import, good for 30 minutes."""
+def import_key(slot="p360_import_key"):
+    """A one-use key for the next import, good for 30 minutes. slot keeps the MCDP Reports and LeadSigma keys apart."""
     k = secrets.token_urlsafe(24)
-    db.set_setting("p360_import_key", json.dumps({"k": k, "until": (datetime.now() + timedelta(minutes=IMPORT_MINUTES)).isoformat()}))
+    db.set_setting(slot, json.dumps({"k": k, "until": (datetime.now() + timedelta(minutes=IMPORT_MINUTES)).isoformat()}))
     return k
 
 
-def take_key(k):
+def take_key(k, slot="p360_import_key"):
     try:
-        d = json.loads(db.get_setting("p360_import_key") or "{}")
+        d = json.loads(db.get_setting(slot) or "{}")
     except ValueError:
         return False
     ok = bool(k) and secrets.compare_digest(str(k), d.get("k", "")) and d.get("until", "") > datetime.now().isoformat()
     if ok:
-        db.set_setting("p360_import_key", "{}")
+        db.set_setting(slot, "{}")
     return ok
 
 
