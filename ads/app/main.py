@@ -117,6 +117,13 @@ async def role_gate(request: Request, call_next):
     need = needed_role(request.method, request.url.path)
     request.state.user = current_user(request)
     u = request.state.user
+    p = request.url.path
+    if u is None and (p == "/p360" or p.startswith("/p360/")):
+        # signed out (e.g. a 14-day session ran out on a phone): Practice 360 pages go to the sign-in page
+        if "application/json" in request.headers.get("accept", ""):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": "Please sign in again."}, status_code=401)
+        return RedirectResponse("/login", status_code=303)
     if u and request.url.path == "/" and request.method in ("GET", "HEAD") and not users.can(u, "dashboard"):
         return RedirectResponse(users.home(u), status_code=303)      # dashboard off: their first tab, or Account
     if REFRESH_PATHS.match(request.url.path) and u and users.can(u, "refresh"):

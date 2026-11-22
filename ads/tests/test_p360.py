@@ -246,3 +246,15 @@ def test_leadsigma_scheduled_run(env):
     # a rerun over the same days replaces them
     dashboard.import_days({"2026-10-31": LS_DAY.format(g=1, b=6, note="x")}, "Scheduled run")
     assert dashboard.leadsigma(date(2026, 10, 30), date(2026, 10, 31), db.practices())["bookings"] == 9
+
+
+def test_signed_out_goes_to_sign_in(env):
+    """A phone whose session ran out used to get "Internal Server Error" on the Ledger."""
+    from fastapi.testclient import TestClient
+    out = TestClient(env["main"].app, raise_server_exceptions=False)
+    h = env["havens"]
+    for path in ("/p360", f"/p360/{h}", f"/p360/{h}/ledger", f"/p360/{h}/ledger?new=1", "/p360/pods", "/p360/settings"):
+        r = out.get(path, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/login", path
+    assert out.post(f"/p360/{h}/ledger", data={"title": "x"}, follow_redirects=False).headers["location"] == "/login"
+    assert out.get("/p360-in/collect.js").status_code == 200                         # the collector stays public
