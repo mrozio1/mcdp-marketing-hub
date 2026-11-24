@@ -258,3 +258,37 @@ def test_signed_out_goes_to_sign_in(env):
         assert r.status_code == 303 and r.headers["location"] == "/login", path
     assert out.post(f"/p360/{h}/ledger", data={"title": "x"}, follow_redirects=False).headers["location"] == "/login"
     assert out.get("/p360-in/collect.js").status_code == 200                         # the collector stays public
+
+
+def test_hr_lane(env):
+    from fastapi.testclient import TestClient
+    p, db, ad, ed = env["p360"], env["db"], env["admin"], env["ed"]
+    h = env["havens"]
+    if h not in p.drapp_practice_ids():                     # an earlier test's import may have left only Wesley's locations
+        p.set_location_practice(next(l for x in p.pods() for l in x["locations"])["id"], h)
+    p.save_metrics([{"practice_id": h, "metric": "Net production", "period": m, "value": 1000} for m in ("2026-08", "2026-09", "2026-10")],
+                   "MCDP Reports")
+    assert ed.get("/p360/hr", follow_redirects=False).status_code == 303                # HR is admins-only by default
+    assert "Enter HR numbers" not in ed.get(f"/p360/{h}").text
+    r = ad.get("/p360/hr?m=2026-10")
+    assert r.status_code == 200 and "Havens Orthodontics" in r.text
+    i = [n for n, _ in p.HR_INPUTS].index
+    for m, hc, res, term in (("2026-08", 20, 1, 0), ("2026-09", 21, 0, 1), ("2026-10", 22, 1, 0)):
+        ad.post("/p360/hr", data={"period": m, f"v_{h}_{i('Headcount')}": hc, f"v_{h}_{i('New hires')}": 2,
+                                  f"v_{h}_{i('Resignations')}": res, f"v_{h}_{i('Terminations')}": term, f"v_{h}_{i('FTE')}": "18.5"})
+    v = p.view("t3m", pid=h)
+    hr = {r["metric"]: r for r in v["tables"]["hr"]}
+    assert hr["Headcount"]["total"] == "22"                                             # month-end count: latest month
+    assert hr["New hires"]["total"] == "6" and hr["FTE"]["total"] == "18.5"
+    assert hr["Turnover rate (annualized)"]["total"] == "57.1%"                                      # 3 left ÷ avg 21 × 4 (annualized)
+    assert not any("Headcount" in f["text"] for f in p.ai_facts(h)[1])                     # HR stays out of the AI summary
+    assert "Enter HR numbers" in ad.get(f"/p360/{h}").text
+    # CSV by MCDP Reports location (added up per practice); a name column is ignored
+    csv = "Practice,Month,Employee name,Headcount,Hires,Voluntary,Involuntary\nHavens Orthodontics,11/2026,Jane Doe,23,1,0,0\nNowhere Dental,11/2026,x,5,0,0,0\n"
+    r = ad.post("/p360/hr/upload", files={"file": ("hr.csv", csv.encode(), "text/csv")}, follow_redirects=False)
+    assert r.headers["location"] == "/p360/hr?m=2026-11"
+    assert p.hr_month([h], "2026-11")[h]["Headcount"] == 23
+    with db.conn() as c:
+        assert not any("Jane" in (r["shown"] or "") for r in c.execute("SELECT shown FROM p360_metrics"))
+    ad.post("/p360/hr", data={"period": "2026-11", f"v_{h}_{i('Headcount')}": ""})        # blank clears
+    assert "Headcount" not in p.hr_month([h], "2026-11").get(h, {})

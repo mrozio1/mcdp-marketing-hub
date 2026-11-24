@@ -56,7 +56,8 @@ def flash(r):
 def test_role_defaults(env):
     users, ids = env["users"], env["ids"]
     assert all(users.access(users.get(ids["ann@example.com"])).values())          # admins: everything
-    assert all(users.access(users.get(ids["ed@example.com"])).values())           # editors: every practice and person
+    ea = users.access(users.get(ids["ed@example.com"]))
+    assert all(v for k, v in ea.items() if k != "d_hr") and not ea["d_hr"]       # editors: everything but HR numbers
     vi = users.access(users.get(ids["vi@example.com"]))
     assert vi["field"] and not any(v for k, v in vi.items() if k != "field")       # viewers: nothing (field visits opened Field)
     assert users.practice_ids(users.get(ids["vi@example.com"])) == set()
@@ -144,7 +145,7 @@ def test_role_change_and_reset(env):
     users, ids, a = env["users"], env["ids"], env["admin"]
     vid = ids["vi@example.com"]
     a.post(f"/team/{vid}/role", data={"role": "editor"})
-    assert all(users.access(users.get(vid)).values())                          # a new level starts from its defaults
+    assert all(v for k, v in users.access(users.get(vid)).items() if k != "d_hr")   # a new level starts from its defaults
     a.post(f"/team/{vid}/role", data={"role": "viewer"})
     assert not any(users.access(users.get(vid)).values())
     users.set_access(vid, {"map": True})

@@ -6699,6 +6699,82 @@ async def p360_settings_save(request: Request):
     return RedirectResponse("/p360/settings", status_code=303)
 
 
+# ---- Practice 360 HR numbers: typed in or uploaded each month (counts only) until a payroll (ADP) feed exists
+def _hr_period(v):
+    from datetime import date as _d
+    if re.match(r"^\d{4}-\d{2}$", v or ""):
+        return v
+    t = _d.today().replace(day=1) - timedelta(days=1)          # last complete month
+    return t.strftime("%Y-%m")
+
+
+@app.get("/p360/hr", response_class=HTMLResponse)
+def p360_hr(request: Request, m: str = ""):
+    u = me(request)
+    if not p360.can_write(u, "hr"):
+        flash(request, "Entering HR numbers needs HR access on the Team page. Ask an admin.", "error")
+        return RedirectResponse("/p360", status_code=303)
+    period = _hr_period(m)
+    plist = _p360_practices(request)
+    vals = p360.hr_month([p["id"] for p in plist], period)
+    y, mo = int(period[:4]), int(period[5:])
+    prev = f"{y - (mo == 1):04d}-{(mo - 2) % 12 + 1:02d}"
+    nxt = f"{y + (mo == 12):04d}-{mo % 12 + 1:02d}"
+    label = datetime.strptime(period + "-01", "%Y-%m-%d").strftime("%B %Y")
+    return page(request, "p360_hr.html", plist=plist, vals=vals, period=period, label=label, prev=prev, nxt=nxt,
+                inputs=p360.HR_INPUTS, decimal=p360.DECIMAL)
+
+
+@app.post("/p360/hr")
+async def p360_hr_save(request: Request):
+    u = me(request)
+    if not p360.can_write(u, "hr"):
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    period = str(form.get("period") or "")
+    allowed = {p["id"] for p in _p360_practices(request)}
+    values = {}
+    for k in form.keys():
+        mm = re.match(r"^v_(\d+)_(\d+)$", k)
+        if mm and int(mm.group(1)) in allowed and int(mm.group(2)) < len(p360.HR_INPUTS):
+            values.setdefault(int(mm.group(1)), {})[p360.HR_INPUTS[int(mm.group(2))][0]] = form.get(k)
+    try:
+        n = p360.save_hr(period, values, actor(request))
+        flash(request, f"Saved {n:,} HR number{'' if n == 1 else 's'} for {period}.")
+    except p360.P360Error as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/p360/hr?m={period}", status_code=303)
+
+
+@app.post("/p360/hr/upload")
+async def p360_hr_upload(request: Request):
+    u = me(request)
+    if not p360.can_write(u, "hr"):
+        return RedirectResponse("/p360", status_code=303)
+    form = await request.form()
+    up = form.get("file")
+    if up is None or not getattr(up, "filename", ""):
+        flash(request, "Pick the CSV to upload.", "error")
+        return RedirectResponse("/p360/hr", status_code=303)
+    data = await up.read()
+    if len(data) > 5 * 1024 * 1024:
+        flash(request, "That file is over 5 MB.", "error")
+        return RedirectResponse("/p360/hr", status_code=303)
+    plist = _p360_practices(request)
+    allowed = {p["id"] for p in plist}
+    try:
+        got, missing = p360.hr_from_csv(data, plist)
+        n = sum(p360.save_hr(per, {pid: v for pid, v in vals.items() if pid in allowed}, actor(request)) for per, vals in got.items())
+        msg = f"Imported {n:,} HR numbers for {', '.join(sorted(got))}. Only the counts were kept."
+        if missing:
+            msg += f" Not matched to a practice: {', '.join(missing[:6])}{'…' if len(missing) > 6 else ''}."
+        flash(request, msg)
+        return RedirectResponse(f"/p360/hr?m={max(got)}", status_code=303)
+    except p360.P360Error as e:
+        flash(request, str(e), "error")
+        return RedirectResponse("/p360/hr", status_code=303)
+
+
 @app.get("/p360", response_class=HTMLResponse)
 def p360_home(request: Request, pod: int = 0):
     u = me(request)

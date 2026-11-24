@@ -100,7 +100,7 @@ EXTRAS = [("reports", "Reports & exports", "Master reports, practice and field r
           ("email", "Send email", "Email campaigns in Studio, sent as the practices they can open (editors and admins)")]
 # Practice 360: which departments' numbers, notes and action items they see (and, as editors, add to).
 DEPT_FLAGS = [("d_finance", "Finance"), ("d_revenue", "Revenue Management"), ("d_procurement", "Procurement"),
-              ("d_operations", "Operations"), ("d_marketing", "Marketing")]
+              ("d_operations", "Operations"), ("d_marketing", "Marketing"), ("d_hr", "HR")]
 FLAGS = [k for k, *_ in TABS] + [k for k, *_ in EXTRAS] + [k for k, _ in DEPT_FLAGS] + ["all_practices"]
 CAL_COLORS = ["#2995D2", "#E0703A", "#3E9E6E", "#8E5BC9", "#D24C7A", "#C9A227", "#1E4A73", "#4AA3A2", "#A0522D", "#6B7A8F"]
 
@@ -111,7 +111,9 @@ def role_defaults(role):
     if role == "viewer" and os.environ.get("ADS_VIEWER_DEFAULTS") == "legacy":
         # only for the older tests, written when viewers could open everything but refresh
         return {**{k: True for k in FLAGS}, "refresh": False, "team_field": False}
-    return {k: on for k in FLAGS}
+    d = {k: on for k in FLAGS}
+    d["d_hr"] = role == "admin"          # HR numbers: admins only until someone is given HR on the Team page
+    return d
 
 
 def _keep_current_access(c):

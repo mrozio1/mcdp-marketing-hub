@@ -13,13 +13,14 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timedelta
 
 from . import db
 
 DEPTS = [("finance", "Finance"), ("revenue", "Revenue Management"), ("procurement", "Procurement"),
-         ("operations", "Operations"), ("marketing", "Marketing")]
+         ("operations", "Operations"), ("marketing", "Marketing"), ("hr", "HR")]
 DEPT_LABEL = dict(DEPTS)
 KINDS = {"note": "Note", "action": "Action item"}
 STATUSES = ("open", "progress", "scheduled", "done")
@@ -35,7 +36,14 @@ METRICS = {
     "operations": ["Starts", "Exams", "Success rate", "RPP rate", "RPP count"],
     "marketing": ["Online bookings", "Cost per booking", "Ad spend", "Ad conversions", "New Google reviews", "Field visits",
                   "Exams"],
+    "hr": ["Headcount", "FTE", "New hires", "Resignations", "Terminations", "Turnover rate (annualized)", "Left within 90 days",
+           "Open positions"],
 }
+# HR numbers are typed in (or uploaded) monthly per practice until a feed from payroll (ADP) exists. Counts only.
+HR_INPUTS = [("Headcount", "People on staff at month end"), ("FTE", "Full-time equivalents at month end"),
+             ("New hires", "Started this month"), ("Resignations", "Left by choice this month"),
+             ("Terminations", "Let go this month"), ("Left within 90 days", "Of those who left, how many had started in the last 90 days"),
+             ("Open positions", "Open roles at month end")]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS p360_owners (dept TEXT NOT NULL, user_id INTEGER NOT NULL, PRIMARY KEY (dept, user_id));
@@ -831,12 +839,15 @@ def practice_month(pid, metric, month):
 
 # ------------------------------------------------------------------ time frames: month, trailing 3 months, year to date
 SUM = {"Net production", "Starts", "Exams", "RPP count", "Online bookings", "Ad spend", "Ad conversions", "New Google reviews",
-       "Field visits"}
+       "Field visits", "New hires", "Resignations", "Terminations", "Left within 90 days"}
 RATIO = {"Success rate": ("Starts", "Exams", 100), "RPP rate": ("RPP count", "Starts", 100), "Cost per booking": ("Ad spend", "Online bookings", 1)}
 WEIGHTED = {"Wages %", "Supplies %", "Labs %"}                      # by net production
-LOWER_IS_BETTER = {"Wages %", "Supplies %", "Labs %", "Cost per booking"}
+LOWER_IS_BETTER = {"Wages %", "Supplies %", "Labs %", "Cost per booking", "Resignations", "Terminations", "Turnover rate (annualized)",
+                   "Left within 90 days", "Open positions"}
+LAST = {"Headcount", "FTE", "Open positions"}          # month-end counts: a period shows its latest month
+DECIMAL = {"FTE"}
 MONEY = {"Net production", "Ad spend", "Cost per booking"}
-PCT = {"Success rate", "RPP rate", "Wages %", "Supplies %", "Labs %"}
+PCT = {"Success rate", "RPP rate", "Wages %", "Supplies %", "Labs %", "Turnover rate (annualized)"}
 TILES = ["Net production", "Starts", "Exams", "Success rate", "RPP rate", "Supplies %", "Wages %", "Online bookings"]
 TIMEFRAMES = [("month", "Month"), ("t3m", "Trailing 3 months"), ("ytd", "Year to date")]
 
@@ -868,6 +879,15 @@ def _agg(data, metric, months):
     """A metric over some months: summed, a rate from summed parts, or weighted by production."""
     if not months:
         return None
+    if metric == "Turnover rate (annualized)":
+        # people who left ÷ average headcount over the months, scaled to a year (the usual annualized turnover)
+        hc = [data.get("Headcount", {}).get(m) for m in months]
+        hc = [h for h in hc if h]
+        left = [(data.get("Resignations", {}).get(m) or 0) + (data.get("Terminations", {}).get(m) or 0) for m in months
+                if data.get("Headcount", {}).get(m)]
+        if not hc:
+            return None
+        return sum(left) / (sum(hc) / len(hc)) * (12 / len(hc)) * 100
     if metric in SUM:
         vals = [data.get(metric, {}).get(m) for m in months]
         return sum(v for v in vals if v is not None) if any(v is not None for v in vals) else None
@@ -897,6 +917,8 @@ def fmt(metric, v):
         return _money(v)
     if metric in PCT:
         return _pct(v, 1)
+    if metric in DECIMAL:
+        return f"{v:,.1f}"
     return f"{v:,.0f}"
 
 
@@ -975,12 +997,13 @@ def view(tf, pid=None, pod_id=None):
     for dept, metrics in METRICS.items():
         rows = []
         for metric in metrics:
-            if metric not in SUM and metric not in RATIO and metric not in WEIGHTED:
+            if metric not in SUM and metric not in RATIO and metric not in WEIGHTED and metric not in LAST and metric != "Turnover rate (annualized)":
                 continue                                    # e.g. production growth: shown as "vs last year" instead
             v = _agg(data, metric, cur)
             if v is None and not any(data.get(metric, {}).get(m) is not None for m in bar_months + after):
                 continue
-            one = lambda m: fmt(metric, data.get(metric, {}).get(m) if metric not in RATIO else _agg(data, metric, [m]))
+            one = lambda m: fmt(metric, data.get(metric, {}).get(m) if metric not in RATIO and metric != "Turnover rate (annualized)"
+                                else _agg(data, metric, [m]))
             rows.append({"metric": "New-patient exams" if metric == "Exams" else metric,
                          "after": [one(m) for m in after],
                          "months": [one(m) for m in bar_months],
@@ -1006,6 +1029,8 @@ def ai_facts(pid):
     facts = []
     if v.get("last"):
         for dept, rows in v["tables"].items():
+            if dept == "hr":
+                continue                        # HR numbers stay with people who have HR access
             for r in rows:
                 bits = [f"{r['metric']} ({DEPT_LABEL[dept]}): {', '.join(f'{c} {x}' for c, x in zip(v['cols'], r['months']))}; 3 months {r['total']}"]
                 if r["prior"]:
@@ -1017,7 +1042,7 @@ def ai_facts(pid):
     with db.conn() as c:
         notes = [dict(r) for r in c.execute(
             "SELECT e.id, e.dept, e.kind, e.title, e.status, e.created_at, v.text FROM p360_entries e JOIN p360_events v ON v.entry_id=e.id "
-            "AND v.type='created' WHERE e.practice_id=? AND e.created_at >= ? ORDER BY e.created_at DESC LIMIT 30", (pid, since))]
+            "AND v.type='created' WHERE e.practice_id=? AND e.created_at >= ? AND e.dept != 'hr' ORDER BY e.created_at DESC LIMIT 30", (pid, since))]
     for n in notes:
         facts.append({"id": f"N{n['id']}", "text": f"{DEPT_LABEL.get(n['dept'], n['dept'])} {n['kind']} ({n['created_at'][:10]}, {n['status']}): "
                                                    f"{n['title']}. {(n['text'] or '')[:600]}"})
@@ -1074,3 +1099,113 @@ def ai_feedback(pid, point, reason, by):
     with db.conn() as c:
         c.execute("INSERT INTO p360_ai_feedback(practice_id, point, reason, by, at) VALUES (?,?,?,?,?)",
                   (pid, (point or "")[:300], (reason or "")[:1000], by, now()))
+
+
+# ------------------------------------------------------------------ HR (typed in or uploaded monthly, counts only)
+HR_ALIASES = {"Headcount": ("headcount", "head count", "employees", "staff"), "FTE": ("fte",),
+              "New hires": ("new hire", "hires", "hired"), "Resignations": ("resign", "voluntary"),
+              "Terminations": ("terminat", "involuntary", "let go"), "Left within 90 days": ("90",),
+              "Open positions": ("open", "vacanc", "req")}
+
+
+def hr_month(practice_ids, period):
+    """{practice_id: {metric: value}} for one month."""
+    out = {}
+    if not practice_ids:
+        return out
+    with db.conn() as c:
+        q = ",".join("?" * len(practice_ids))
+        for r in c.execute(f"SELECT practice_id, metric, value FROM p360_metrics WHERE source='HR' AND period=? AND practice_id IN ({q})",
+                           (period, *practice_ids)):
+            out.setdefault(r["practice_id"], {})[r["metric"]] = r["value"]
+    return out
+
+
+def _hr_num(v, metric):
+    v = str(v if v is not None else "").replace(",", "").strip()
+    if not v:
+        return None
+    try:
+        x = float(v)
+    except ValueError:
+        raise P360Error(f"{metric} should be a number (got {v[:20]!r}).")
+    if x < 0 or x > 100000:
+        raise P360Error(f"{metric} should be between 0 and 100,000.")
+    return x if metric in DECIMAL else float(round(x))
+
+
+def save_hr(period, values, by):
+    """values: {practice_id: {metric: raw}}. Blank cells clear that number. Returns how many numbers were saved."""
+    if not re.match(r"^\d{4}-\d{2}$", period or ""):
+        raise P360Error("Pick a month.")
+    known = dict(HR_INPUTS)
+    rows, clear = [], []
+    for pid, vals in values.items():
+        for metric, raw in vals.items():
+            if metric not in known:
+                continue
+            v = _hr_num(raw, metric)
+            if v is None:
+                clear.append((pid, metric))
+            else:
+                rows.append({"practice_id": pid, "metric": metric, "period": period, "value": v, "shown": fmt(metric, v)})
+    with db.conn() as c:
+        for pid, metric in clear:
+            c.execute("DELETE FROM p360_metrics WHERE practice_id=? AND metric=? AND period=? AND source='HR'", (pid, metric, period))
+    if rows:
+        save_metrics(rows, "HR", by)
+    return len(rows)
+
+
+def hr_from_csv(data, practices):
+    """An HR export (one row per practice or location and month) -> {period: {practice_id: {metric: value}}}. Columns:
+    Practice or Location (MCDP Reports location names work), Month (2026-10, 10/2026 or a date), then any of the HR
+    numbers. Other columns, such as names, are ignored and never stored. Locations of the same practice are added up."""
+    import csv, io
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = data.decode("latin-1")
+    rows = [r for r in csv.reader(io.StringIO(text)) if any((x or "").strip() for x in r)]
+    if len(rows) < 2:
+        raise P360Error("That file has no rows.")
+    head = [(h or "").strip().lower() for h in rows[0]]
+    def col(*words):
+        return next((i for i, h in enumerate(head) if any(w in h for w in words)), None)
+    pcol, mcol = col("practice", "location", "office", "site"), col("month", "period", "date")
+    if pcol is None or mcol is None:
+        raise P360Error("The file needs a Practice (or Location) column and a Month column.")
+    mcols = {}
+    for metric, words in HR_ALIASES.items():
+        i = next((i for i, h in enumerate(head) if i not in (pcol, mcol) and i not in mcols.values() and any(w in h for w in words)), None)
+        if i is not None:
+            mcols[metric] = i
+    if not mcols:
+        raise P360Error("No HR columns found (headcount, new hires, resignations, terminations, open positions…).")
+    by_name = {" ".join(p["name"].lower().split()): p["id"] for p in practices}
+    with db.conn() as c:
+        loc = {" ".join(r["name"].lower().split()): r["practice_id"] for r in c.execute("SELECT name, practice_id FROM p360_locations")
+               if r["practice_id"]}
+    out, missing = {}, set()
+    for r in rows[1:]:
+        g = lambda i: (r[i].strip() if i is not None and i < len(r) else "")
+        name = " ".join(g(pcol).lower().split())
+        pid = by_name.get(name) or loc.get(name)
+        if not pid:
+            if name:
+                missing.add(g(pcol))
+            continue
+        m = g(mcol)
+        mm = re.match(r"^(\d{4})-(\d{1,2})", m) or re.match(r"^(\d{1,2})/(?:\d{1,2}/)?(\d{4})", m)
+        if not mm:
+            raise P360Error(f"Couldn't read the month {m[:20]!r}. Use 2026-10 or 10/2026.")
+        y, mo = (mm.group(1), mm.group(2)) if "-" in m[:5] else (mm.group(2), mm.group(1))
+        period = f"{int(y):04d}-{int(mo):02d}"
+        cur = out.setdefault(period, {}).setdefault(pid, {})
+        for metric, i in mcols.items():
+            v = _hr_num(g(i), metric)
+            if v is not None:
+                cur[metric] = (cur.get(metric) or 0) + v
+    if not out:
+        raise P360Error("No rows matched a Practice 360 practice or MCDP Reports location.")
+    return out, sorted(missing)

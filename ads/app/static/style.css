@@ -2765,3 +2765,10 @@ fieldset.em-lists, .em-side fieldset, .em-settings fieldset { border: 0; padding
 /* Practice 360: months after MCDP Reports' latest (Hub numbers, this month so far) */
 .p3-table .p3-after { border-left: 1px dashed #c9d3de; color: #4a5a6b; font-style: italic; }
 .p3-table th.p3-after { font-style: normal; }
+
+/* Practice 360: HR numbers entry */
+.p3-hr-month { display: flex; align-items: center; gap: .8rem; margin: .4rem 0 1rem; }
+.p3-hr-table input { width: 5.2rem; font: inherit; padding: .35rem .45rem; border: 1px solid #cfd8e0; border-radius: 8px; text-align: right; }
+.p3-hr-table th[title] { cursor: help; }
+.p3-hr-upload { margin-top: 1.4rem; }
+.p3-hr-upload summary { cursor: pointer; font-weight: 600; }

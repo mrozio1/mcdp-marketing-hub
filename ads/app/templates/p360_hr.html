@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}HR numbers · Practice 360{% endblock %}
+{% block content %}
+<p class="small"><a href="/p360">← Practice 360</a></p>
+<h1>HR numbers</h1>
+<p class="muted">One row per practice, entered once a month. These feed the HR lane on each practice's Practice 360 page, where turnover is worked out from them. Counts only: no names or other details about people are kept. Who can see HR is set per person on the <a href="/team">Team page</a>.</p>
+
+<div class="p3-hr-month">
+  <a class="btn btn-small btn-quiet" href="/p360/hr?m={{ prev }}" aria-label="Previous month">←</a>
+  <strong>{{ label }}</strong>
+  <a class="btn btn-small btn-quiet" href="/p360/hr?m={{ nxt }}" aria-label="Next month">→</a>
+</div>
+
+<form method="post" action="/p360/hr">
+  <input type="hidden" name="period" value="{{ period }}">
+  <div class="p3-tablebox">
+    <table class="p3-table p3-hr-table">
+      <thead><tr><th scope="col">Practice</th>
+        {% for name, hint in inputs %}<th scope="col" title="{{ hint }}">{{ name }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for p in plist %}{% set v = vals.get(p.id, {}) %}
+        <tr><th scope="row">{{ p.name }}</th>
+          {% for name, hint in inputs %}{% set x = v.get(name) %}
+          <td><input type="number" min="0" step="{{ '0.1' if name in decimal else '1' }}" inputmode="decimal" name="v_{{ p.id }}_{{ loop.index0 }}"
+                     value="{{ ('%.1f'|format(x) if name in decimal else '%d'|format(x)) if x is not none else '' }}"
+                     aria-label="{{ name }} for {{ p.name }}"></td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small muted">Hover a column for what it counts. A blank box clears that number for {{ label }}.</p>
+  <button class="btn" type="submit">Save {{ label }}</button>
+</form>
+
+<details class="panel p3-hr-upload">
+  <summary>Upload a spreadsheet instead</summary>
+  <p class="small muted">A CSV with a <strong>Practice</strong> (or MCDP Reports <strong>Location</strong>) column, a <strong>Month</strong> column (2026-10 or 10/2026) and any of: Headcount, FTE, New hires, Resignations, Terminations, Left within 90 days, Open positions. Locations of the same practice are added up; several months can be in one file. Any other columns, names included, are ignored and never stored.</p>
+  <form method="post" action="/p360/hr/upload" enctype="multipart/form-data" class="p3-inline">
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button class="btn btn-small" type="submit">Upload</button>
+  </form>
+</details>
+{% endblock %}
