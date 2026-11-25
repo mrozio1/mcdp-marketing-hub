@@ -70,6 +70,8 @@
     </label>
   </div>
 
+  {% if acct_label %}<p class="small acct-hint">{{ o.name }} is a child account of {{ acct_label.brand }} › {{ acct_label.loc }} · <a href="/field/accounts?p={{ acct_label.pid }}&amp;loc={{ acct_label.loc_sf_id }}&amp;a={{ acct_label.key|urlencode }}">see its history</a></p>{% endif %}
+
   {% if ck_show %}{% include "_checklist.html" %}{% endif %}
 
   <fieldset class="people-met" id="people-met">

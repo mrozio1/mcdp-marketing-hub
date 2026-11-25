@@ -41,6 +41,29 @@
 <p class="p3-banner small">Finance, Revenue Management, Procurement and Operations numbers come from MCDP Reports (weekly). Marketing comes from the Hub itself (ads, LeadSigma, Google reviews, field visits) and refreshes every few hours. HR numbers are entered monthly.{% if can_edit %} <form method="post" action="/p360/hub-refresh" class="p3-inline"><button class="linklike" type="submit">Refresh marketing now</button></form>{% endif %}</p>
 
 <div class="p3-lanes">
+  {% if network %}
+  <section class="p3-lane p3-network" id="network" aria-labelledby="lane-network">
+    <header class="p3-lane-head">
+      <div><h2 id="lane-network">Referral network</h2>
+        <span class="small muted">{{ network.total }} accounts across {{ network.locations|length }} location{{ '' if network.locations|length == 1 else 's' }} · {{ network.referring }} referring (LeadSigma, 12 months)</span></div>
+      <a class="btn btn-small" href="/field/accounts?p={{ p.id }}">Open referral accounts</a>
+    </header>
+    <div class="p3-cols">
+      <div>
+        <h3 class="p3-kicker">By location</h3>
+        <div class="p3-tablebox"><table class="p3-table">
+          <thead><tr><th scope="col">Location</th><th scope="col">Accounts</th><th scope="col">Referring</th><th scope="col">Referrals</th><th scope="col">Visits, 90 days</th></tr></thead>
+          <tbody>{% for l in network.locations[:8] %}<tr><th scope="row"><a href="/field/accounts?p={{ p.id }}&amp;loc={{ l.sf_id }}">{{ l.name }}</a></th><td>{{ l.n }}</td><td>{{ l.referring }}</td><td>{{ l.refs }}</td><td>{{ l.visits }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+      <div>
+        <h3 class="p3-kicker">Worth a visit</h3>
+        {% for a in network.worth %}<a class="p3-worth" href="/field/accounts?p={{ p.id }}&amp;loc={{ a.loc }}&amp;a={{ a.key|urlencode }}"><strong>{{ a.name }}</strong><small>{% if a.refs %}{{ a.refs }} referral{{ '' if a.refs == 1 else 's' }} in 12 months · {% endif %}{% if a.last %}last visited {{ a.last_label }}{% else %}never visited{% endif %} · {{ a.loc_name }}</small></a>
+        {% else %}<p class="small muted">Nothing overdue: every account that's been visited has been seen in the last 90 days.</p>{% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
   {% for l in lanes %}
   <section class="p3-lane" id="{{ l.key }}" aria-labelledby="lane-{{ l.key }}">
     <header class="p3-lane-head">

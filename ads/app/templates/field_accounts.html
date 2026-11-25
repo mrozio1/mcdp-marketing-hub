@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Referral accounts{% if brand %} · {{ brand.name }}{% endif %}{% endblock %}
+{% block content %}
+{% set base = '/field/accounts?p=' ~ (brand.id if brand else '') %}
+<div class="title-row">
+  <nav class="seg ra-views" aria-label="Field views">
+    <a href="/field">Visits</a>
+    <a href="/field/accounts" aria-current="page">Referral accounts</a>
+  </nav>
+  <div class="title-actions">
+    {% if can_log %}<a class="btn" href="/field/log?back=/field/accounts">Log a visit</a>{% endif %}
+  </div>
+</div>
+
+{% if not brand %}
+<section class="panel">
+  <h1>Referral accounts</h1>
+  {% if not sf_on %}<p>Connect Salesforce (Connections › Salesforce) to bring in its location accounts and the referring offices under them.</p>
+  {% elif sync.busy %}<p>Reading accounts from Salesforce now ({{ sync.step }})… refresh this page in a minute.</p>
+  {% else %}<p>No Salesforce location accounts are matched to your practices yet.{% if sync.error %} <span class="danger">{{ sync.error }}</span>{% endif %}</p>
+    {% if can_refresh %}<form method="post" action="/field/accounts/sync" class="inline-form"><button class="btn" type="submit">Read accounts from Salesforce</button></form>{% endif %}
+  {% endif %}
+</section>
+{% else %}
+
+<section class="ra-parent" aria-label="Parent account">
+  <div class="ra-parent-top">
+    <div class="ra-mark" aria-hidden="true">{{ brand.name[:1] }}</div>
+    <div class="ra-parent-name">
+      <span class="ra-kicker">Parent account</span>
+      <form method="get" action="/field/accounts" class="ra-brand-pick">
+        <label class="sr-only" for="ra-brand">Parent account</label>
+        <select id="ra-brand" name="p" onchange="this.form.submit()">
+          {% for b in brands %}<option value="{{ b.id }}" {% if b.id == brand.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+        </select>
+        <noscript><button class="btn btn-small" type="submit">Go</button></noscript>
+      </form>
+      <span class="small muted">{{ locs|length }} location{{ '' if locs|length == 1 else 's' }} · {{ counts.all if not loc else per_loc.values()|sum(attribute='n') }} accounts{% if brand.sf_parent and sf_base %} · <a href="{{ sf_base }}/{{ brand.sf_parent }}" target="_blank" rel="noopener">parent account in Salesforce ↗</a>{% endif %}</span>
+    </div>
+    <form role="search" method="get" action="/field/accounts" class="ra-search" id="ra-search">
+      <input type="hidden" name="p" value="{{ brand.id }}">
+      <label class="sr-only" for="ra-q">Search {{ brand.name }} accounts</label>
+      <input id="ra-q" name="q" value="{{ q }}" autocomplete="off" placeholder="Search every {{ brand.name.split()[0] }} account: office, person met, city, notes…"
+             data-p="{{ brand.id }}" aria-controls="ra-results" aria-expanded="false">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <div class="ra-results" id="ra-results" role="listbox" hidden></div>
+    </form>
+  </div>
+  <nav class="ra-locs" aria-label="Location">
+    <a href="{{ base }}" {% if not loc %}aria-current="page"{% endif %}><b>All locations</b><small>{{ counts.all if not loc else '' }}{% if not loc %} accounts{% endif %}</small></a>
+    {% for l in locs %}{% set pl = per_loc.get(l.sf_id, {'n': 0, 'v': 0}) %}
+    <a href="{{ base }}&amp;loc={{ l.sf_id }}" {% if loc and loc.sf_id == l.sf_id %}aria-current="page"{% endif %}><b>{{ l.short }}</b><small>{{ pl.n }} accounts · {{ pl.v }} visits</small></a>
+    {% endfor %}
+  </nav>
+</section>
+
+<nav class="ra-crumbs" aria-label="Breadcrumb">
+  <a href="{{ base }}">{{ brand.name }}</a>
+  {% if loc %}<span aria-hidden="true">›</span><a href="{{ base }}&amp;loc={{ loc.sf_id }}">{{ loc.short }}</a>{% else %}<span aria-hidden="true">›</span><span>All locations</span>{% endif %}
+  {% if sel %}<span aria-hidden="true">›</span><strong>{{ sel.name }}</strong>{% endif %}
+</nav>
+
+{% if results %}
+<section class="panel ra-found" aria-label="Search results">
+  <h2>Results for “{{ q }}” <a class="small" href="{{ base }}{% if loc %}&amp;loc={{ loc.sf_id }}{% endif %}">clear</a></h2>
+  {% if not (results.accounts or results.people or results.notes) %}<p class="muted">Nothing under {{ brand.name }} matches.</p>{% endif %}
+  {% if results.accounts %}<h3 class="p3-kicker">Accounts</h3><ul class="ra-hits">{% for x in results.accounts %}<li><a href="{{ base }}&amp;loc={{ x.loc }}&amp;a={{ x.key|urlencode }}">{{ x.name }}</a> <span class="small muted">{{ x.loc_name }}{% if x.address %} · {{ x.address }}{% endif %}{% if x.source == 'npi' %} · not an account yet{% endif %}</span></li>{% endfor %}</ul>{% endif %}
+  {% if results.people %}<h3 class="p3-kicker">People met</h3><ul class="ra-hits">{% for x in results.people %}<li><a href="{{ base }}&amp;loc={{ x.loc }}&amp;a={{ x.key|urlencode }}">{{ x.name }}</a>{% if x.role %} · {{ x.role }}{% endif %} <span class="small muted">{{ x.account }}{% if x.last %} · last met {{ x.last }}{% endif %}</span></li>{% endfor %}</ul>{% endif %}
+  {% if results.notes %}<h3 class="p3-kicker">Visits and notes</h3><ul class="ra-hits">{% for x in results.notes %}<li><a href="{{ base }}&amp;loc={{ x.loc }}&amp;a={{ x.key|urlencode }}">{{ x.where }}</a> <span class="small muted">{{ 'Note' if x.kind == 'note' else 'Visit' }} by {{ x.who }} · {{ x.at[:10] }}</span><br><span class="small">{{ x.text|truncate(160) }}</span></li>{% endfor %}</ul>{% endif %}
+</section>
+{% endif %}
+
+{% if not sel %}
+<section class="ra-kpis" aria-label="Summary">
+  <div><span>Accounts</span><b>{{ counts.all }}</b><small>{{ counts.referring }} referring (LeadSigma, 12 months)</small></div>
+  <div><span>Visited</span><b>{{ counts.visited }}</b><small>at least once from the Hub</small></div>
+  <div class="{{ 'warn' if counts.stale }}"><span>Not visited {{ 90 }}+ days</span><b>{{ counts.stale }}</b><small>worth a visit first</small></div>
+  <div><span>Never visited</span><b>{{ counts.never }}</b><small>accounts with no Hub visit</small></div>
+  <div><span>Prospects nearby</span><b>{{ counts.prospect }}</b><small>dental offices within 3 mi, not accounts yet</small></div>
+</section>
+{% endif %}
+
+<div class="ra-grid {{ 'ra-grid-open' if sel }}">
+  <section class="panel ra-list" aria-label="Accounts">
+    <div class="ra-list-head">
+      <h2>{% if loc %}{{ loc.short }}{% else %}Child accounts{% endif %}</h2>
+      <span class="small muted">{% if loc %}{{ [loc.street, loc.city]|select|join(', ') }} · {% endif %}{{ counts.all }} accounts</span>
+    </div>
+    <div class="ra-chips" role="group" aria-label="Show">
+      {% for k, l in filters %}<a href="{{ base }}{% if loc %}&amp;loc={{ loc.sf_id }}{% endif %}&amp;f={{ k }}" {% if f == k %}aria-current="true"{% endif %}>{{ l }} <small>{{ counts[k] }}</small></a>{% endfor %}
+    </div>
+    {% if rows %}
+    {% if sel %}
+    <ul class="ra-cards">
+      {% for x in rows %}
+      <li><a href="{{ base }}&amp;loc={{ x.loc }}&amp;a={{ x.key|urlencode }}&amp;f={{ f }}" {% if x.key == sel.key %}aria-current="true"{% endif %}>
+        <b>{{ x.name }}</b>{% if x.refs %}<span class="ra-st st-ref">Referring</span>{% elif x.source == 'npi' %}<span class="ra-st st-new">Prospect</span>{% elif x.visits %}<span class="ra-st st-vis">Visited</span>{% else %}<span class="ra-st st-new">Not visited</span>{% endif %}
+        <small>{{ x.loc_name }}{% if x.refs %} · {{ x.refs }} referral{{ '' if x.refs == 1 else 's' }}{% endif %}</small><small class="{{ 'late' if x.stale }}">{{ x.last_label or ('%s mi away'|format(x.miles) if x.miles is defined else 'Never') }}</small>
+      </a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="table-scroll">
+    <table class="ra-table">
+      <thead><tr><th scope="col">Account</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col" class="num">Referrals 12 mo</th><th scope="col">Last visit</th></tr></thead>
+      <tbody>
+        {% for x in rows %}
+        <tr>
+          <td><a class="ra-name" href="{{ base }}&amp;loc={{ x.loc }}&amp;a={{ x.key|urlencode }}&amp;f={{ f }}">{{ x.name }}</a><br><span class="small muted">{{ x.address }}{% if x.source == 'hub' %} · visited from the Hub, not in Salesforce{% elif x.source == 'npi' %} · {{ x.miles }} mi from {{ x.loc_name }}{% endif %}</span></td>
+          <td>{{ x.loc_name }}</td>
+          <td>{% if x.refs %}<span class="ra-st st-ref">Referring</span>{% elif x.source == 'npi' %}<span class="ra-st st-new">Prospect</span>{% elif x.visits %}<span class="ra-st st-vis">Visited</span>{% else %}<span class="ra-st st-new">Not visited</span>{% endif %}</td>
+          <td class="num"><b>{{ x.refs or '—' }}</b></td>
+          <td class="ra-when {{ 'late' if x.stale }}">{% if x.last %}{{ x.last_label }}{% if x.last_by %}<br><span class="small muted">{{ x.last_by.split()[0] }}</span>{% endif %}{% else %}Never{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+    {% if total > rows|length %}<p class="small"><a href="{{ base }}{% if loc %}&amp;loc={{ loc.sf_id }}{% endif %}&amp;f={{ f }}{% if sel %}&amp;a={{ sel.key|urlencode }}{% endif %}&amp;more=1">Show all {{ total }}</a></p>{% endif %}
+    {% else %}<p class="muted">No accounts here for this filter.</p>{% endif %}
+  </section>
+
+  {% if sel %}
+  <section class="panel ra-acct" aria-label="{{ sel.name }}">
+    <div class="ra-acct-head">
+      <div>
+        <span class="ra-kicker">{% if sel.source == 'npi' %}Prospect near {{ sel.loc_name }}{% elif sel.source == 'hub' %}Visited office · {{ sel.loc_name }}{% else %}Child account · {{ sel.loc_name }}{% endif %}</span>
+        <h2>{{ sel.name }}</h2>
+        <p class="small muted">{% if size %}{{ size.doctors }} doctor{{ '' if size.doctors == 1 else 's' }}{% if size.staff %} · {{ size.staff }} staff{% endif %} · {% endif %}{{ sel.address }}{% if sel.phone %} · {{ sel.phone }}{% endif %}</p>
+        {% if sel.sf_id and sf_base %}<p class="small">Child of {{ brand.name }} › {{ sel.loc_name }} in Salesforce · <a href="{{ sf_base }}/{{ sel.sf_id }}" target="_blank" rel="noopener">open the account ↗</a></p>
+        {% elif sel.source == 'hub' %}<p class="small muted">Not in Salesforce yet; it's added there with its first synced visit.</p>{% endif %}
+      </div>
+      <div class="ra-acct-actions">
+        {% if can_log %}<a class="btn" href="/field/accounts/log?p={{ brand.id }}&amp;key={{ sel.key|urlencode }}">Log a visit</a>{% endif %}
+        <a class="btn btn-quiet" href="#ra-note">Add a note</a>
+      </div>
+    </div>
+    <div class="ra-stats">
+      <div><span>Referrals, 12 mo</span><b>{{ sel.refs or '—' }}</b></div>
+      <div><span>Visits</span><b>{{ sel.visits }}</b></div>
+      <div><span>Last visit</span><b>{{ sel.last_label or 'Never' }}</b></div>
+      <div><span>Last visited by</span><b>{{ sel.last_by or '—' }}</b></div>
+    </div>
+    {% if people %}
+    <h3 class="p3-kicker">People met</h3>
+    <div class="ra-people">{% for x in people %}<span>{{ x.name or x.email }}{% if x.role %} · {{ x.role }}{% endif %}</span>{% endfor %}</div>
+    {% endif %}
+    <form method="post" action="/field/accounts/note" class="ra-note" id="ra-note">
+      <input type="hidden" name="p" value="{{ brand.id }}"><input type="hidden" name="key" value="{{ sel.key }}">
+      <input type="hidden" name="back" value="{{ base }}&loc={{ sel.loc }}&a={{ sel.key|urlencode }}">
+      <label>Add a note about {{ sel.name }}<textarea name="text" rows="2" maxlength="4000" required placeholder="Something the next person visiting should know"></textarea></label>
+      <button class="btn btn-small" type="submit">Save note</button>{% if sel.sf_id %} <span class="small muted">Also saved to the account in Salesforce.</span>{% endif %}
+    </form>
+    {% include "_ra_feed.html" %}
+  </section>
+  {% else %}
+  <section class="panel ra-feed-box" aria-label="Activity">
+    <div class="ra-list-head"><h2>Activity</h2><span class="small muted">every visit and note for {{ loc.short if loc else brand.name }}</span></div>
+    {% include "_ra_feed.html" %}
+  </section>
+  {% endif %}
+</div>
+
+{% endif %}
+
+{% if is_admin and all_locations is defined %}
+<details class="panel ra-admin">
+  <summary>Salesforce locations and parent accounts <span class="small muted">(admins)</span></summary>
+  <p class="small muted">Location accounts are the Salesforce accounts with referring offices under them. Each is matched to a practice (the parent) by name; change any that are wrong. A practice can point at a Salesforce account to open as its parent. Salesforce itself isn't changed.
+    {% if sync.at %}Last read from Salesforce {{ sync.at[:16]|replace('T', ' ') }}: {{ sync.locations }} locations, {{ sync.children }} accounts, {{ sync.placed }} newly placed on the map.{% endif %}
+    {% if sync.busy %}Reading now: {{ sync.step }}…{% endif %}{% if sync.error %} <span class="danger">{{ sync.error }}</span>{% endif %}</p>
+  {% if can_refresh %}<form method="post" action="/field/accounts/sync" class="inline-form"><button class="btn btn-small btn-quiet" type="submit">Read accounts from Salesforce now</button></form>{% endif %}
+  <form method="post" action="/field/accounts/settings">
+    <table class="ra-table">
+      <thead><tr><th scope="col">Salesforce location</th><th scope="col" class="num">Accounts</th><th scope="col">Practice (parent)</th></tr></thead>
+      <tbody>{% for l in all_locations %}<tr><td>{{ l.name }}<br><span class="small muted">{{ l.city }}</span></td><td class="num">{{ l.children }}</td>
+        <td><select name="loc_{{ l.sf_id }}" aria-label="Practice for {{ l.name }}"><option value="">Not one of ours</option>{% for pr in practices or [] %}<option value="{{ pr.id }}" {% if pr.id == l.practice_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}</select></td></tr>{% endfor %}</tbody>
+    </table>
+    {% if brands %}
+    <h3 class="p3-kicker">Parent account in Salesforce (optional)</h3>
+    <div class="ra-parents">{% for b in brands %}<label>{{ b.name }}<input name="parent_{{ b.id }}" value="{{ b.sf_parent }}" placeholder="Account ID, e.g. 001i100000BIRg9AAH" maxlength="18"></label>{% endfor %}</div>
+    {% endif %}
+    <button class="btn btn-small" type="submit">Save</button>
+  </form>
+</details>
+{% endif %}
+
+<script>
+(function () {
+  var q = document.getElementById('ra-q'), box = document.getElementById('ra-results');
+  if (!q || !box) return;
+  var t = null, last = '';
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function link(x) { return '/field/accounts?p=' + q.dataset.p + '&loc=' + encodeURIComponent(x.loc || '') + '&a=' + encodeURIComponent(x.key || ''); }
+  function show(r) {
+    var html = '';
+    function group(title, items, line) { if (!items.length) return; html += '<p class="ra-r-group">' + title + '</p>'; items.forEach(function (x) { html += '<a role="option" href="' + link(x) + '">' + line(x) + '</a>'; }); }
+    group('Accounts', r.accounts, function (x) { return '<b>' + esc(x.name) + '</b><small>' + esc(x.loc_name) + (x.address ? ' · ' + esc(x.address) : '') + (x.source === 'npi' ? ' · not an account yet' : '') + '</small>'; });
+    group('People met', r.people, function (x) { return '<b>' + esc(x.name) + (x.role ? ' · ' + esc(x.role) : '') + '</b><small>' + esc(x.account) + '</small>'; });
+    group('Visits and notes', r.notes, function (x) { return '<b>' + esc(x.where) + '</b><small>' + esc((x.text || '').slice(0, 110)) + '</small>'; });
+    box.innerHTML = html || '<p class="ra-r-group">Nothing matches.</p>';
+    box.hidden = false; q.setAttribute('aria-expanded', 'true');
+  }
+  q.addEventListener('input', function () {
+    clearTimeout(t);
+    var v = q.value.trim();
+    if (v.length < 2) { box.hidden = true; q.setAttribute('aria-expanded', 'false'); return; }
+    t = setTimeout(function () {
+      last = v;
+      fetch('/field/accounts/search.json?p=' + q.dataset.p + '&q=' + encodeURIComponent(v)).then(function (r) { return r.json(); })
+        .then(function (r) { if (last === v) show(r); }).catch(function () {});
+    }, 220);
+  });
+  document.addEventListener('click', function (e) { if (!e.target.closest('#ra-search')) box.hidden = true; });
+  q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { box.hidden = true; } });
+})();
+</script>
+{% endblock %}

@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import p360
 from . import dept, checklists
+from . import accounts
 from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, wins, emailer, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
@@ -44,7 +45,8 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # Looking and exporting (GET) needs any sign-in. Every change (POST) needs an editor, and these
 # need an admin whatever the method: keys and connections, people, map setup, deleting practices.
 PUBLIC = ("/login", "/logout", "/health", "/static/", "/setup/", "/internal/", "/s/", "/i/", "/e/", "/p360-in/", "/ls-in/")
-ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs", "/p360/")   # /p360: checked per department in the route
+ANY_SIGNED_IN_POST = ("/account", "/field/route-order", "/studio/template-favs", "/p360/", "/field/alerts/",
+                      "/field/accounts/note")   # /p360: checked per department in the route
 FIELD_WORK = re.compile(r"^/field/(log|visits|receipt)(/|$)(?!(\d+(/delete|/edit)?)$)")   # logging visits: field visits switched on
 FIELD_DELETE = re.compile(r"^/field/visits/\d+(/delete|/edit)?$")          # own visit (field on) or any visit (editors); checked in the route
 FIELD_SETTINGS = re.compile(r"^/field/settings(/|$)")             # budgets and practice links: editors
@@ -234,6 +236,7 @@ def _startup():
     zips.init()
     field.init()
     salesforce.init()
+    accounts.init()
     cal.init()
     try:
         db.seed_archive()          # reports read the daily archive; fill it from what's already synced
@@ -2627,6 +2630,12 @@ def market_map_data(request: Request):
     u = me(request)
     data = {**places.map_data(), **field.map_overlay(None if users.sees_all_field(u) else u["id"], users.hidden_people(u)),
             **schools.map_data()}
+    try:
+        only_p = users.practice_ids(u)
+        hid_p = db.hidden_ids()
+        data["sf_accounts"] = [x for x in accounts.map_data(only_p) if x["pid"] not in hid_p]
+    except Exception:
+        data["sf_accounts"] = []
     hid, only = db.hidden_ids(), users.practice_ids(u)
     if hid or only is not None:   # hidden practices' offices (and the dental offices around them) drop off; someone
         links = field.practice_links()      # limited to some practices sees only those practices' offices
@@ -2914,7 +2923,7 @@ def field_page(request: Request):
     vforms = {k: f for k, f in dept.forms_for([r["id"] for r in rows]).items()
               if dept.sees_forms(u, checklists.DEPT)}
     return page(request, "field.html", unlogged=cal.unlogged(u) if u.get("field") else [], fu_offer=offer_v,
-                vperm=vperm, vforms=vforms, dfilter=dfilter, departments=dept.DEPARTMENTS, dept_labels=dept.LABEL,
+                vperm=vperm, vforms=vforms, dfilter=dfilter, acct_labels=accounts.labels_for_offices({r["office_id"] for r in rows}), departments=dept.DEPARTMENTS, dept_labels=dept.LABEL,
                 my_alerts=dept.alerts(u["id"]), my_pending=(mp := dept.pending_for(u)), pending_rows=mp[:15], is_lead=dept.is_lead(u),
                 my_dept=dept.of(u), ck_forms=checklists.FORMS,
                 fu_events=fu_events, visit_events=cal.events_for_visits([r["id"] for r in rows]), period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
@@ -3072,6 +3081,154 @@ def brand_colors(request: Request, pid: int, primary: str = Form(""), accent: st
     return RedirectResponse(f"/p/{pid}#brand-images", status_code=303)
 
 
+# ---- Referral accounts: parent (brand) → location (Salesforce location account) → child accounts
+def _acct_brands(u):
+    return accounts.brands(users.practice_ids(u))
+
+
+@app.get("/field/accounts", response_class=HTMLResponse)
+def field_accounts(request: Request, p: int = 0, loc: str = "", a: str = "", f: str = "all", q: str = "", act: str = "all",
+                   more: int = 0):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    accounts.sync_if_stale()
+    blist = _acct_brands(u)
+    brand = next((b for b in blist if b["id"] == p), None) or (blist[0] if blist else None)
+    ctx = {"brands": blist, "brand": brand, "sync": accounts.status(), "sf_on": salesforce.connected(),
+           "filters": accounts.FILTERS, "f": f if f in dict(accounts.FILTERS) else "all", "q": q.strip(), "act": act,
+           "is_admin": u["role"] == "admin", "can_refresh": users.can(u, "refresh") or u["role"] in ("admin", "editor"),
+           "sf_base": salesforce.instance_url(), "more": bool(more)}
+    if not brand:
+        if u["role"] == "admin":
+            ctx["all_locations"] = _acct_all_locations()
+        return page(request, "field_accounts.html", **ctx)
+    pid = brand["id"]
+    locs = accounts.locations(pid)
+    loc_row = next((l for l in locs if l["sf_id"] == loc), None)
+    rows_all = accounts.accounts(pid)
+    rows = [x for x in rows_all if not loc_row or x["loc"] == loc_row["sf_id"]]
+    see_all = users.sees_all_field(u)
+    per_loc = {}
+    for x in rows_all:
+        if x["source"] != "npi":
+            d = per_loc.setdefault(x["loc"], {"n": 0, "v": 0})
+            d["n"] += 1
+            d["v"] += x["visits"]
+    sel = next((x for x in rows_all if x["key"] == a), None) if a else None
+    if sel is None and a.startswith("n:"):
+        sel = accounts.find(pid, a)
+    shown = accounts.sort_accounts(accounts.filter_accounts(rows, ctx["f"]))
+    kinds = ("visit",) if act == "visits" else ("note",) if act == "notes" else ("visit", "note")
+    if sel:
+        oids = [sel["office_id"]] if sel["office_id"] else []
+        feed = accounts.activity(pid, rows_all, oids, limit=60, kinds=kinds, keys=[sel["key"]])
+    elif loc_row:
+        oids = [x["office_id"] for x in rows if x["office_id"]]
+        feed = accounts.activity(pid, rows_all, oids, limit=40, kinds=kinds, keys=[x["key"] for x in rows])
+    else:
+        feed = accounts.activity(pid, rows_all, None, limit=40, kinds=kinds)
+    if not see_all:                       # people who see only their own visits see only their own here too
+        feed = [e for e in feed if e["kind"] != "visit" or e["who"] == u["name"]]
+    ctx.update(pid=pid, locs=locs, loc=loc_row, per_loc=per_loc, rows=shown if more else shown[:60], total=len(shown),
+               counts=accounts.counts(rows), sel=sel, feed=feed, results=accounts.search(pid, q) if q.strip() else None,
+               people=accounts.people_met(sel["office_id"]) if sel else [], size=accounts.office_size(sel["office_id"]) if sel else None,
+               all_rows=rows_all)
+    if u["role"] == "admin":
+        ctx["all_locations"] = _acct_all_locations()
+        ctx["practices"] = db.practices()
+    return page(request, "field_accounts.html", **ctx)
+
+
+def _acct_all_locations():
+    with db.conn() as c:
+        return [dict(x) for x in c.execute("SELECT * FROM acct_locations WHERE gone_at='' ORDER BY name")]
+
+
+@app.get("/field/accounts/search.json")
+def field_accounts_search(request: Request, p: int = 0, q: str = ""):
+    if not authed(request):
+        return Response(status_code=401)
+    u = me(request)
+    if p not in {b["id"] for b in _acct_brands(u)}:
+        return {"accounts": [], "people": [], "notes": []}
+    res = accounts.search(p, q)
+    if not users.sees_all_field(u):
+        res["notes"] = [n for n in res["notes"] if n["kind"] != "visit" or n["who"] == u["name"]]
+    slim = lambda x: {k: x.get(k) for k in ("key", "name", "loc", "loc_name", "address", "source", "refs", "last", "role", "account",
+                                             "who", "at", "where", "text", "kind")}
+    return {k: [slim(x) for x in v] for k, v in res.items() if isinstance(v, list)} | {"total": res.get("total", 0)}
+
+
+@app.post("/field/accounts/note")
+async def field_accounts_note(request: Request):
+    if (r := guard(request)):
+        return r
+    form = await request.form()
+    u = me(request)
+    pid = int(form.get("p") or 0)
+    back = form.get("back") or "/field/accounts"
+    back = back if back.startswith("/field/accounts") else "/field/accounts"
+    if pid not in {b["id"] for b in _acct_brands(u)}:
+        return RedirectResponse("/field/accounts", status_code=303)
+    try:
+        accounts.add_note(pid, form.get("key") or "", form.get("text") or "", u, PUBLIC_URL)
+        flash(request, "Note saved" + (" (copied to Salesforce in a moment)." if str(form.get("key", "")).startswith("sf:") else "."))
+    except accounts.AcctError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(back, status_code=303)
+
+
+@app.get("/field/accounts/log")
+def field_accounts_log(request: Request, p: int = 0, key: str = ""):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if not u.get("field"):
+        flash(request, "Field visits aren't switched on for you. Ask an admin to turn them on on the Team page.", "error")
+        return RedirectResponse("/field/accounts", status_code=303)
+    try:
+        oid = accounts.office_for(key, u["name"])
+    except (accounts.AcctError, field.FieldError) as e:
+        flash(request, str(e), "error")
+        return RedirectResponse(f"/field/accounts?p={p}", status_code=303)
+    back = f"/field/accounts?p={p}&a={urllib.parse.quote(key)}"
+    return RedirectResponse("/field/log?" + urllib.parse.urlencode({"office": oid, "practice": p, "back": back}), status_code=303)
+
+
+@app.post("/field/accounts/sync")
+def field_accounts_sync(request: Request):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if not (users.can(u, "refresh") or u["role"] in ("admin", "editor")):
+        return RedirectResponse("/field/accounts", status_code=303)
+    accounts.sync_in_background(u["name"])
+    flash(request, "Reading accounts from Salesforce now; this page fills in within a few minutes.")
+    return RedirectResponse(request.headers.get("referer") or "/field/accounts", status_code=303)
+
+
+@app.post("/field/accounts/settings")
+async def field_accounts_settings(request: Request):
+    if (r := guard(request)):
+        return r
+    u = me(request)
+    if u["role"] != "admin":
+        return RedirectResponse("/field/accounts", status_code=303)
+    form = await request.form()
+    try:
+        for k in form.keys():
+            if k.startswith("loc_"):
+                v = str(form.get(k) or "")
+                accounts.set_location_practice(k[4:], int(v) if v.isdigit() else None)
+            elif k.startswith("parent_") and k[7:].isdigit():
+                accounts.set_parent(int(k[7:]), form.get(k))
+        flash(request, "Saved how Salesforce locations match practices.")
+    except accounts.AcctError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(request.headers.get("referer") or "/field/accounts", status_code=303)
+
+
 @app.get("/field/log", response_class=HTMLResponse)
 def field_log_form(request: Request, place: str = "", npi: str = "", office: str = "", error: str = ""):
     if (r := guard(request)):
@@ -3116,7 +3273,8 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, staff_ranges=field.STAFF_RANGES, followup_choices=field.FOLLOWUP_DAYS, minute_choices=field.MINUTE_CHOICES, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
                 practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre,
-                cal_choices=cal.visit_candidates(me(request)) if not pre else [], **_form_ctx(me(request)))
+                cal_choices=cal.visit_candidates(me(request)) if not pre else [], **_form_ctx(me(request)),
+                acct_label=accounts.labels_for_offices({o["id"]}).get(o["id"]) if o.get("id") else None)
 
 
 @app.post("/field/visits")
@@ -6963,7 +7121,17 @@ def p360_practice(request: Request, pid: int, tf: str = "t3m"):
         p360.hub_refresh_if_stale()
     return page(request, "p360_practice.html", p=p, lanes=p360.lanes(pid, u), open_n=p360.open_count(pid, keys),
                 plist=_p360_practices(request), p_pods=p360.pods_of_practice(pid), v=p360.view(tf, pid=pid),
-                timeframes=p360.TIMEFRAMES, aisum=p360.ai_saved(pid), ai_on=ai.available())
+                timeframes=p360.TIMEFRAMES, aisum=p360.ai_saved(pid), ai_on=ai.available(), network=_p360_network(pid, u))
+
+
+def _p360_network(pid, u):
+    """Practice 360's Referral network section (for people who can open Field)."""
+    if not users.can(u, "field"):
+        return None
+    try:
+        return accounts.p360_summary(pid)
+    except Exception:
+        return None
 
 
 @app.get("/p360/{pid}/ledger", response_class=HTMLResponse)

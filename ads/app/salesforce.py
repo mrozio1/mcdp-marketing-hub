@@ -439,6 +439,9 @@ def start_scheduler(hub_url=""):
             if connected():
                 _safe(send_pending, hub_url)
                 _safe(keep_alive)
+                from . import accounts
+                _safe(accounts.resend_notes, hub_url)
+                _safe(accounts.sync_if_stale)
             time.sleep(RETRY_MINUTES * 60)
     threading.Thread(target=loop, name="salesforce-retry", daemon=True).start()
 

@@ -1,0 +1,19 @@
+{# Visits and notes for the current scope. Needs feed, act, base, loc, sel. #}
+{% set here = base ~ ('&loc=' ~ loc.sf_id if loc else '') ~ ('&a=' ~ (sel.key|urlencode) if sel else '') %}
+<div class="ra-acttype" role="group" aria-label="Activity type">
+  {% for k, l in [('all', 'All'), ('visits', 'Visits'), ('notes', 'Notes')] %}<a href="{{ here }}&amp;act={{ k }}" {% if act == k %}aria-current="true"{% endif %}>{{ l }}</a>{% endfor %}
+</div>
+{% if feed %}
+<ol class="ra-feed">
+  {% for e in feed %}
+  <li class="ra-ev-{{ e.kind }}">
+    <span class="ra-ev-icon" aria-hidden="true">{% if e.kind == 'visit' %}<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"></path><circle cx="12" cy="9.7" r="2.5"></circle></svg>{% else %}<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h10l4 4v12H5zM14 4v5h5M8 13h8M8 17h6"></path></svg>{% endif %}</span>
+    <div>
+      <p><strong>{{ 'Visit' if e.kind == 'visit' else 'Note' }}</strong>{% if not sel and e.where %} · {{ e.where }}{% endif %}{% if e.kind == 'visit' and e.met %} <span class="muted">· met {{ e.met }}</span>{% endif %}</p>
+      {% if e.text %}<p class="ra-ev-text">{{ e.text }}</p>{% endif %}
+      <p class="small muted">{{ e.who }} · {{ e.at[:16]|replace('T', ' ') }}{% if e.kind == 'note' and e.sf == 'sent' %} · in Salesforce{% elif e.kind == 'note' and e.sf == 'error' %} · <span class="danger">not copied to Salesforce yet</span>{% endif %}{% if e.kind == 'visit' %} · <a href="/field?period=day&amp;d={{ e.at[:10] }}#v{{ e.id }}">open</a>{% endif %}</p>
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}<p class="muted">No {{ 'visits' if act == 'visits' else 'notes' if act == 'notes' else 'visits or notes' }} yet.</p>{% endif %}
