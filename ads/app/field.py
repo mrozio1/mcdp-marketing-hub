@@ -102,6 +102,9 @@ def init():
         if "reminder_at" not in have:          # the 120-day "time to go back" email
             c.execute("ALTER TABLE visits ADD COLUMN reminder_at TEXT DEFAULT ''")
             c.execute("ALTER TABLE visits ADD COLUMN reminder_sent TEXT DEFAULT ''")
+        if "doctors" not in have:              # office size seen on the visit: doctors (1-6) and staff
+            c.execute("ALTER TABLE visits ADD COLUMN doctors INTEGER")
+            c.execute("ALTER TABLE visits ADD COLUMN staff INTEGER")
     from . import dept
     dept.init()
     os.makedirs(receipt_dir(), exist_ok=True)
@@ -435,6 +438,24 @@ def person_label(p):
     return p["name"] or p["email"]
 
 
+# Office size: staff counts offered for each number of doctors (Mark, Nov 25: 1 → 3-6, 2 → 7-10, 3 → 11-15, then by fives)
+STAFF_RANGES = {1: (3, 6), 2: (7, 10), 3: (11, 15), 4: (16, 20), 5: (21, 25), 6: (26, 30)}
+
+
+def size_in(form):
+    """(doctors, staff) from the form, or (None, None). Staff must be in that doctor count's range."""
+    d, s = str(form.get("doctors") or "").strip(), str(form.get("staff") or "").strip()
+    if not d.isdigit() or int(d) not in STAFF_RANGES:
+        return None, None
+    d = int(d)
+    lo, hi = STAFF_RANGES[d]
+    if not s.isdigit():
+        return d, None
+    if not lo <= int(s) <= hi:
+        raise FieldError(f"For {d} doctor{'' if d == 1 else 's'}, pick between {lo} and {hi} staff.")
+    return d, int(s)
+
+
 # ------------------------------------------------------------------ visits
 def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     """form: dict of the log form's fields. Returns the visit id."""
@@ -464,6 +485,7 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
     met_role = _clean(", ".join(dict.fromkeys(p["role"] for p in people if p["role"])), 200)
     receipt = save_receipt(receipt_bytes, receipt_type) if receipt_bytes else ""
     when = _when(form.get("visited_at"))
+    doctors, staff = size_in(form)
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO visits(office_id, user_id, user_name, visited_at, met_name, met_role, rating, dropped, cost, "
@@ -475,6 +497,7 @@ def log_visit(user, form, receipt_bytes=None, receipt_type=""):
              str(form.get("notes") or "").strip()[:4000], plat, plng, pacc, dist, on_site, db.now(), practice_id, practice_location,
              minutes_in(form.get("minutes")), virtual, user.get("id") or None, reminder_for(when)))
         vid = cur.lastrowid
+        c.execute("UPDATE visits SET doctors=?, staff=? WHERE id=?", (doctors, staff, vid))
         c.executemany("INSERT INTO visit_people(visit_id, pos, name, email, role) VALUES (?,?,?,?,?)",
                       [(vid, i, p["name"], p["email"], p["role"]) for i, p in enumerate(people)])
         return vid
@@ -499,7 +522,9 @@ def update_visit(vid, form, receipt_bytes=None, receipt_type="", by=""):
     elif form.get("remove_receipt"):
         receipt, old_receipt = "", v["receipt"]
     when = _when(form.get("visited_at")) if form.get("visited_at") else v["visited_at"]
+    doctors, staff = size_in(form)
     with db.conn() as c:
+        c.execute("UPDATE visits SET doctors=?, staff=? WHERE id=?", (doctors, staff, vid))
         c.execute("UPDATE visits SET visited_at=?, met_name=?, met_role=?, rating=?, dropped=?, cost=?, receipt=?, followup=?, "
                   "notes=?, practice_id=?, practice_location=?, minutes=?, virtual=? WHERE id=?",
                   (when, met_name, met_role, rating, _clean(form.get("dropped"), 300), money_in(form.get("cost")), receipt,
@@ -987,7 +1012,7 @@ def export_xlsx(rows, title):
     ws = wb.active
     ws.title = "Visits"
     head = ["Date", "Time", "Agent", "Office", "Address", "Met", "Role", "Email", "Relationship", "Dropped off", "Cost",
-            "On site", "Miles from office", "Follow-up", "Notes", "Receipt", "Visit type"]
+            "On site", "Miles from office", "Follow-up", "Notes", "Receipt", "Visit type", "Doctors", "Staff"]
     ws.append([title])
     ws["A1"].font = Font(bold=True, size=13)
     ws.append(head)
@@ -1001,12 +1026,12 @@ def export_xlsx(rows, title):
                    "; ".join(p["email"] or "–" for p in ppl) if any(p["email"] for p in ppl) else "",
                    RATING_LABELS.get(r["rating"], ""), r["dropped"], r["cost"] or 0,
                    {1: "Yes", 0: "No"}.get(r["on_site"], "Not shared"), r["distance_mi"], r["followup"], r["notes"],
-                   "Yes" if r["receipt"] else "", "Virtual" if r.get("virtual") else "In person"])
+                   "Yes" if r["receipt"] else "", "Virtual" if r.get("virtual") else "In person", r.get("doctors"), r.get("staff")])
         ws.cell(ws.max_row, 11).number_format = '"$"#,##0.00'
     total_row = ws.max_row + 1
     ws.cell(total_row, 10, "Total").font = Font(bold=True)
     ws.cell(total_row, 11, f"=SUM(K3:K{total_row - 1})").number_format = '"$"#,##0.00'
-    for col, w in zip("ABCDEFGHIJKLMNOPQ", (11, 7, 16, 30, 34, 22, 18, 28, 12, 22, 10, 9, 10, 11, 40, 8, 11)):
+    for col, w in zip("ABCDEFGHIJKLMNOPQRS", (11, 7, 16, 30, 34, 22, 18, 28, 12, 22, 10, 9, 10, 11, 40, 8, 11, 8, 8)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A3"
     buf = io.BytesIO()

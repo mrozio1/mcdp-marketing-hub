@@ -164,3 +164,16 @@ def test_operations_checklist(env):
     assert f2["kind"] == "recurring" and f2["data"]["marks"] == {"recurring_W_0": "done"} and f2["data"]["texts"]["ops_wins"]
     env["dept"].mark_seen(env["ids"]["jer"])
     assert env["dept"].alerts(env["ids"]["jer"]) == []
+
+
+def test_office_size(env):
+    form = env["mel"].get("/field/log").text
+    assert 'name="doctors"' in form and "Pick doctors first" in form
+    log(env["mel"], doctors="2", staff="8")
+    v = last_visit(env)
+    assert (v["doctors"], v["staff"]) == (2, 8)
+    assert "2 doctors · 8 staff" in env["amber"].get("/field?period=day").text
+    r = log(env["mel"], doctors="1", staff="12")                       # out of range for 1 doctor
+    assert "error=" in r.headers["location"] and last_visit(env)["id"] == v["id"]
+    # the next visit to the same office starts from the last size
+    assert 'value="2" selected' in env["mel"].get(f"/field/log?office={v['office_id']}").text

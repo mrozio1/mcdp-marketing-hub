@@ -88,6 +88,38 @@
     <button type="button" class="chip" id="add-person">+ Add another person</button>
   </fieldset>
 
+  {% set last = history[0] if (history and not ev) else {} %}
+  {% set cur_d = (ev.doctors if ev else last.get('doctors')) or '' %}
+  {% set cur_s = (ev.staff if ev else last.get('staff')) or '' %}
+  <fieldset class="office-size" id="office-size" data-ranges='{{ staff_ranges|tojson }}'>
+    <legend>Office size <span class="muted small">(optional{% if last.get('doctors') %}; filled in from the last visit{% endif %})</span></legend>
+    <label>Doctors
+      <select name="doctors" id="size-doctors">
+        <option value="">—</option>
+        {% for n in staff_ranges %}<option value="{{ n }}" {% if cur_d == n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Staff
+      <select name="staff" id="size-staff" data-cur="{{ cur_s }}" {% if not cur_d %}disabled{% endif %}>
+        <option value="">{{ '—' if cur_d else 'Pick doctors first' }}</option>
+        {% if cur_d %}{% set lo, hi = staff_ranges[cur_d] %}{% for n in range(lo, hi + 1) %}<option value="{{ n }}" {% if cur_s == n %}selected{% endif %}>{{ n }}</option>{% endfor %}{% endif %}
+      </select>
+    </label>
+  </fieldset>
+  <script>
+  (function () {
+    var box = document.getElementById('office-size'), d = document.getElementById('size-doctors'), s = document.getElementById('size-staff');
+    var ranges = JSON.parse(box.dataset.ranges);
+    d.addEventListener('change', function () {
+      var r = ranges[d.value], keep = s.value;
+      s.innerHTML = '';
+      var first = document.createElement('option'); first.value = ''; first.textContent = r ? '—' : 'Pick doctors first'; s.appendChild(first);
+      if (r) for (var n = r[0]; n <= r[1]; n++) { var o = document.createElement('option'); o.value = n; o.textContent = n; if (String(n) === keep) o.selected = true; s.appendChild(o); }
+      s.disabled = !r;
+    });
+  })();
+  </script>
+
   <fieldset class="rating-pick">
     <legend>Relationship</legend>
     {% for k, label in ratings.items() %}

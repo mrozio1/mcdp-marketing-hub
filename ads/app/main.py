@@ -3113,7 +3113,7 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
     suggested = (int(chosen) if chosen.isdigit() else None) or next(
         (h["practice_id"] for h in history if h.get("practice_id")), None) or field.suggested_practice(o, (me(request) or {}).get("id"))
     return page(request, "field_log.html", o=o, history=history, ratings=field.RATING_LABELS, roles=field.MET_ROLES,
-                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
+                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, staff_ranges=field.STAFF_RANGES, minute_choices=field.MINUTE_CHOICES, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
                 practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre,
                 cal_choices=cal.visit_candidates(me(request)) if not pre else [], **_form_ctx(me(request)))
@@ -3126,7 +3126,7 @@ async def field_log(request: Request):
     form = await request.form()
     data = {k: form.get(k) for k in ("office_id", "place_id", "npi_key", "name", "address", "office_lat", "office_lng", "visited_at",
                                      "met_name", "met_role", "rating", "dropped", "cost", "followup", "followup_days", "notes", "minutes",
-                                     "virtual", "practice_id", "practice_required",
+                                     "virtual", "practice_id", "practice_required", "doctors", "staff",
                                      "phone_lat", "phone_lng", "phone_acc")}
     names = form.getlist("person_name")
     if names:
@@ -3178,7 +3178,7 @@ def field_edit_form(request: Request, vid: int, error: str = ""):
     o = field.office(v["office_id"]) or {"id": v["office_id"], "name": v["office_name"], "address": v["office_address"]}
     back = request.query_params.get("back", "")
     return page(request, "field_log.html", o=o, ev=v, history=[], ratings=field.RATING_LABELS, roles=field.MET_ROLES,
-                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key="", map_id=places.map_id(), error=error,
+                max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, staff_ranges=field.STAFF_RANGES, minute_choices=field.MINUTE_CHOICES, browser_key="", map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=back if back.startswith("/") and not back.startswith("//") else "/field",
                 practice_choices=choices, practice_options=opts, suggested_practice=v["practice_id"],
                 selected_value=sel, pre=None, **_form_ctx(u, v))
@@ -3203,7 +3203,7 @@ async def field_edit(request: Request, vid: int):
         return RedirectResponse("/field", status_code=303)
     form = await request.form()
     data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "followup_days", "notes", "minutes", "virtual", "practice_id",
-                                     "practice_required", "remove_receipt")}
+                                     "practice_required", "remove_receipt", "doctors", "staff")}
     names = form.getlist("person_name")
     emails, roles = form.getlist("person_email"), form.getlist("person_role")
     data["people"] = [{"name": n, "email": emails[i] if i < len(emails) else "", "role": roles[i] if i < len(roles) else ""}

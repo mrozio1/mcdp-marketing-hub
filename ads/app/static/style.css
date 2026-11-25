@@ -2833,3 +2833,8 @@ fieldset.em-lists, .em-side fieldset, .em-settings fieldset { border: 0; padding
 .dept-alerts { list-style: none; padding: 0; margin: .3rem 0; display: flex; flex-direction: column; gap: .3rem; }
 .dept-alerts li.esc strong { color: #a33; }
 .dept-pending { margin: .3rem 0 0; padding-left: 1.1rem; }
+
+/* Field: office size on the log form */
+.office-size { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: flex-end; }
+.office-size legend { width: 100%; }
+.office-size label { display: flex; flex-direction: column; gap: .2rem; min-width: 8rem; }
