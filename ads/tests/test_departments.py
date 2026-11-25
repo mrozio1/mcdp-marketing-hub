@@ -177,3 +177,9 @@ def test_office_size(env):
     assert "error=" in r.headers["location"] and last_visit(env)["id"] == v["id"]
     # the next visit to the same office starts from the last size
     assert 'value="2" selected' in env["mel"].get(f"/field/log?office={v['office_id']}").text
+
+
+def test_two_week_follow_up(env):
+    assert "2 weeks" in env["mel"].get("/field/log").text
+    log(env["mel"], followup_days="14", visited_at="2026-11-25T10:00")
+    assert last_visit(env)["followup"] == "2026-12-09"

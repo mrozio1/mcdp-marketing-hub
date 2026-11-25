@@ -148,7 +148,7 @@
   <fieldset class="calf-pills fu-pick"><legend>Follow up</legend>
     {% if ev and ev.followup %}<label><input type="radio" name="followup_days" value="" checked><span>Keep {{ ev.followup }}</span></label>{% endif %}
     <label><input type="radio" name="followup_days" value="none" {% if not (ev and ev.followup) %}checked{% endif %}><span>None</span></label>
-    {% for d in (30, 60, 90) %}<label><input type="radio" name="followup_days" value="{{ d }}"><span>{{ d }} days</span></label>{% endfor %}
+    {% for d in followup_choices %}<label><input type="radio" name="followup_days" value="{{ d }}"><span>{{ '2 weeks' if d == 14 else d ~ ' days' }}</span></label>{% endfor %}
   </fieldset>
   {% if ev %}<input type="hidden" name="followup" value="{{ ev.followup or '' }}">{% endif %}
   <p class="small muted">Counted from the visit date, and shown only on your own calendar. Either way, if nobody's back to this office in 120 days, you get a reminder email.</p>

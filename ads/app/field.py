@@ -192,12 +192,12 @@ def _clean(s, n=500):
     return re.sub(r"\s+", " ", str(s or "")).strip()[:n]
 
 
-FOLLOWUP_DAYS = (30, 60, 90)
+FOLLOWUP_DAYS = (14, 30, 60, 90)
 REMINDER_DAYS = 120
 
 
 def followup_in(form, visited_at):
-    """The follow-up date from the form: 'followup_days' (none, 30, 60, 90 days after the visit), else a date."""
+    """The follow-up date from the form: 'followup_days' (none, 14, 30, 60, 90 days after the visit), else a date."""
     choice = str(form.get("followup_days") or "").strip()
     if choice == "none":
         return ""
