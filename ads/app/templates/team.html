@@ -25,7 +25,7 @@
 {% if people %}
 <div class="table-scroll">
 <table class="data team-table">
-  <thead><tr><th>Person</th><th>Access</th><th>Social</th><th>Field visits</th><th>Can open</th><th>Status</th><th></th></tr></thead>
+  <thead><tr><th>Person</th><th>Access</th><th>Department</th><th>Social</th><th>Field visits</th><th>Can open</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for u in people %}
     <tr class="{{ '' if u.active else 'muted' }}">
@@ -35,6 +35,19 @@
           <select name="role" aria-label="Access for {{ u.name }}" onchange="this.form.requestSubmit()">
             {% for r in roles %}<option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ labels[r] }}</option>{% endfor %}
           </select>
+          <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
+        </form>
+      </td>
+      <td class="team-dept">
+        <form method="post" action="/team/{{ u.id }}/department" class="inline-form team-dept-form">
+          <select name="department" aria-label="Department for {{ u.name }}" onchange="this.form.requestSubmit()">
+            <option value="">—</option>
+            {% for k, l in departments %}<option value="{{ k }}" {% if u.department == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+          </select>
+          {% if u.department and u.department != 'management' %}
+          <label class="check small"><input type="checkbox" name="lead" value="1" {% if u.dept_lead %}checked{% endif %} onchange="this.form.requestSubmit()"> Leads {{ dept_labels[u.department] }}</label>
+          {% if u.dept_lead %}<span class="small muted">Approves {{ dept_labels[u.department] }} visits · gets new-visit alerts</span>{% endif %}
+          {% elif u.department == 'management' %}<span class="small muted">Sees every department's visits and forms; no approvals needed</span>{% endif %}
           <noscript><button class="btn btn-small btn-quiet" type="submit">Save</button></noscript>
         </form>
       </td>
@@ -70,7 +83,7 @@
         {% endif %}
       </td>
     </tr>
-    <tr class="acc-row" id="access-{{ u.id }}"><td colspan="7">
+    <tr class="acc-row" id="access-{{ u.id }}"><td colspan="8">
       <details class="acc-drawer" {% if open_access == u.id|string %}open{% endif %}>
         <summary>What {{ u.name.split(' ')[0] }} can open</summary>
         <form method="post" action="/team/{{ u.id }}/access" class="acc-form">

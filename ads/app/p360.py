@@ -350,7 +350,9 @@ def _entry_row(r, today=None):
     return e
 
 
-def add_entry(pid, dept, kind, title, text, u, metric="", owner_id=None, due="", review=False, shots=()):
+def add_entry(pid, dept, kind, title, text, u, metric="", owner_id=None, due="", review=False, shots=(), force=False):
+    """force: made by the Hub itself on someone's behalf (e.g. an Operations checklist's action plan), so the
+    department-access check is skipped."""
     if dept not in DEPT_LABEL:
         raise P360Error("Pick a department.")
     if kind not in KINDS:
@@ -358,7 +360,7 @@ def add_entry(pid, dept, kind, title, text, u, metric="", owner_id=None, due="",
     title = (title or "").strip()[:200]
     if not title:
         raise P360Error("Give it a headline.")
-    if not can_write(u, dept):
+    if not force and not can_write(u, dept):
         raise P360Error(f"You can't add to {DEPT_LABEL[dept]} here. Ask an admin.")
     due = (due or "").strip()[:10]
     if due:

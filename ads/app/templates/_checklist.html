@@ -1,0 +1,112 @@
+{# Operations checklists inside the log / edit visit form. Needs ck_forms, ck_saved, ck_item_id. #}
+{% set saved = ck_saved.data if ck_saved else {} %}
+{% set cur = ck_saved.kind if ck_saved else '' %}
+<fieldset class="ck-box" id="checklist">
+  <legend>Operations checklist <span class="small muted">only Operations, Management and admins see this</span></legend>
+  <div class="ck-pick" role="radiogroup" aria-label="Checklist">
+    <label><input type="radio" name="ck_kind" value="" {% if not cur %}checked{% endif %}><span>None</span></label>
+    {% for k, f in ck_forms.items() %}<label><input type="radio" name="ck_kind" value="{{ k }}" {% if cur == k %}checked{% endif %}><span>{{ f.title }}</span></label>{% endfor %}
+  </div>
+  <p class="small muted">Saves with this visit. You can fill it in as you go and finish it later from the visit (Edit).</p>
+
+  {% for k, f in ck_forms.items() %}
+  <div class="ck-form" data-ck="{{ k }}" {% if cur != k %}hidden{% endif %}>
+    <p class="small ck-intro">{{ f.intro }}</p>
+    {% for s in f.sections %}
+    <details class="ck-sec" {% if loop.first %}open{% endif %}>
+      <summary><strong>{{ s.key }} · {{ s.title }}</strong> <span class="small muted ck-count" data-sec="{{ k }}_{{ s.key }}"></span></summary>
+      {% for item in s['items'] %}{% set iid = ck_item_id(f, s, loop.index0) %}{% set m = saved.get('marks', {}).get(iid, '') if cur == k else '' %}
+      <div class="ck-item">
+        {% if s.check %}
+        <label class="ck-done"><input type="checkbox" name="ck_{{ iid }}" value="done" {% if m == 'done' %}checked{% endif %}> <span>{{ item }}</span></label>
+        {% else %}
+        <span class="ck-marks" role="radiogroup" aria-label="{{ item[:60] }}">
+          {% for mk, ml in [('P', 'P'), ('A', 'A'), ('NA', 'N/A')] %}<label class="mk-{{ mk }}"><input type="radio" name="ck_{{ iid }}" value="{{ mk }}" {% if m == mk %}checked{% endif %}><span>{{ ml }}</span></label>{% endfor %}
+        </span>
+        <span class="ck-text">{{ item }}</span>
+        {% endif %}
+        {% set note = saved.get('notes', {}).get(iid, '') if cur == k else '' %}
+        <input class="ck-note" name="ckn_{{ iid }}" value="{{ note }}" maxlength="1000" placeholder="{{ 'Note (optional)' if s.check else 'What needs action? (or why N/A)' }}" aria-label="Note" {% if not note and m not in ('A', 'NA') %}hidden{% endif %}>
+      </div>
+      {% endfor %}
+    </details>
+    {% endfor %}
+
+    {% if f.sections|selectattr('scored')|list %}
+    <div class="ck-scores" data-ck-scores="{{ k }}">
+      {% for s in f.sections if s.scored %}<span><small>{{ s.key }}</small><b data-score="{{ k }}_{{ s.key }}">—</b></span>{% endfor %}
+      <span class="ck-comb"><small>Combined</small><b data-score="{{ k }}_all">—</b></span>
+    </div>
+    <p class="small muted">Score = passes ÷ items marked P or A, worked out as you go.</p>
+    {% endif %}
+
+    {% for tk, tl in f.texts %}
+    <label class="ck-long">{{ tl }}<textarea name="ckt_{{ tk }}" rows="2" maxlength="4000">{{ saved.get('texts', {}).get(tk, '') if cur == k else '' }}</textarea></label>
+    {% endfor %}
+
+    {% if f.escalation %}
+    <label class="ck-long ck-esc">{{ f.escalation }}<textarea name="ck_escalation" data-esc="{{ k }}" rows="2" maxlength="2000" placeholder="Anything here alerts your lead right away, whatever the score">{{ saved.get('escalation', '') if cur == k else '' }}</textarea></label>
+    <p class="small muted">{{ f.escalation_note }}</p>
+    {% endif %}
+
+    {% if f.action_plan %}
+    <div class="ck-plan">
+      <p class="ck-plan-head"><strong>Action plan from this visit</strong> <span class="small muted">Record every gap; prioritize 2–3. Each row becomes an action item in Practice 360 › Operations for this practice.</span></p>
+      <div class="ck-plan-rows" data-plan="{{ k }}">
+        {% set rows = (saved.get('plan', []) if cur == k else []) + [{}] %}
+        {% for r in rows %}
+        <div class="ck-plan-row">
+          <input name="ap_gap" placeholder="Gap" maxlength="500" value="{{ r.gap or '' }}" aria-label="Gap">
+          <input name="ap_action" placeholder="Tactic / action" maxlength="500" value="{{ r.action or '' }}" aria-label="Tactic or action">
+          <input name="ap_goal" placeholder="Goal" maxlength="500" value="{{ r.goal or '' }}" aria-label="Goal">
+          <input name="ap_owner" placeholder="Owner" maxlength="200" value="{{ r.owner or '' }}" aria-label="Owner">
+          <input name="ap_due" type="date" value="{{ r.due or '' }}" aria-label="Due date">
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="chip ck-plan-add" data-plan-add="{{ k }}">+ Add a row</button>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</fieldset>
+<script>
+(function () {
+  var box = document.getElementById('checklist'); if (!box) return;
+  function show() {
+    var k = (box.querySelector('input[name=ck_kind]:checked') || {}).value || '';
+    box.querySelectorAll('.ck-form').forEach(function (f) {
+      var on = f.dataset.ck === k; f.hidden = !on;
+      // only the shown checklist's fields are sent
+      f.querySelectorAll('input, textarea').forEach(function (el) { el.disabled = !on; });
+    });
+    score();
+  }
+  function score() {
+    box.querySelectorAll('.ck-form').forEach(function (f) {
+      var k = f.dataset.ck, P = 0, PA = 0;
+      f.querySelectorAll('.ck-sec').forEach(function (sec) {
+        var key = sec.querySelector('.ck-count').dataset.sec, items = sec.querySelectorAll('.ck-item'), ans = 0, p = 0, a = 0;
+        items.forEach(function (it) {
+          var c = it.querySelector('input[type=radio]:checked, input[type=checkbox]:checked');
+          if (c) { ans++; if (c.value === 'P') p++; if (c.value === 'A') a++; }
+          var note = it.querySelector('.ck-note'), v = c ? c.value : '';
+          if (note && !note.value && v !== 'A' && v !== 'NA') note.hidden = true; else if (note) note.hidden = false;
+        });
+        sec.querySelector('.ck-count').textContent = ans + ' of ' + items.length;
+        var b = f.querySelector('[data-score="' + key + '"]');
+        if (b) { b.textContent = (p + a) ? Math.round(p / (p + a) * 100) + '%' : '—'; P += p; PA += p + a; }
+      });
+      var all = f.querySelector('[data-score="' + k + '_all"]'); if (all) all.textContent = PA ? Math.round(P / PA * 100) + '%' : '—';
+    });
+  }
+  box.addEventListener('change', function (e) { if (e.target.name === 'ck_kind') show(); else score(); });
+  box.querySelectorAll('[data-plan-add]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var rows = box.querySelector('[data-plan="' + b.dataset.planAdd + '"]'), last = rows.lastElementChild, n = last.cloneNode(true);
+      n.querySelectorAll('input').forEach(function (i) { i.value = ''; }); rows.appendChild(n);
+    });
+  });
+  show();
+})();
+</script>

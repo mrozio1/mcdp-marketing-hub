@@ -26,7 +26,7 @@
     {% if acc.studio %}<a href="/studio" {% if here.startswith('/studio') %}aria-current="page"{% endif %}>Studio{% if studio_waiting %} <span class="nav-count" aria-label="{{ studio_waiting }} waiting for your approval">{{ studio_waiting }}</span>{% endif %}</a>{% endif %}
     {% if show_social %}<a href="{{ social_url or 'https://social.mcdp.com' }}" target="_blank" rel="noopener">Social</a>{% endif %}
     {% if acc.map %}<a href="/map" {% if here.startswith('/map') %}aria-current="page"{% endif %}>Map</a>{% endif %}
-    {% if acc.field %}<a href="/field" {% if here.startswith('/field') %}aria-current="page"{% endif %}>Field</a>{% endif %}
+    {% if acc.field %}<a href="/field" {% if here.startswith('/field') %}aria-current="page"{% endif %}>Field{% if field_alerts %} <span class="nav-count" aria-label="{{ field_alerts }} visit{{ '' if field_alerts == 1 else 's' }} for you to look at">{{ field_alerts }}</span>{% endif %}</a>{% endif %}
     {% if acc.calendar %}<a href="/calendar" {% if here.startswith('/calendar') %}aria-current="page"{% endif %}>Calendar</a>{% endif %}
     {% if is_admin %}
     <a href="/connections" {% if here.startswith('/connections') %}aria-current="page"{% endif %}>Connections</a>

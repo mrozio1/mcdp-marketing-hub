@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import p360
+from . import dept, checklists
 from . import actions, agent, ai, brand, cal, campaigns, db, images, intake, wins, emailer, tools, emailfmt, field, organic, places, microsoft, referrals, reviews, salesforce, schools, scope, seasons, sync, users, visibility, field_report, studio, canva, studio_flow, social, studio_video, video2, bgremove, stock, vfx, proxy
 from . import connectors as cx
 from . import report as master_report
@@ -343,6 +344,10 @@ def page(request, name, **ctx):
     ctx["my_practices"] = users.practice_ids(u)
     ctx.setdefault("inbox_open", reviews.open_count() if u and ctx["acc"].get("reviews") else 0)
     try:
+        ctx.setdefault("field_alerts", dept.attention_count(u) if u else 0)
+    except Exception:
+        ctx["field_alerts"] = 0
+    try:
         ctx.setdefault("studio_waiting", studio_flow.waiting_count(u["id"]) if u else 0)
     except Exception:
         ctx["studio_waiting"] = 0
@@ -575,7 +580,7 @@ def team(request: Request):
         t["pids"] = users.chosen_practices(t)
         t["color"] = users.cal_color(t)
         t["on_tabs"] = [label for k, label, _ in users.TABS if t["acc"][k]]
-    return page(request, "team.html", people=people, tabs=users.TABS, extras=users.EXTRAS, all_practices=db.practices(),
+    return page(request, "team.html", people=people, departments=dept.DEPARTMENTS, dept_labels=dept.LABEL, tabs=users.TABS, extras=users.EXTRAS, all_practices=db.practices(),
                 depts=users.DEPT_FLAGS, dept_owner_ids=p360.owners(),
                 cal_colors=users.CAL_COLORS, open_access=request.query_params.get("open", ""), roles=users.ROLES, labels=users.ROLE_LABELS,
                 help=users.ROLE_HELP, link=link, link_days=users.LINK_DAYS, shared=me(request)["id"] == 0,
@@ -632,6 +637,25 @@ def team_role(request: Request, uid: int, role: str = Form("")):
     except ValueError as e:
         flash(request, str(e), "error")
     return RedirectResponse("/team", status_code=303)
+
+
+@app.post("/team/{uid}/department")
+def team_department(request: Request, uid: int, department: str = Form(""), lead: str = Form("")):
+    if (r := guard(request)):
+        return r
+    x = users.get(uid)
+    if not x:
+        return RedirectResponse("/team", status_code=303)
+    try:
+        if department != (x.get("department") or ""):
+            lead = ""                        # a new department starts as a member, not its lead
+        dept.set_department(uid, department, bool(lead))
+        y = users.get(uid)
+        flash(request, f"{x['name']}: " + (f"{dept.LABEL[y['department']]}{' lead' if y.get('dept_lead') else ''}."
+                                          if y.get("department") else "no department."))
+    except dept.DeptError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(f"/team#access-{uid}", status_code=303)
 
 
 @app.post("/team/{uid}/active")
@@ -2862,6 +2886,10 @@ def field_page(request: Request):
         who = u["id"]
     start, end, label, prev_d, next_d = field.period_bounds(period, day)
     rows = field.visits_between(start, end, who, prac)
+    dfilter = request.query_params.get("dept", "")
+    dfilter = dfilter if dfilter in dept.LABEL or dfilter == "none" else ""
+    if dfilter:
+        rows = [r for r in rows if (r.get("department") or "none") == dfilter]
     m_start, m_end, *_ = field.period_bounds("month", day)
     month_rows = field.visits_between(m_start, m_end, None if see_all else u["id"])
     hide = users.hidden_people(u)
@@ -2882,7 +2910,13 @@ def field_page(request: Request):
     fu_events = cal.followups_for(vids)
     if offer_v and (offer in fu_events or offer_v["user_id"] != u["id"]):
         offer_v = None
+    vperm = {r["id"]: {"change": dept.can_change(u, r), "approve": dept.can_approve(u, r)} for r in rows}
+    vforms = {k: f for k, f in dept.forms_for([r["id"] for r in rows]).items()
+              if dept.sees_forms(u, checklists.DEPT)}
     return page(request, "field.html", unlogged=cal.unlogged(u) if u.get("field") else [], fu_offer=offer_v,
+                vperm=vperm, vforms=vforms, dfilter=dfilter, departments=dept.DEPARTMENTS, dept_labels=dept.LABEL,
+                my_alerts=dept.alerts(u["id"]), my_pending=(mp := dept.pending_for(u)), pending_rows=mp[:15], is_lead=dept.is_lead(u),
+                my_dept=dept.of(u), ck_forms=checklists.FORMS,
                 fu_events=fu_events, visit_events=cal.events_for_visits([r["id"] for r in rows]), period=period, day=day, label=label, prev_d=prev_d, next_d=next_d,
                 today=date.today(), start=start, end=end, rows=rows, days=field.by_day(rows), sums=field.summary(rows),
                 budgets=budgets, see_all=see_all, month_label=m_start.strftime("%B %Y"),
@@ -3082,7 +3116,7 @@ def field_log_form(request: Request, place: str = "", npi: str = "", office: str
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key=places.browser_key(), map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=request.query_params.get("back", ""), practice_choices=choices,
                 practice_options=field.practice_options(choices), suggested_practice=suggested, pre=pre,
-                cal_choices=cal.visit_candidates(me(request)) if not pre else [])
+                cal_choices=cal.visit_candidates(me(request)) if not pre else [], **_form_ctx(me(request)))
 
 
 @app.post("/field/visits")
@@ -3107,6 +3141,10 @@ async def field_log(request: Request):
         q = urllib.parse.urlencode({k: v for k, v in (("office", data["office_id"]), ("place", data["place_id"]),
                                                        ("npi", data["npi_key"]), ("error", str(e))) if v})
         return RedirectResponse(f"/field/log?{q}", status_code=303)
+    u = me(request)
+    if dept.uses_forms(u) and (form.get("ck_kind") or "") in checklists.FORMS:
+        dept.save_form(vid, form.get("ck_kind"), form, u)
+    await asyncio.to_thread(dept.on_logged, vid, u, PUBLIC_URL)
     salesforce.send_in_background(PUBLIC_URL)
     if str(form.get("event_id") or "").isdigit():
         cal.set_status(int(form.get("event_id")), visit_id=vid)
@@ -3121,7 +3159,7 @@ async def field_log(request: Request):
 
 
 def _can_change_visit(v, u):
-    return bool(v and u and ((v["user_id"] == u["id"] and u.get("field")) or users.rank(u["role"]) >= users.rank("editor")))
+    return dept.can_change(u, v)
 
 
 @app.get("/field/visits/{vid}/edit", response_class=HTMLResponse)
@@ -3130,7 +3168,7 @@ def field_edit_form(request: Request, vid: int, error: str = ""):
         return r
     v, u = field.visit(vid), me(request)
     if not _can_change_visit(v, u):
-        flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
+        flash(request, "Only the person who logged a visit, their department's lead, Management or an admin can change it.", "error")
         return RedirectResponse("/field", status_code=303)
     allp = db.practices()
     choices = sorted([q for q in allp if not master_report._is_master(q, allp)], key=lambda q: q["name"].lower())
@@ -3143,7 +3181,16 @@ def field_edit_form(request: Request, vid: int, error: str = ""):
                 max_people=field.MAX_PEOPLE, chips=field.DROP_CHIPS, minute_choices=field.MINUTE_CHOICES, browser_key="", map_id=places.map_id(), error=error,
                 ai_on=ai.available(), back=back if back.startswith("/") and not back.startswith("//") else "/field",
                 practice_choices=choices, practice_options=opts, suggested_practice=v["practice_id"],
-                selected_value=sel, pre=None)
+                selected_value=sel, pre=None, **_form_ctx(u, v))
+
+
+def _form_ctx(u, v=None):
+    """The Operations checklists for the log/edit form, when this person uses them."""
+    show = dept.uses_forms(u) and (v is None or dept.of(u) == checklists.DEPT or (v.get("department") or "") == checklists.DEPT
+                                   or dept.form_for(v["id"]) is not None or dept.is_admin(u) or dept.is_management(u))
+    f = dept.form_for(v["id"]) if (v and show) else None
+    return {"ck_show": show, "ck_forms": checklists.FORMS, "ck_saved": f, "ck_item_id": checklists.item_id,
+            "ops_visit": dept.of(u) == checklists.DEPT and (v is None or v["user_id"] == u["id"])}
 
 
 @app.post("/field/visits/{vid}")
@@ -3152,7 +3199,7 @@ async def field_edit(request: Request, vid: int):
         return r
     v, u = field.visit(vid), me(request)
     if not _can_change_visit(v, u):
-        flash(request, "Only the person who logged a visit, or an editor, can change it.", "error")
+        flash(request, "Only the person who logged a visit, their department's lead, Management or an admin can change it.", "error")
         return RedirectResponse("/field", status_code=303)
     form = await request.form()
     data = {k: form.get(k) for k in ("visited_at", "rating", "dropped", "cost", "followup", "followup_days", "notes", "minutes", "virtual", "practice_id",
@@ -3169,10 +3216,46 @@ async def field_edit(request: Request, vid: int):
         nv = await asyncio.to_thread(field.update_visit, vid, data, blob, "", u.get("name", ""))
     except field.FieldError as e:
         return RedirectResponse(f"/field/visits/{vid}/edit?" + urllib.parse.urlencode({"error": str(e), "back": back}), status_code=303)
+    if dept.uses_forms(u) and "ck_kind" in form:
+        k = form.get("ck_kind") or ""
+        dept.save_form(vid, k if k in checklists.FORMS else "", form, u)
+    await asyncio.to_thread(dept.on_edited, vid, u, PUBLIC_URL)
     if nv.get("sf_task_id"):
         salesforce.send_in_background(PUBLIC_URL)
     flash(request, f"Visit to {nv['office_name']} updated{' (Salesforce is updated in a moment)' if nv.get('sf_task_id') else ''}.")
     return RedirectResponse(back, status_code=303)
+
+
+@app.post("/field/visits/{vid}/approve")
+def field_approve(request: Request, vid: int, note: str = Form("")):
+    if (r := guard(request)):
+        return r
+    try:
+        dept.approve(vid, me(request), note)
+        flash(request, "Visit approved.")
+    except dept.DeptError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(request.headers.get("referer") or "/field", status_code=303)
+
+
+@app.post("/field/visits/{vid}/return")
+async def field_send_back(request: Request, vid: int, note: str = Form("")):
+    if (r := guard(request)):
+        return r
+    try:
+        await asyncio.to_thread(dept.send_back, vid, me(request), note, PUBLIC_URL)
+        flash(request, "Sent back with your note; they've been told.")
+    except dept.DeptError as e:
+        flash(request, str(e), "error")
+    return RedirectResponse(request.headers.get("referer") or "/field", status_code=303)
+
+
+@app.post("/field/alerts/seen")
+def field_alerts_seen(request: Request):
+    if (r := guard(request)):
+        return r
+    dept.mark_seen(me(request)["id"])
+    return RedirectResponse(request.headers.get("referer") or "/field", status_code=303)
 
 
 @app.post("/field/visits/{vid}/delete")
@@ -3184,7 +3267,7 @@ def field_delete(request: Request, vid: int):
         field.delete_visit(vid)
         flash(request, "Visit removed.")
     else:
-        flash(request, "Only the person who logged a visit, or an editor, can remove it.", "error")
+        flash(request, "Only the person who logged a visit, their department's lead, Management or an admin can remove it.", "error")
     return RedirectResponse(request.headers.get("referer") or "/field", status_code=303)
 
 

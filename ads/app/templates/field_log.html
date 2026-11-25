@@ -26,7 +26,7 @@
 {% elif pre and pre.subject %}<p class="small from-cal-note">From the calendar: <strong>{{ pre.subject }}</strong>{% if pre.virtual %} · Teams meeting, so it's marked virtual{% endif %}</p>
 {% endif %}
 
-<form method="post" action="{{ '/field/visits/' ~ ev.id if ev else '/field/visits' }}" enctype="multipart/form-data" class="stack visit-form" id="visit-form" data-busy="Saving…">
+<form method="post" action="{{ '/field/visits/' ~ ev.id if ev else '/field/visits' }}" enctype="multipart/form-data" class="stack visit-form{{ ' ops-visit' if ops_visit }}" id="visit-form" data-busy="Saving…">
   <input type="hidden" name="office_id" value="{{ o.id or '' }}">
   <input type="hidden" name="place_id" value="{{ o.place_id or '' }}">
   <input type="hidden" name="npi_key" value="{{ o.npi_key or '' }}">
@@ -70,6 +70,8 @@
     </label>
   </div>
 
+  {% if ck_show %}{% include "_checklist.html" %}{% endif %}
+
   <fieldset class="people-met" id="people-met">
     <legend>Who you met</legend>
     {% set plist_in = (ev.people if ev else (pre.people if pre else [])) or [{}] %}
@@ -93,7 +95,7 @@
     {% endfor %}
   </fieldset>
 
-  <label>What you dropped off
+  <label class="dropped-row">What you dropped off
     <input name="dropped" id="dropped" maxlength="300" placeholder="e.g. Lunch for 8, referral pads" autocomplete="off" value="{{ ev.dropped if ev else (pre.dropped if pre else '') }}">
   </label>
   <div class="chips" aria-label="Quick add">{% for c in chips %}<button type="button" class="chip" data-chip="{{ c }}">+ {{ c }}</button>{% endfor %}</div>

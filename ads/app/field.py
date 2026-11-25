@@ -102,6 +102,8 @@ def init():
         if "reminder_at" not in have:          # the 120-day "time to go back" email
             c.execute("ALTER TABLE visits ADD COLUMN reminder_at TEXT DEFAULT ''")
             c.execute("ALTER TABLE visits ADD COLUMN reminder_sent TEXT DEFAULT ''")
+    from . import dept
+    dept.init()
     os.makedirs(receipt_dir(), exist_ok=True)
 
 

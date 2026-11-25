@@ -2,7 +2,7 @@
 {% from "_macros.html" import ruler %}
 {% block title %}Field visits{% endblock %}
 {% block content %}
-{% set qs = {'period': period, 'd': day.isoformat(), 'who': who or '', 'practice': practice or ''} %}
+{% set qs = {'period': period, 'd': day.isoformat(), 'who': who or '', 'practice': practice or '', 'dept': dfilter or ''} %}
 <div class="title-row">
   <h1>{{ 'Field visits' if see_all else 'Your field visits' }}</h1>
   <div class="title-actions">
@@ -34,6 +34,12 @@
   <label>Practice
     <select name="practice" onchange="this.form.submit()"><option value="">All</option>
       {% for p in practices %}<option value="{{ p.id }}" {% if practice == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Department
+    <select name="dept" onchange="this.form.submit()"><option value="">All departments</option>
+      {% for k, l in departments %}<option value="{{ k }}" {% if dfilter == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      <option value="none" {% if dfilter == 'none' %}selected{% endif %}>No department</option>
     </select>
   </label>
   <noscript><button class="btn btn-quiet btn-small" type="submit">Show</button></noscript>
@@ -71,18 +77,43 @@
 </section>
 {% endif %}
 
+{% if my_pending or my_alerts %}
+<section class="panel dept-attn" aria-label="For you to look at">
+  {% if my_pending %}<p class="dept-attn-head"><strong>{{ my_pending|length }} visit{{ '' if my_pending|length == 1 else 's' }} waiting for your approval</strong>
+    <span class="small muted">{% if is_lead %}You lead {{ dept_labels[my_dept] }}: you approve its visits or send them back with a note.{% else %}You can approve any department's visits.{% endif %} Visits from other weeks are listed below too.</span></p>{% endif %}
+  {% if my_alerts %}
+  <ul class="dept-alerts">
+    {% for a in my_alerts %}
+    <li class="{{ 'esc' if a.kind == 'escalation' else '' }}">
+      {% if a.kind == 'returned' %}<strong>Sent back to you</strong>{% elif a.kind == 'escalation' %}<strong>Safety escalation</strong>{% elif a.kind == 'resubmitted' %}<strong>Corrected</strong>{% else %}<strong>New {{ dept_labels.get(a.department, '') }} visit</strong>{% endif %}
+      · <a href="/field?period=day&amp;d={{ a.visited_at[:10] }}#v{{ a.visit_id }}">{{ a.office_name }}</a>
+      <span class="small muted">{{ a.user_name }} · {{ a.visited_at[:16]|replace('T', ' ') }}{% if a.text %} · {{ a.text }}{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/field/alerts/seen" class="inline-form"><button class="linklike small" type="submit">Mark these as seen</button></form>
+  {% endif %}
+  {% if my_pending %}
+  <ul class="dept-pending small">
+    {% for p in pending_rows %}<li><a href="/field?period=day&amp;d={{ p.visited_at[:10] }}#v{{ p.id }}">{{ p.office_name }}</a> · {{ p.user_name }} · {{ p.visited_at[:10] }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
 <section aria-labelledby="where-h">
   <h2 id="where-h">Where they've been</h2>
   {% for d, items in days %}
   <h3 class="day-head">{{ d.strftime('%A, %B %-d') }}{% if d == today %} <span class="muted small">today</span>{% endif %} <span class="muted small">· {{ items|length }} visit{{ '' if items|length == 1 else 's' }}{% if items|sum(attribute='cost') %} · {{ items|sum(attribute='cost')|money }}{% endif %}</span></h3>
   <ul class="visit-list">
     {% for v in items %}
-    <li class="visit">
+    <li class="visit" id="v{{ v.id }}">
       <div class="visit-when">{{ v.visited_at[11:16] }}</div>
       <div class="visit-body">
         <p class="visit-title"><strong>{{ v.office_name }}</strong>
           {% if v.rating %}<span class="rating-chip r-{{ v.rating }}">{{ ratings[v.rating] }}</span>{% endif %}
           {% if v.virtual %}<span class="tag tag-virtual" title="Phone, video or Teams call">virtual</span>{% elif v.on_site == 1 %}<span class="tag tag-ok" title="Checked in within 0.2 mi">on site</span>{% elif v.on_site == 0 %}<span class="tag tag-far" title="Phone was {{ v.distance_mi }} mi away">{{ v.distance_mi }} mi away</span>{% endif %}
+          {% if v.department %}<span class="tag tag-dept tag-dept-{{ v.department }}">{{ dept_labels.get(v.department, v.department) }}</span>{% endif %}
           {% if sf_on %}{% if v.sf_status == 'sent' %}<a class="tag tag-ok" href="{{ sf_base }}/{{ v.sf_task_id }}" target="_blank" rel="noopener" title="Open the Task in Salesforce">in Salesforce</a>{% elif v.sf_status == 'error' %}<span class="tag tag-far" title="{{ v.sf_error }}">Salesforce: not sent</span>{% else %}<span class="tag" title="Sent within 15 minutes">to Salesforce…</span>{% endif %}{% endif %}
         </p>
         {% set vp = practices|selectattr('id', 'equalto', v.practice_id)|first if v.practice_id else none %}
@@ -93,9 +124,33 @@
           {% set fe = fu_events.get(v.id) %}{% if fe %} · <a href="/calendar?event={{ fe.id }}&d={{ fe.starts[:10] }}">invite scheduled{% if fe.status == 'sent' %} ✓{% endif %}</a>
           {% elif v.user_id == my_id or see_all %} · <a href="/calendar/new?from_visit={{ v.id }}">Schedule the follow-up</a>{% endif %}</p>{% endif %}
         {% set ve = visit_events.get(v.id) %}{% if ve %}<p class="small">From the calendar: <a href="/calendar?event={{ ve.id }}&d={{ ve.starts[:10] }}">{{ ve.subject }}</a>{% if ve.ms_join %} · <a href="{{ ve.ms_join }}" target="_blank" rel="noopener">Teams meeting link</a>{% endif %}</p>{% endif %}
+        {% set vf = vforms.get(v.id) %}
+        {% if vf %}
+        <div class="vf-card">
+          <p class="vf-head"><strong>{{ vf.title }}</strong> <span class="small muted">{{ vf.score.answered }} of {{ vf.score.total }} answered</span>
+            {% if vf.score.combined is not none %}<span class="vf-combined">Combined {{ vf.score.combined }}%</span>{% endif %}</p>
+          {% if vf.score.has_scores %}<div class="vf-scores">{% for sc in vf.score.sections if sc.scored %}<span><small>{{ sc.key }}</small><b>{{ '%d%%'|format(sc.pct) if sc.pct is not none else '—' }}</b></span>{% endfor %}</div>{% endif %}
+          {% if vf.escalation %}<p class="small vf-esc"><strong>Safety escalation:</strong> {{ vf.escalation }}</p>{% endif %}
+          {% if vf.score.actions or vf.data.plan %}<p class="small">{% if vf.score.actions %}<strong>{{ vf.score.actions }} item{{ ' needs' if vf.score.actions == 1 else 's need' }} action</strong>{% endif %}{% if vf.data.plan %}{{ ' · ' if vf.score.actions }}{{ vf.data.plan|length }} in the action plan (Practice 360 › Operations){% endif %}</p>{% endif %}
+          {% if vperm[v.id].change %}<a class="small" href="/field/visits/{{ v.id }}/edit?{{ {'back': '/field?' ~ (qs|urlencode)}|urlencode }}#checklist">Open the checklist</a>{% endif %}
+        </div>
+        {% endif %}
+        {% if v.approval %}
+        <div class="vf-approval">
+          {% if v.approval == 'pending' %}<span class="ap-chip ap-wait">Waiting for approval</span>
+          {% elif v.approval == 'approved' %}<span class="ap-chip ap-ok">Approved by {{ v.approval_by }} · {{ v.approval_at[5:10]|replace('-', '/') }}</span>{% if v.approval_note %} <span class="small muted">{{ v.approval_note }}</span>{% endif %}
+          {% elif v.approval == 'returned' %}<span class="ap-chip ap-back">Sent back by {{ v.approval_by }}</span> <span class="small">{{ v.approval_note }}</span>{% endif %}
+          {% if vperm[v.id].approve and v.approval != 'approved' %}
+          <form method="post" action="/field/visits/{{ v.id }}/approve" class="inline-form"><button class="btn btn-small" type="submit">Approve</button></form>
+          <details class="ap-back-form"><summary class="btn btn-small btn-quiet">Send back with a note</summary>
+            <form method="post" action="/field/visits/{{ v.id }}/return"><label class="small">What needs correcting?<textarea name="note" rows="2" required></textarea></label>
+              <button class="btn btn-small" type="submit">Send back</button></form></details>
+          {% endif %}
+        </div>
+        {% endif %}
         <p class="small visit-actions">
           {% if can_log %}<a href="/field/log?{{ {'office': v.office_id, 'back': '/field?' ~ (qs|urlencode)}|urlencode }}">Log another visit here</a>{% endif %}
-          {% if can_edit or (v.user_id == my_id and can_log) %}
+          {% if vperm[v.id].change %}
           <a href="/field/visits/{{ v.id }}/edit?{{ {'back': '/field?' ~ (qs|urlencode)}|urlencode }}">Edit</a>
           <form method="post" action="/field/visits/{{ v.id }}/delete" data-confirm="Remove this visit{{ ' and its receipt' if v.receipt else '' }}?"><button class="linklike danger small" type="submit">Remove</button></form>
           {% endif %}

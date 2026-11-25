@@ -60,7 +60,9 @@ COLUMNS = {"setup_hash": "TEXT DEFAULT ''", "setup_expires": "TEXT DEFAULT ''", 
            "field_manager": "INTEGER NOT NULL DEFAULT 0",
            "perms": "TEXT DEFAULT ''",          # JSON of what this person can open; '' = their access level's defaults
            "practice_ids": "TEXT DEFAULT ''",   # JSON list of the practices they're associated with
-           "cal_color": "TEXT DEFAULT ''"}      # their colour on the calendar   # sees and reports on every field agent's visits   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
+           "cal_color": "TEXT DEFAULT ''",
+           "department": "TEXT DEFAULT ''",      # one of dept.DEPARTMENTS (Team page)
+           "dept_lead": "INTEGER NOT NULL DEFAULT 0"}   # leads that department: approves its visits, gets new-visit alerts      # their colour on the calendar   # sees and reports on every field agent's visits   # Social link shown in the hub (on for existing people)   # field visits switched on for this person (any access level)
 
 
 def init():
@@ -199,7 +201,10 @@ def reset_access(uid):
 
 
 def sees_all_field(u):
-    """Whether they see (and report on) everyone's field visits, not just their own."""
+    """Whether they see (and report on) everyone's field visits, not just their own. Department leads and Management
+    always do: they approve and follow their teams' visits."""
+    if u and (u.get("department") == "management" or (u.get("dept_lead") and u.get("department"))):
+        return True
     return can(u, "team_field")
 
 
